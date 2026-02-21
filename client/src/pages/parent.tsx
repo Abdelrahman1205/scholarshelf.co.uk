@@ -110,10 +110,11 @@ export default function ParentDashboard() {
   });
 
   const paymentMutation = useMutation({
-    mutationFn: async (basketIds: string[]) => {
+    mutationFn: async ({ basketIds, reference }: { basketIds: string[]; reference: string }) => {
       const res = await apiRequest("POST", "/api/parent/payments", {
         basketIds,
         paymentMethod: "bank_transfer",
+        paymentReference: reference,
       });
       return res.json();
     },
@@ -269,7 +270,10 @@ export default function ParentDashboard() {
                         data-testid={`button-pay-basket-${basket.id}`}
                         className="gap-2 shadow-sm"
                         onClick={() => {
-                          setSelectedBasketForPayment(basket);
+                          const ts = Date.now().toString(36).toUpperCase();
+                          const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+                          const ref = `EDU-${ts}-${rand}`;
+                          setSelectedBasketForPayment({ ...basket, generatedReference: ref });
                           setPaymentResult(null);
                           setPaymentDialogOpen(true);
                         }}
@@ -508,16 +512,22 @@ export default function ParentDashboard() {
       </Tabs>
 
       {/* Payment Dialog */}
-      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+      <Dialog open={paymentDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setPaymentDialogOpen(false);
+          setPaymentResult(null);
+          setSelectedBasketForPayment(null);
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="font-heading">
-              {paymentResult ? "Payment Submitted" : "Confirm Payment"}
+              {paymentResult ? "Transfer Confirmed" : "Bank Transfer Details"}
             </DialogTitle>
             <DialogDescription>
               {paymentResult
-                ? "Your payment has been recorded. Please complete the bank transfer using the details below."
-                : "Review the payment details and confirm to proceed."}
+                ? "Your payment has been recorded. The school will verify your transfer shortly."
+                : "Please use the details below to make your bank transfer. Include the reference number exactly as shown."}
             </DialogDescription>
           </DialogHeader>
 
@@ -537,49 +547,82 @@ export default function ParentDashboard() {
                   <span className="text-primary text-lg">£{parseFloat(selectedBasketForPayment.totalAmount || "0").toFixed(2)}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-border p-4 bg-muted/20 text-sm space-y-1">
-                <p className="font-medium">Bank Transfer Instructions</p>
-                <p>Sort Code: 20-00-00</p>
-                <p>Account: 12345678</p>
-                <p>Reference: Will be generated upon confirmation</p>
+              <div className="rounded-lg border-2 border-primary/30 p-4 bg-primary/5 text-sm space-y-2">
+                <p className="font-semibold text-primary">Bank Transfer Details</p>
+                <div className="space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Sort Code</span>
+                    <span className="font-mono font-medium">20-00-00</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Account Number</span>
+                    <span className="font-mono font-medium">12345678</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Account Name</span>
+                    <span className="font-medium">EduBook School Ltd</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t border-primary/20 pt-2 mt-2">
+                    <span className="text-muted-foreground">Payment Reference</span>
+                    <span className="font-mono font-bold text-primary bg-primary/10 px-3 py-1 rounded-md text-base" data-testid="text-payment-reference-preview">
+                      {selectedBasketForPayment.generatedReference || "Generating..."}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-amber-500/30 p-3 bg-amber-500/5 text-sm text-amber-700">
+                <p className="font-medium">Important:</p>
+                <p>Use the exact reference above when making your bank transfer so the school can match your payment.</p>
               </div>
             </div>
           )}
 
           {paymentResult && (
             <div className="space-y-4">
-              <div className="rounded-lg border border-border p-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Payment Reference</span>
-                  <span className="font-mono font-medium bg-muted px-2 py-1 rounded" data-testid="text-payment-reference">
+              <div className="rounded-lg border border-emerald-500/30 p-4 bg-emerald-500/5 text-sm space-y-2">
+                <div className="flex items-center gap-2 text-emerald-600 font-semibold mb-2">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  Payment Recorded
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Reference</span>
+                  <span className="font-mono font-medium" data-testid="text-payment-reference">
                     {paymentResult.paymentReference}
                   </span>
                 </div>
-                <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-2">
-                  <span>Total Amount</span>
+                <div className="flex justify-between font-semibold border-t border-emerald-500/20 pt-2 mt-2">
+                  <span>Amount</span>
                   <span className="text-primary text-lg">£{parseFloat(paymentResult.totalAmount || "0").toFixed(2)}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-border p-4 bg-muted/20 text-sm space-y-1">
-                <p className="font-medium">Bank Transfer Instructions</p>
-                <p>Sort Code: 20-00-00</p>
-                <p>Account: 12345678</p>
-                <p>Reference: <span className="font-mono font-semibold">{paymentResult.paymentReference}</span></p>
-              </div>
+              <p className="text-sm text-muted-foreground">
+                The school will verify your bank transfer and confirm the payment. You can track the status in your Payment History tab.
+              </p>
             </div>
           )}
 
           <DialogFooter>
             {!paymentResult ? (
-              <Button
-                data-testid="button-confirm-payment"
-                onClick={() => paymentMutation.mutate([selectedBasketForPayment.id])}
-                disabled={paymentMutation.isPending}
-                className="gap-2"
-              >
-                <CreditCard className="w-4 h-4" />
-                {paymentMutation.isPending ? "Processing..." : "Confirm Payment"}
-              </Button>
+              <div className="flex gap-2 w-full justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setPaymentDialogOpen(false);
+                    setSelectedBasketForPayment(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  data-testid="button-confirm-payment"
+                  onClick={() => paymentMutation.mutate({ basketIds: [selectedBasketForPayment.id], reference: selectedBasketForPayment.generatedReference })}
+                  disabled={paymentMutation.isPending}
+                  className="gap-2"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  {paymentMutation.isPending ? "Processing..." : "I've Made the Transfer"}
+                </Button>
+              </div>
             ) : (
               <Button
                 data-testid="button-close-payment"

@@ -300,7 +300,7 @@ export async function registerRoutes(
     try {
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
-      const { basketIds, paymentMethod } = req.body;
+      const { basketIds, paymentMethod, paymentReference } = req.body;
       const baskets = [];
       let total = 0;
       for (const id of basketIds) {
@@ -310,7 +310,7 @@ export async function registerRoutes(
         total += parseFloat(basket.totalAmount);
       }
 
-      const reference = generatePaymentReference();
+      const reference = paymentReference || generatePaymentReference();
       const payment = await storage.createPayment({
         parentIdentifier: user.email,
         totalAmount: total.toFixed(2),
