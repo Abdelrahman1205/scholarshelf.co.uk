@@ -101,8 +101,71 @@ export default function AdminDashboard() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="codes" className="m-0 space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+              <div className="relative w-full max-w-sm">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input type="search" placeholder="Search by student name or code..." className="pl-9 bg-card" />
+              </div>
+              <Button>
+                <Plus className="w-4 h-4 mr-2" />
+                Generate Codes (Bulk)
+              </Button>
+            </div>
+            
+            <Card className="border-border shadow-sm">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead>Student</TableHead>
+                    <TableHead>Class</TableHead>
+                    <TableHead>Linking Code</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[
+                    { student: "Emma Thompson", grade: "Year 4", code: "A7B-9X2", status: "Used", expires: "2026-09-01" },
+                    { student: "Oliver Davis", grade: "Year 4", code: "M3V-8P1", status: "Unused", expires: "2026-09-01" },
+                    { student: "James Wilson", grade: "Year 2", code: "K9R-2L4", status: "Used", expires: "2026-09-01" },
+                    { student: "Sophia Martinez", grade: "Year 3", code: "-", status: "Not Generated", expires: "-" },
+                  ].map((row, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-medium">{row.student}</TableCell>
+                      <TableCell className="text-muted-foreground">{row.grade}</TableCell>
+                      <TableCell>
+                        {row.code !== "-" ? (
+                          <code className="bg-muted px-2 py-1 rounded font-mono text-sm">{row.code}</code>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {row.status === "Used" && <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Used</Badge>}
+                        {row.status === "Unused" && <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Unused</Badge>}
+                        {row.status === "Not Generated" && <Badge variant="outline" className="text-muted-foreground">Not Generated</Badge>}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{row.expires}</TableCell>
+                      <TableCell className="text-right">
+                        {row.status === "Not Generated" ? (
+                          <Button variant="outline" size="sm">Generate</Button>
+                        ) : row.status === "Unused" ? (
+                          <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10">Copy / Print</Button>
+                        ) : (
+                          <Button variant="ghost" size="sm" disabled>Linked</Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+
           {/* Placeholder for other tabs */}
-          {["inventory", "levels", "codes", "payments", "allocations"].map(tab => (
+          {["inventory", "levels", "payments", "allocations"].map(tab => (
             <TabsContent key={tab} value={tab} className="m-0">
               <Card className="border-dashed border-2 bg-transparent shadow-none">
                 <CardContent className="flex flex-col items-center justify-center h-[400px] text-center">
