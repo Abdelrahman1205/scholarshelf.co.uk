@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -8,14 +8,18 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ShoppingCart, Link as LinkIcon, History, CreditCard, Plus, Mail, BookOpen } from "lucide-react";
+import { ShoppingCart, Link as LinkIcon, History, CreditCard, Plus, Mail, BookOpen, Camera, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Html5Qrcode } from "html5-qrcode";
 
 export default function ParentDashboard() {
   const { toast } = useToast();
   const [parentId, setParentId] = useState<string | null>(() => localStorage.getItem("parentIdentifier"));
   const [emailInput, setEmailInput] = useState("");
   const [linkCode, setLinkCode] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [selectedBasketForPayment, setSelectedBasketForPayment] = useState<any>(null);
   const [paymentResult, setPaymentResult] = useState<any>(null);
@@ -44,6 +48,48 @@ export default function ParentDashboard() {
     queryFn: getQueryFn({ on401: 'throw' }),
     enabled: !!parentId,
   });
+
+  const startScanner = async () => {
+    setScannerError(null);
+    setScannerOpen(true);
+    try {
+      const html5Qr = new Html5Qrcode("qr-reader");
+      scannerRef.current = html5Qr;
+      await html5Qr.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          const code = decodedText.trim().toUpperCase();
+          setLinkCode(code);
+          stopScanner();
+          toast({ title: "Code Scanned", description: `Linking code "${code}" detected.` });
+        },
+        () => {}
+      );
+    } catch (err: any) {
+      setScannerError(err?.message || "Could not access camera. Please check permissions.");
+      setScannerOpen(false);
+    }
+  };
+
+  const stopScanner = async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+      } catch {}
+      scannerRef.current = null;
+    }
+    setScannerOpen(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        try { scannerRef.current.stop(); scannerRef.current.clear(); } catch {}
+      }
+    };
+  }, []);
 
   const linkChildMutation = useMutation({
     mutationFn: async () => {
@@ -337,29 +383,66 @@ export default function ParentDashboard() {
               <CardHeader>
                 <CardTitle className="font-heading">Link Your Child</CardTitle>
                 <CardDescription>
-                  Enter the 7-digit linking code provided by the school to connect your child's profile to your account.
+                  Enter the linking code or scan the QR code provided by the school to connect your child's profile.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <label className="text-sm font-medium">Linking Code</label>
                   <div className="flex gap-2">
                     <Input
                       data-testid="input-link-code"
-                      placeholder="e.g., A7B9X2Z"
+                      placeholder="e.g., A7B-9X2Z"
                       className="font-mono text-lg uppercase"
-                      maxLength={7}
+                      maxLength={8}
                       value={linkCode}
                       onChange={(e) => setLinkCode(e.target.value.toUpperCase())}
                     />
                     <Button
                       data-testid="button-link-child"
                       onClick={() => linkChildMutation.mutate()}
-                      disabled={linkCode.length < 7 || linkChildMutation.isPending}
+                      disabled={linkCode.length < 8 || linkChildMutation.isPending}
                     >
                       Link Profile
                     </Button>
                   </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-border" />
+                    <span className="text-xs text-muted-foreground">or</span>
+                    <div className="flex-1 h-px bg-border" />
+                  </div>
+                  {!scannerOpen ? (
+                    <Button
+                      data-testid="button-open-scanner"
+                      variant="outline"
+                      className="w-full gap-2"
+                      onClick={startScanner}
+                    >
+                      <Camera className="w-4 h-4" />
+                      Scan QR Code
+                    </Button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="relative rounded-lg overflow-hidden border border-border bg-black">
+                        <div id="qr-reader" className="w-full" />
+                        <Button
+                          data-testid="button-close-scanner"
+                          variant="ghost"
+                          size="sm"
+                          className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70 hover:text-white z-10"
+                          onClick={stopScanner}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground text-center">
+                        Point your camera at the QR code provided by the school.
+                      </p>
+                    </div>
+                  )}
+                  {scannerError && (
+                    <p className="text-sm text-destructive">{scannerError}</p>
+                  )}
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-border">

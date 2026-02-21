@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight, QrCode, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,6 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
+import { QRCodeSVG } from "qrcode.react";
 
 function BooksTab() {
   const [search, setSearch] = useState("");
@@ -617,7 +618,30 @@ function BookLevelsTab() {
 function LinkingCodesTab() {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [qrDialogOpen, setQrDialogOpen] = useState(false);
+  const [selectedQrCode, setSelectedQrCode] = useState<any>(null);
   const [studentForm, setStudentForm] = useState({ name: "", classId: "", parentEmail: "" });
+  const qrRef = useRef<HTMLDivElement>(null);
+
+  const downloadQrCode = useCallback(() => {
+    if (!qrRef.current || !selectedQrCode) return;
+    const svg = qrRef.current.querySelector("svg");
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    canvas.width = 400;
+    canvas.height = 400;
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      ctx?.drawImage(img, 0, 0, 400, 400);
+      const a = document.createElement("a");
+      a.download = `linking-code-${selectedQrCode.code}.png`;
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(svgData);
+  }, [selectedQrCode]);
 
   const { data: codes = [] } = useQuery<any[]>({ queryKey: ["/api/linking-codes"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
@@ -690,7 +714,17 @@ function LinkingCodesTab() {
                     <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Pending Link</Badge>
                   )}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right space-x-1">
+                  <Button
+                    data-testid={`button-show-qr-${row.id}`}
+                    variant="ghost"
+                    size="sm"
+                    className="text-primary hover:text-primary hover:bg-primary/10"
+                    onClick={() => { setSelectedQrCode(row); setQrDialogOpen(true); }}
+                  >
+                    <QrCode className="w-4 h-4 mr-1" />
+                    QR
+                  </Button>
                   {!row.isUsed ? (
                     <Button data-testid={`button-resend-code-${row.id}`} variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10" onClick={() => resendMutation.mutate(row)}>
                       Resend Email
@@ -707,6 +741,45 @@ function LinkingCodesTab() {
           </TableBody>
         </Table>
       </Card>
+
+      <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="font-heading">QR Linking Code</DialogTitle>
+            <DialogDescription>
+              Share this QR code with the parent. They can scan it to link their child's profile.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedQrCode && (
+            <div className="flex flex-col items-center space-y-4 py-4">
+              <div ref={qrRef} className="bg-white p-4 rounded-lg border border-border">
+                <QRCodeSVG
+                  value={selectedQrCode.code}
+                  size={240}
+                  level="H"
+                  includeMargin
+                />
+              </div>
+              <div className="text-center space-y-1">
+                <p className="text-sm text-muted-foreground">Student</p>
+                <p className="font-medium">{selectedQrCode.student?.name || "Unknown"}</p>
+                <p className="font-mono text-lg tracking-widest bg-muted px-4 py-2 rounded-lg mt-2">
+                  {selectedQrCode.code}
+                </p>
+              </div>
+              <Button
+                data-testid="button-download-qr"
+                variant="outline"
+                className="gap-2"
+                onClick={downloadQrCode}
+              >
+                <Download className="w-4 h-4" />
+                Download QR Code
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">
