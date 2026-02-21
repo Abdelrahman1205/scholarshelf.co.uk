@@ -14,8 +14,6 @@ import { Html5Qrcode } from "html5-qrcode";
 
 export default function ParentDashboard() {
   const { toast } = useToast();
-  const [parentId, setParentId] = useState<string | null>(() => localStorage.getItem("parentIdentifier"));
-  const [emailInput, setEmailInput] = useState("");
   const [linkCode, setLinkCode] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState<string | null>(null);
@@ -24,29 +22,19 @@ export default function ParentDashboard() {
   const [selectedBasketForPayment, setSelectedBasketForPayment] = useState<any>(null);
   const [paymentResult, setPaymentResult] = useState<any>(null);
 
-  const handleSetParentId = () => {
-    const trimmed = emailInput.trim();
-    if (!trimmed) return;
-    localStorage.setItem("parentIdentifier", trimmed);
-    setParentId(trimmed);
-  };
-
   const childrenQuery = useQuery<any[]>({
-    queryKey: ['/api/parent/children?parentIdentifier=' + parentId],
+    queryKey: ['/api/parent/children'],
     queryFn: getQueryFn({ on401: 'throw' }),
-    enabled: !!parentId,
   });
 
   const basketsQuery = useQuery<any[]>({
-    queryKey: ['/api/parent/baskets?parentIdentifier=' + parentId],
+    queryKey: ['/api/parent/baskets'],
     queryFn: getQueryFn({ on401: 'throw' }),
-    enabled: !!parentId,
   });
 
   const paymentsQuery = useQuery<any[]>({
-    queryKey: ['/api/parent/payments?parentIdentifier=' + parentId],
+    queryKey: ['/api/parent/payments'],
     queryFn: getQueryFn({ on401: 'throw' }),
-    enabled: !!parentId,
   });
 
   const startScanner = async () => {
@@ -93,14 +81,14 @@ export default function ParentDashboard() {
 
   const linkChildMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/parent/link-child", { code: linkCode.toUpperCase(), parentIdentifier: parentId });
+      const res = await apiRequest("POST", "/api/parent/link-child", { code: linkCode.toUpperCase() });
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Child Linked", description: "Child profile has been linked successfully." });
       setLinkCode("");
-      queryClient.invalidateQueries({ queryKey: ['/api/parent/children?parentIdentifier=' + parentId] });
-      queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets?parentIdentifier=' + parentId] });
+      queryClient.invalidateQueries({ queryKey: ['/api/parent/children'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets'] });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -109,12 +97,12 @@ export default function ParentDashboard() {
 
   const createBasketMutation = useMutation({
     mutationFn: async (studentId: string) => {
-      const res = await apiRequest("POST", `/api/parent/children/${studentId}/basket`, { parentIdentifier: parentId });
+      const res = await apiRequest("POST", `/api/parent/children/${studentId}/basket`, {});
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Basket Created", description: "Book basket has been generated." });
-      queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets?parentIdentifier=' + parentId] });
+      queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets'] });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -125,55 +113,20 @@ export default function ParentDashboard() {
     mutationFn: async (basketIds: string[]) => {
       const res = await apiRequest("POST", "/api/parent/payments", {
         basketIds,
-        parentIdentifier: parentId,
         paymentMethod: "bank_transfer",
       });
       return res.json();
     },
     onSuccess: (data) => {
       setPaymentResult(data);
-      queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets?parentIdentifier=' + parentId] });
-      queryClient.invalidateQueries({ queryKey: ['/api/parent/payments?parentIdentifier=' + parentId] });
+      queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/parent/payments'] });
     },
     onError: (err: Error) => {
       toast({ title: "Payment Error", description: err.message, variant: "destructive" });
       setPaymentDialogOpen(false);
     },
   });
-
-  if (!parentId) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh] animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <Card className="w-full max-w-md border-border shadow-sm">
-          <CardHeader className="text-center">
-            <div className="mx-auto h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-4">
-              <Mail className="w-6 h-6" />
-            </div>
-            <CardTitle className="text-2xl font-heading">Welcome, Parent!</CardTitle>
-            <CardDescription>Enter your email address to get started with the Parent Portal.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              data-testid="input-parent-email"
-              type="email"
-              placeholder="your@email.com"
-              value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSetParentId()}
-            />
-            <Button
-              data-testid="button-get-started"
-              className="w-full"
-              onClick={handleSetParentId}
-              disabled={!emailInput.trim()}
-            >
-              Get Started
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
 
   const children = childrenQuery.data || [];
   const baskets = basketsQuery.data || [];

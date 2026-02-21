@@ -260,8 +260,10 @@ export async function registerRoutes(
   // === PARENT ENDPOINTS ===
   app.post("/api/parent/link-child", requireRole("parent"), async (req, res) => {
     try {
-      const { code, parentIdentifier } = req.body;
-      const result = await storage.useLinkingCode(code, parentIdentifier);
+      const { code } = req.body;
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+      const result = await storage.useLinkingCode(code, user.email);
       if (!result) return res.status(404).json({ message: "Invalid or already used linking code" });
       res.json(result);
     } catch (e: any) {
@@ -270,16 +272,17 @@ export async function registerRoutes(
   });
 
   app.get("/api/parent/children", requireRole("parent"), async (req, res) => {
-    const parentIdentifier = req.query.parentIdentifier as string;
-    if (!parentIdentifier) return res.status(400).json({ message: "parentIdentifier required" });
-    const children = await storage.getParentChildren(parentIdentifier);
+    const user = await storage.getUserById(req.session.userId!);
+    if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+    const children = await storage.getParentChildren(user.email);
     res.json(children);
   });
 
   app.post("/api/parent/children/:id/basket", requireRole("parent"), async (req, res) => {
     try {
-      const { parentIdentifier } = req.body;
-      const basket = await storage.generateBasket(req.params.id, parentIdentifier);
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+      const basket = await storage.generateBasket(req.params.id, user.email);
       res.status(201).json(basket);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -287,15 +290,17 @@ export async function registerRoutes(
   });
 
   app.get("/api/parent/baskets", requireRole("parent"), async (req, res) => {
-    const parentIdentifier = req.query.parentIdentifier as string;
-    if (!parentIdentifier) return res.status(400).json({ message: "parentIdentifier required" });
-    const baskets = await storage.getBaskets(parentIdentifier);
+    const user = await storage.getUserById(req.session.userId!);
+    if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+    const baskets = await storage.getBaskets(user.email);
     res.json(baskets);
   });
 
   app.post("/api/parent/payments", requireRole("parent"), async (req, res) => {
     try {
-      const { basketIds, parentIdentifier, paymentMethod } = req.body;
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+      const { basketIds, paymentMethod } = req.body;
       const baskets = [];
       let total = 0;
       for (const id of basketIds) {
@@ -307,7 +312,7 @@ export async function registerRoutes(
 
       const reference = generatePaymentReference();
       const payment = await storage.createPayment({
-        parentIdentifier,
+        parentIdentifier: user.email,
         totalAmount: total.toFixed(2),
         paymentMethod: paymentMethod || "bank_transfer",
         paymentReference: reference,
@@ -321,9 +326,9 @@ export async function registerRoutes(
   });
 
   app.get("/api/parent/payments", requireRole("parent"), async (req, res) => {
-    const parentIdentifier = req.query.parentIdentifier as string;
-    if (!parentIdentifier) return res.status(400).json({ message: "parentIdentifier required" });
-    const payments = await storage.getPayments(parentIdentifier);
+    const user = await storage.getUserById(req.session.userId!);
+    if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+    const payments = await storage.getPayments(user.email);
     res.json(payments);
   });
 
@@ -371,6 +376,29 @@ export async function registerRoutes(
   app.get("/api/admin/baskets", requireRole("admin"), async (_req, res) => {
     const baskets = await storage.getBaskets();
     res.json(baskets);
+  });
+
+  // === SEED DEFAULT USERS ===
+  app.post("/api/seed-users", async (_req, res) => {
+    try {
+      const defaults = [
+        { username: "admin", password: "admin123", name: "School Administrator", role: "admin", email: "admin@school.edu" },
+        { username: "teacher", password: "teacher123", name: "Ms. Johnson", role: "teacher", email: "teacher@school.edu" },
+        { username: "parent", password: "parent123", name: "John Smith", role: "parent", email: "parent@example.com" },
+      ];
+      const created = [];
+      for (const d of defaults) {
+        const existing = await storage.getUserByUsername(d.username);
+        if (!existing) {
+          const hash = await bcrypt.hash(d.password, 10);
+          const user = await storage.createUser({ username: d.username, passwordHash: hash, name: d.name, role: d.role, email: d.email });
+          created.push({ username: user.username, role: user.role });
+        }
+      }
+      res.json({ message: `Created ${created.length} users`, created });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
   });
 
   return httpServer;
