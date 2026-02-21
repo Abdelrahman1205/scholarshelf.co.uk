@@ -1,18 +1,28 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 
+import Layout from "@/components/layout";
+import AdminDashboard from "@/pages/admin";
+import TeacherDashboard from "@/pages/teacher";
+import ParentDashboard from "@/pages/parent";
+
 function Router() {
   return (
-    <Switch>
-      {/* Add pages below */}
-      {/* <Route path="/" component={Home}/> */}
-      {/* Fallback to 404 */}
-      <Route component={NotFound} />
-    </Switch>
+    <Layout>
+      <Switch>
+        <Route path="/">
+          <Redirect to="/admin" />
+        </Route>
+        <Route path="/admin" component={AdminDashboard} />
+        <Route path="/teacher" component={TeacherDashboard} />
+        <Route path="/parent" component={ParentDashboard} />
+        <Route component={NotFound} />
+      </Switch>
+    </Layout>
   );
 }
 
