@@ -378,6 +378,27 @@ export async function registerRoutes(
     res.json(baskets);
   });
 
+  // === ISBN LOOKUP ===
+  app.get("/api/isbn-lookup/:isbn", requireRole("admin"), async (req, res) => {
+    try {
+      const isbn = (req.params.isbn as string).replace(/[^0-9X]/gi, "");
+      const response = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+      if (!response.ok) return res.status(404).json({ message: "Book not found" });
+      const data = await response.json();
+      const key = `ISBN:${isbn}`;
+      if (!data[key]) return res.status(404).json({ message: "Book not found" });
+      const book = data[key];
+      res.json({
+        isbn,
+        title: book.title || "",
+        author: book.authors?.map((a: any) => a.name).join(", ") || "",
+        description: typeof book.notes === "string" ? book.notes : (book.notes?.value || book.subtitle || ""),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // === SEED DEFAULT USERS ===
   app.post("/api/seed-users", async (_req, res) => {
     try {

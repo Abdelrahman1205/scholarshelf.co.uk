@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight, QrCode, Download } from "lucide-react";
+import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight, QrCode, Download, ScanBarcode, Camera, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -15,16 +15,96 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { QRCodeSVG } from "qrcode.react";
+import { Html5Qrcode } from "html5-qrcode";
+import { useToast } from "@/hooks/use-toast";
 
 function BooksTab() {
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedBook, setSelectedBook] = useState<any>(null);
   const [form, setForm] = useState({ title: "", author: "", isbn: "", price: "", description: "", isActive: true, stockQuantity: 0, lowStockThreshold: 10, reorderQuantity: 50 });
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+  const [isbnLooking, setIsbnLooking] = useState(false);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   const { data: books = [] } = useQuery<any[]>({ queryKey: ["/api/books"], queryFn: getQueryFn({ on401: "throw" }) });
+
+  async function lookupIsbn(isbn: string) {
+    setIsbnLooking(true);
+    try {
+      const res = await fetch(`/api/isbn-lookup/${encodeURIComponent(isbn)}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setForm((prev) => ({
+          ...prev,
+          isbn: data.isbn || prev.isbn,
+          title: data.title || prev.title,
+          author: data.author || prev.author,
+          description: data.description || prev.description,
+        }));
+        toast({ title: "Book Found", description: `"${data.title}" details auto-filled from barcode.` });
+      } else {
+        setForm((prev) => ({ ...prev, isbn }));
+        toast({ title: "ISBN Scanned", description: `ISBN ${isbn} captured. Book details not found in database — please fill in manually.` });
+      }
+    } catch {
+      setForm((prev) => ({ ...prev, isbn }));
+      toast({ title: "ISBN Scanned", description: `ISBN ${isbn} captured. Could not look up details — please fill in manually.` });
+    } finally {
+      setIsbnLooking(false);
+    }
+  }
+
+  async function startScanner() {
+    setScannerError(null);
+    setScannerOpen(true);
+    setTimeout(async () => {
+      try {
+        const html5Qr = new Html5Qrcode("barcode-reader");
+        scannerRef.current = html5Qr;
+        await html5Qr.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: { width: 300, height: 150 },
+          } as any,
+          (decodedText) => {
+            const isbn = decodedText.trim().replace(/[^0-9X]/gi, "");
+            stopScanner();
+            if (!addOpen) setAddOpen(true);
+            lookupIsbn(isbn);
+          },
+          () => {}
+        );
+      } catch (err: any) {
+        setScannerError(err?.message || "Could not access camera. Please check permissions.");
+        setScannerOpen(false);
+      }
+    }, 100);
+  }
+
+  async function stopScanner() {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+      } catch {}
+      scannerRef.current = null;
+    }
+    setScannerOpen(false);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        try { scannerRef.current.stop(); scannerRef.current.clear(); } catch {}
+      }
+    };
+  }, []);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/books", data),
@@ -58,10 +138,16 @@ function BooksTab() {
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input data-testid="input-search-books" type="search" placeholder="Search by title, author, or ISBN..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Button data-testid="button-add-book" onClick={() => { resetForm(); setAddOpen(true); }}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add New Book
-        </Button>
+        <div className="flex gap-2">
+          <Button data-testid="button-scan-barcode" variant="outline" onClick={() => { resetForm(); startScanner(); }}>
+            <ScanBarcode className="w-4 h-4 mr-2" />
+            Scan Barcode
+          </Button>
+          <Button data-testid="button-add-book" onClick={() => { resetForm(); setAddOpen(true); }}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add New Book
+          </Button>
+        </div>
       </div>
 
       <Card className="border-border shadow-sm">
@@ -115,12 +201,42 @@ function BooksTab() {
         </Table>
       </Card>
 
+      <Dialog open={scannerOpen} onOpenChange={(open) => { if (!open) stopScanner(); }}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ScanBarcode className="h-5 w-5" />
+              Scan Book Barcode
+            </DialogTitle>
+            <DialogDescription>Point your camera at the book's barcode (ISBN). It will be detected automatically.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div id="barcode-reader" className="w-full rounded-lg overflow-hidden bg-black min-h-[280px]" />
+            {scannerError && (
+              <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+                {scannerError}
+              </div>
+            )}
+            <Button variant="outline" className="w-full" onClick={stopScanner}>
+              <X className="w-4 h-4 mr-2" />
+              Cancel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Add New Book</DialogTitle>
             <DialogDescription>Fill in the details to add a new book to the catalogue.</DialogDescription>
           </DialogHeader>
+          {isbnLooking && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Looking up book details...
+            </div>
+          )}
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label>Title</Label>
@@ -133,7 +249,19 @@ function BooksTab() {
               </div>
               <div className="grid gap-2">
                 <Label>ISBN</Label>
-                <Input data-testid="input-book-isbn" value={form.isbn} onChange={(e) => setForm({ ...form, isbn: e.target.value })} />
+                <div className="flex gap-1">
+                  <Input data-testid="input-book-isbn" value={form.isbn} onChange={(e) => setForm({ ...form, isbn: e.target.value })} className="flex-1" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    data-testid="button-scan-isbn"
+                    onClick={() => { setAddOpen(false); startScanner(); }}
+                    title="Scan barcode"
+                  >
+                    <ScanBarcode className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
