@@ -1,0 +1,199 @@
+Standalone Book Management System — Full Specification
+What It Is
+
+A school book management and distribution platform that handles the entire lifecycle of textbooks within educational institutions. Think of it as a specialised inventory + ordering + distribution system built specifically for schools, connecting three groups of people: school staff who manage the book inventory, teachers who confirm students received their books, and parents who order and pay for their children's books.
+
+The core idea: A school adds its textbooks to a catalogue, bundles them into "book levels" (e.g., "Year 3 pack"), assigns those bundles to classes, and then parents can see what books their child needs, pay for them, and the school tracks distribution until the teacher confirms the student received everything.
+The Complete Flow (End-to-End)
+
+Step 1 — School sets up the book catalogue
+Admin adds individual books with: title, author, ISBN, price, description, cover image, stock quantity, low stock threshold, and reorder quantity. Books can be marked active/inactive.
+
+Step 2 — School creates "Book Levels" (bundles)
+A "book level" is a named set of books (e.g., "Year 4 Arabic Pack", "GCSE Prep Bundle"). Admin creates levels, then adds specific books with quantities to each level. This way, instead of assigning 8 individual books to a class, you assign one bundle.
+
+Step 3 — School assigns book levels to classes
+Admin links a book level to a class (optionally for a specific academic year). Every student in that class now knows what books they need.
+
+Step 4 — School generates linking codes for students
+Admin generates a unique code per student. This code is given to parents (printed, emailed, etc.) so they can link their parent account to their child.
+
+Step 5 — Parent links their child
+Parent enters the linking code. Their account is now connected to their child's student record.
+
+Step 6 — Parent creates a book basket
+Parent clicks "Create Book Basket" for their linked child. The system automatically looks up the child's class, finds the assigned book level, and generates a basket containing all the required books with prices calculated.
+
+Step 7 — Parent pays
+Parent selects one or more baskets, gets a receipt reference number (auto-generated format: EDU-XXXXX-XXXX), and completes a bank transfer using that reference. They confirm payment in the system. Multiple baskets (e.g., for siblings) can be paid in one transaction.
+
+Step 8 — Admin confirms payment
+School admin reviews incoming payments, matches bank transfer references, and confirms or rejects payments. Payment status moves from pending → completed or failed.
+
+Step 9 — Books are allocated to students
+Once payment is confirmed, books are allocated to the student. This creates allocation records linking each book to the specific student.
+
+Step 10 — Teacher confirms receipt
+Teacher selects their class, sees which students have allocated books, and confirms receipt when the student physically receives each book. Status moves from "allocated" → "received" with a timestamp.
+Database Schema (11 tables)
+
+1. books — The core catalogue
+
+    id (UUID, auto), title (required), author, isbn, price (decimal 10,2), description, cover_image_url, is_active (default true), stock_quantity (int, default 0), low_stock_threshold (int, default 10), reorder_quantity (int, default 50), created_at, updated_at
+    Scoped to: school_id (for multi-tenant, or org_id for standalone)
+
+2. book_levels — Named bundles/packs
+
+    id, school_id, name (required), description, created_at, updated_at
+
+3. book_level_items — Books within a level
+
+    id, book_level_id (FK → book_levels, cascade), book_id (FK → books, cascade), quantity (int, default 1), created_at
+
+4. class_book_levels — Links bundles to classes
+
+    id, class_id (FK → classes, cascade), book_level_id (FK → book_levels, cascade), academic_year_id (optional FK), created_at
+
+5. child_linking_codes — One-time codes for parent-child linking
+
+    id, student_id (FK → students, cascade), school_id, code (unique, required), is_used (default false), used_by_parent_id, used_at, expires_at, created_at
+
+6. child_book_baskets — A parent's book order for one child
+
+    id, student_id (FK), parent_user_id, school_id, academic_year_id, status (pending/paid/allocated/received, default 'pending'), total_amount (decimal 10,2), created_at, updated_at
+
+7. basket_items — Individual books in a basket
+
+    id, basket_id (FK → child_book_baskets, cascade), book_id (FK → books), quantity (default 1), unit_price (decimal 10,2), total_price (decimal 10,2), created_at
+
+8. book_payments — Payment records
+
+    id, parent_user_id, school_id, total_amount (decimal 10,2), payment_method, payment_reference, status (pending/completed/failed, default 'pending'), paid_at, confirmed_by (user FK), confirmed_at, created_at
+
+9. basket_payments — Links baskets to payments (many-to-many)
+
+    id, basket_id (FK → child_book_baskets, cascade), payment_id (FK → book_payments, cascade), created_at
+
+10. book_inventory_transactions — Full audit trail of stock changes
+
+    id, school_id, book_id (FK → books, cascade), transaction_type (purchase/return/damage/allocation/adjustment), quantity (int), previous_quantity (int), new_quantity (int), reason (text), performed_by (user FK), created_at
+
+11. finance_book_allocations — Tracks which student received which book
+
+    id, school_id, student_id (FK), book_id (FK), payment_item_id (FK), status (allocated/received), allocated_at, received_at, received_confirmed_by (FK → users), notes
+
+User Roles & Permissions (3 roles)
+Role	Can Do
+Admin/Staff	Full book CRUD, create levels, assign to classes, generate linking codes, view/confirm payments, view all allocations, manage inventory (stock adjustments), view low stock alerts, view transaction history, ISBN barcode scanning
+Teacher	View allocations for their classes, confirm book receipt per student, search/filter by student name, code, or book
+Parent	Link children via code, create book baskets, view basket contents/prices, pay for baskets (bank transfer), view payment history, view basket status progression
+Frontend Pages (5 main pages)
+
+1. Admin Books Page (6 tabs):
+
+    Books Tab: Full catalogue table (title, author, ISBN, price, stock, active status). Add/edit/delete dialogs.
+    Inventory Tab: Stock overview with current stock, thresholds, reorder quantities. Low stock alerts panel (highlighted in orange). Stock adjustment dialog (purchase/return/damage/adjustment with quantity and notes). Barcode scanner for ISBN lookup. Recent transaction history table (date, book, type, qty, stock change, notes).
+    Book Levels Tab: Create/edit/delete levels. Expand to see books within each level. Add/remove books from levels with quantity. Assign levels to classes (with optional academic year).
+    Linking Codes Tab: Generate codes per student. View code, student, expiry, used status. Copy code to clipboard.
+    Payments Tab: View all parent payments. Status, amount, reference, method, date.
+    Allocations Tab: View all book allocations across school. Student, book, status, dates.
+
+2. Teacher Books Page:
+
+    Class selector dropdown
+    Allocations grouped by student
+    Each student shows: name, grade, books allocated vs received count
+    Per-book: title, quantity, status badge (allocated/received), allocated date, received date
+    "Confirm Receipt" button per book
+    Mobile responsive: card view on small screens, table on desktop
+
+3. Teacher Book Allocations Page (alternative view):
+
+    Search by student name/code/book title
+    Filter by status (all/allocated/received)
+    Table: student, student code, book, ISBN, status, allocated date, confirm action
+
+4. Parent Books Page (3 tabs):
+
+    Baskets Tab: Pending baskets with checkboxes for bulk selection. Shows child name, grade, student code. Book table per basket (title, qty, price). Total calculated. "Proceed to Payment" opens checkout dialog with auto-generated receipt reference, bank transfer instructions, total amount. Processed orders shown separately below.
+    Link Child Tab: Input for 7-digit linking code. List of already linked children with "Create Book Basket" button per child.
+    Payment History Tab: Table of all payments (date, amount, method, reference, status).
+
+API Endpoints
+
+Books CRUD:
+
+    GET /api/books — List all books (auth required)
+    POST /api/books — Create book (admin only)
+    PATCH /api/books/:id — Update book (admin only)
+    DELETE /api/books/:id — Delete book (admin only)
+    GET /api/books/by-isbn/:isbn — Find book by ISBN
+    GET /api/books/low-stock — Get books below threshold (admin only)
+
+Inventory:
+
+    POST /api/books/:id/stock — Adjust stock (quantity, type: addition/removal/adjustment, notes)
+    GET /api/books/inventory-transactions — Transaction history (admin only)
+
+Book Levels:
+
+    GET /api/books/levels — List levels
+    POST /api/books/levels — Create level (admin)
+    PATCH /api/books/levels/:id — Update level (admin)
+    DELETE /api/books/levels/:id — Delete level (admin)
+    GET /api/books/levels/:id/items — Get books in level (joins book data)
+    POST /api/books/levels/:id/items — Add book to level (admin)
+    DELETE /api/books/levels/:id/items/:itemId — Remove from level (admin)
+
+Class Assignments:
+
+    POST /api/books/class-book-levels — Assign level to class (admin)
+
+Allocations:
+
+    GET /api/books/allocations — All allocations (admin/teacher)
+
+Parent Endpoints:
+
+    POST /api/parent/link-child — Link via code
+    GET /api/parent/baskets — Get baskets
+    POST /api/parent/children/:id/book-basket/generate — Auto-generate basket
+    POST /api/parent/payments — Process payment (basketIds, method, reference)
+    GET /api/parent/payments — Payment history
+
+Teacher Endpoints:
+
+    GET /api/teacher/classes/:id/allocations — Class allocations
+    POST /api/teacher/book-receipts/:id/confirm — Confirm receipt
+
+Admin Endpoints:
+
+    POST /api/admin/students/:id/linking-code — Generate linking code
+    GET /api/admin/linking-codes — List all codes
+    GET /api/admin/payments — All payments
+    GET /api/admin/allocations — All allocations
+
+Key Business Logic
+
+    Stock Protection: Stock cannot go below zero. Validation on every adjustment.
+    Basket Auto-Generation: When parent creates basket, system resolves: child → class → book level → books, and populates basket with correct books and prices.
+    Receipt References: Auto-generated format EDU-{timestamp_base36}-{random_4chars} to uniquely identify bank transfers.
+    Low Stock Alerts: Books where stock_quantity < low_stock_threshold are flagged in a highlighted panel.
+    Transaction Audit Trail: Every stock change records: previous quantity, new quantity, type, who did it, and why.
+    Linking Code Security: Codes are single-use, have expiry dates, and track who used them and when.
+    Status Progression: Baskets move through pending → paid → allocated → received. Payments move through pending → completed/failed.
+
+Suggestions for Enhancement (Things I'd Add)
+
+    QR Code generation for linking codes instead of just numeric codes — parents scan with phone
+    Email notifications at each status change (payment confirmed, books ready for pickup, etc.)
+    Book condition tracking — when teacher confirms receipt, let them note condition (new/good/fair/damaged)
+    Return flow — handle end-of-year book returns with condition assessment
+    Reports/exports — CSV/PDF export of: inventory report, distribution report, payment reconciliation, outstanding orders
+    Dashboard analytics — total books distributed, revenue collected, distribution completion rate per class, most popular books
+    Stripe/payment gateway integration instead of just bank transfers
+    Parent communication — in-app messaging for payment reminders
+    Book reservation/waitlist — when stock is zero, parents can join a waitlist
+    Multi-year tracking — track which books a student had across academic years
+    Barcode printing — generate and print barcode labels for physical books
+    Bulk operations — bulk import books via CSV, bulk allocate books to entire classes
