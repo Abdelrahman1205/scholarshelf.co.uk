@@ -1,10 +1,13 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Filter } from "lucide-react";
+import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Filter, Mail, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function AdminDashboard() {
   return (
@@ -105,12 +108,56 @@ export default function AdminDashboard() {
             <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
               <div className="relative w-full max-w-sm">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="Search by student name or code..." className="pl-9 bg-card" />
+                <Input type="search" placeholder="Search by student name, code, or email..." className="pl-9 bg-card" />
               </div>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Generate Codes (Bulk)
-              </Button>
+              
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button>
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Add Student & Send Code
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[425px]">
+                  <DialogHeader>
+                    <DialogTitle>Add New Student</DialogTitle>
+                    <DialogDescription>
+                      Create a student record and automatically email a linking code to their parent.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="name">Student Name</Label>
+                      <Input id="name" placeholder="e.g. Liam Taylor" />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="class">Assign to Class</Label>
+                      <Select>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a class" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="y1">Year 1</SelectItem>
+                          <SelectItem value="y2">Year 2</SelectItem>
+                          <SelectItem value="y3">Year 3</SelectItem>
+                          <SelectItem value="y4">Year 4</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">This automatically assigns the required book level to the student.</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="email">Parent Email Address</Label>
+                      <Input id="email" type="email" placeholder="parent@example.com" />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button type="submit" className="w-full sm:w-auto">
+                      <Mail className="w-4 h-4 mr-2" />
+                      Create & Email Code
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
             
             <Card className="border-border shadow-sm">
@@ -119,40 +166,33 @@ export default function AdminDashboard() {
                   <TableRow>
                     <TableHead>Student</TableHead>
                     <TableHead>Class</TableHead>
+                    <TableHead>Parent Email</TableHead>
                     <TableHead>Linking Code</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Expires</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {[
-                    { student: "Emma Thompson", grade: "Year 4", code: "A7B-9X2", status: "Used", expires: "2026-09-01" },
-                    { student: "Oliver Davis", grade: "Year 4", code: "M3V-8P1", status: "Unused", expires: "2026-09-01" },
-                    { student: "James Wilson", grade: "Year 2", code: "K9R-2L4", status: "Used", expires: "2026-09-01" },
-                    { student: "Sophia Martinez", grade: "Year 3", code: "-", status: "Not Generated", expires: "-" },
+                    { student: "Emma Thompson", grade: "Year 4", email: "sarah.t@example.com", code: "A7B-9X2", status: "Linked" },
+                    { student: "Oliver Davis", grade: "Year 4", email: "p.davis@example.com", code: "M3V-8P1", status: "Email Sent" },
+                    { student: "James Wilson", grade: "Year 2", email: "wilson.fam@example.com", code: "K9R-2L4", status: "Linked" },
+                    { student: "Sophia Martinez", grade: "Year 3", email: "m.martinez@example.com", code: "T2Y-5B9", status: "Email Sent" },
                   ].map((row, i) => (
                     <TableRow key={i}>
                       <TableCell className="font-medium">{row.student}</TableCell>
                       <TableCell className="text-muted-foreground">{row.grade}</TableCell>
+                      <TableCell className="text-muted-foreground text-sm">{row.email}</TableCell>
                       <TableCell>
-                        {row.code !== "-" ? (
-                          <code className="bg-muted px-2 py-1 rounded font-mono text-sm">{row.code}</code>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
+                        <code className="bg-muted px-2 py-1 rounded font-mono text-sm">{row.code}</code>
                       </TableCell>
                       <TableCell>
-                        {row.status === "Used" && <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Used</Badge>}
-                        {row.status === "Unused" && <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Unused</Badge>}
-                        {row.status === "Not Generated" && <Badge variant="outline" className="text-muted-foreground">Not Generated</Badge>}
+                        {row.status === "Linked" && <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Linked</Badge>}
+                        {row.status === "Email Sent" && <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Pending Link</Badge>}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{row.expires}</TableCell>
                       <TableCell className="text-right">
-                        {row.status === "Not Generated" ? (
-                          <Button variant="outline" size="sm">Generate</Button>
-                        ) : row.status === "Unused" ? (
-                          <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10">Copy / Print</Button>
+                        {row.status === "Email Sent" ? (
+                          <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10">Resend Email</Button>
                         ) : (
                           <Button variant="ghost" size="sm" disabled>Linked</Button>
                         )}
