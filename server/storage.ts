@@ -52,6 +52,10 @@ export interface IStorage {
 
   getAllocations(classId?: string): Promise<any[]>;
   confirmReceipt(allocationId: string): Promise<schema.FinanceBookAllocation>;
+
+  getUserByUsername(username: string): Promise<schema.User | undefined>;
+  getUserById(id: string): Promise<schema.User | undefined>;
+  createUser(user: schema.InsertUser): Promise<schema.User>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -412,6 +416,21 @@ class DatabaseStorage implements IStorage {
       .where(eq(schema.financeBookAllocations.id, allocationId))
       .returning();
     return updated;
+  }
+
+  async getUserByUsername(username: string): Promise<schema.User | undefined> {
+    const [user] = await db.select().from(schema.users).where(eq(schema.users.username, username));
+    return user;
+  }
+
+  async getUserById(id: string): Promise<schema.User | undefined> {
+    const [user] = await db.select().from(schema.users).where(eq(schema.users.id, id));
+    return user;
+  }
+
+  async createUser(user: schema.InsertUser): Promise<schema.User> {
+    const [created] = await db.insert(schema.users).values(user).returning();
+    return created;
   }
 }
 
