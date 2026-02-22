@@ -20,6 +20,7 @@ export const classes = pgTable("classes", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   academicYear: text("academic_year"),
+  teacherId: uuid("teacher_id"),
 });
 
 export const insertClassSchema = createInsertSchema(classes).omit({ id: true });

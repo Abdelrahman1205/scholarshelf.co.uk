@@ -57,9 +57,12 @@ export interface IStorage {
   getAllocations(classId?: string): Promise<any[]>;
   confirmReceipt(allocationId: string): Promise<schema.FinanceBookAllocation>;
 
+  getUsers(): Promise<schema.User[]>;
   getUserByUsername(username: string): Promise<schema.User | undefined>;
   getUserById(id: string): Promise<schema.User | undefined>;
   createUser(user: schema.InsertUser): Promise<schema.User>;
+  updateUser(id: string, user: Partial<schema.InsertUser>): Promise<schema.User | undefined>;
+  deleteUser(id: string): Promise<void>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -440,6 +443,10 @@ class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async getUsers(): Promise<schema.User[]> {
+    return db.select().from(schema.users);
+  }
+
   async getUserByUsername(username: string): Promise<schema.User | undefined> {
     const [user] = await db.select().from(schema.users).where(eq(schema.users.username, username));
     return user;
@@ -453,6 +460,15 @@ class DatabaseStorage implements IStorage {
   async createUser(user: schema.InsertUser): Promise<schema.User> {
     const [created] = await db.insert(schema.users).values(user).returning();
     return created;
+  }
+
+  async updateUser(id: string, user: Partial<schema.InsertUser>): Promise<schema.User | undefined> {
+    const [updated] = await db.update(schema.users).set(user).where(eq(schema.users.id, id)).returning();
+    return updated;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await db.delete(schema.users).where(eq(schema.users.id, id));
   }
 }
 

@@ -4,6 +4,10 @@
 A comprehensive school book management and distribution platform that handles the entire lifecycle of textbooks within educational institutions. Connects three groups: school staff (admin), teachers, and parents.
 
 ## Recent Changes
+- 2026-02-22: Added Users management tab (admin can create/edit/delete teacher, parent, admin accounts)
+- 2026-02-22: Added teacher-to-class assignment (teacherId on classes, teacher dropdown in class management)
+- 2026-02-22: Teacher dashboard auto-selects assigned class on login
+- 2026-02-22: Added Classes and Students management tabs with full CRUD
 - 2026-02-21: Added role-based authentication with login/logout, session management, and protected routes
 - 2026-02-21: Initial build with full-stack architecture. Database schema, API routes, and all three role-based dashboards implemented.
 
@@ -22,7 +26,7 @@ A comprehensive school book management and distribution platform that handles th
 - `server/index.ts` - Express setup with session middleware
 - `client/src/hooks/use-auth.ts` - Auth hook (login/logout/session)
 - `client/src/pages/login.tsx` - Login page with demo account buttons
-- `client/src/pages/admin.tsx` - Admin dashboard (6 tabs: Books, Inventory, Levels, Codes, Payments, Allocations)
+- `client/src/pages/admin.tsx` - Admin dashboard (9 tabs: Users, Classes, Students, Books, Inventory, Levels, Codes, Payments, Allocations)
 - `client/src/pages/teacher.tsx` - Teacher portal (class selector, receipt confirmation)
 - `client/src/pages/parent.tsx` - Parent portal (baskets, link child, payment history)
 - `client/src/components/layout.tsx` - Shared sidebar layout with user info + logout

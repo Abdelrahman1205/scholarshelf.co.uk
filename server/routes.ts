@@ -421,6 +421,53 @@ export async function registerRoutes(
     }
   });
 
+  // === USER MANAGEMENT ===
+  app.get("/api/users", requireRole("admin"), async (_req, res) => {
+    const users = await storage.getUsers();
+    const safeUsers = users.map(({ passwordHash, ...u }) => u);
+    res.json(safeUsers);
+  });
+
+  app.post("/api/users", requireRole("admin"), async (req, res) => {
+    try {
+      const { username, password, name, role, email } = req.body;
+      if (!username || !password || !name || !role) {
+        return res.status(400).json({ message: "Username, password, name, and role are required" });
+      }
+      const existing = await storage.getUserByUsername(username);
+      if (existing) {
+        return res.status(400).json({ message: "Username already taken" });
+      }
+      const hash = await bcrypt.hash(password, 10);
+      const user = await storage.createUser({ username, passwordHash: hash, name, role, email });
+      const { passwordHash, ...safeUser } = user;
+      res.status(201).json(safeUser);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/users/:id", requireRole("admin"), async (req, res) => {
+    try {
+      const { password, ...rest } = req.body;
+      const updates: any = { ...rest };
+      if (password) {
+        updates.passwordHash = await bcrypt.hash(password, 10);
+      }
+      const user = await storage.updateUser(req.params.id, updates);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const { passwordHash, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.delete("/api/users/:id", requireRole("admin"), async (req, res) => {
+    await storage.deleteUser(req.params.id);
+    res.status(204).send();
+  });
+
   // === SEED DEFAULT USERS ===
   app.post("/api/seed-users", async (_req, res) => {
     try {

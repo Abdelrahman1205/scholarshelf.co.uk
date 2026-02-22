@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,11 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Search, CheckCircle2, Circle, Users, BookOpen, Package } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
 
 interface ClassItem {
   id: string;
   name: string;
   academicYear: string | null;
+  teacherId: string | null;
 }
 
 interface Allocation {
@@ -47,6 +49,7 @@ interface StudentGroup {
 }
 
 export default function TeacherDashboard() {
+  const { user } = useAuth();
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -55,7 +58,15 @@ export default function TeacherDashboard() {
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
-  const activeClassId = selectedClassId || (classes?.[0]?.id ?? "");
+  const assignedClass = classes?.find((c) => c.teacherId === user?.id);
+
+  useEffect(() => {
+    if (assignedClass && !selectedClassId) {
+      setSelectedClassId(assignedClass.id);
+    }
+  }, [assignedClass, selectedClassId]);
+
+  const activeClassId = selectedClassId || assignedClass?.id || (classes?.[0]?.id ?? "");
 
   const { data: allocations, isLoading: allocationsLoading } = useQuery<Allocation[]>({
     queryKey: ["/api/allocations", `?classId=${activeClassId}`],

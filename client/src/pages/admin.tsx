@@ -18,15 +18,217 @@ import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import { useToast } from "@/hooks/use-toast";
 
+function UsersTab() {
+  const { toast } = useToast();
+  const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [form, setForm] = useState({ username: "", password: "", name: "", role: "teacher", email: "" });
+
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], queryFn: getQueryFn({ on401: "throw" }) });
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/users", data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/users"] }); setAddOpen(false); resetForm(); toast({ title: "User created successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", `/api/users/${selectedUser?.id}`, data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/users"] }); setEditOpen(false); toast({ title: "User updated successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/users/${selectedUser?.id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/users"] }); setDeleteOpen(false); toast({ title: "User deleted successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  function resetForm() {
+    setForm({ username: "", password: "", name: "", role: "teacher", email: "" });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-heading font-semibold">All Users</h3>
+        <Button data-testid="button-add-user" onClick={() => { resetForm(); setAddOpen(true); }}>
+          <Plus className="w-4 h-4 mr-2" />
+          Add User
+        </Button>
+      </div>
+
+      <Card className="border-border shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Username</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {users.map((u: any) => (
+              <TableRow key={u.id} data-testid={`row-user-${u.id}`}>
+                <TableCell className="font-medium">{u.name}</TableCell>
+                <TableCell className="text-muted-foreground">{u.username}</TableCell>
+                <TableCell className="text-muted-foreground">{u.email || "-"}</TableCell>
+                <TableCell>
+                  <Badge variant={u.role === "admin" ? "default" : u.role === "teacher" ? "secondary" : "outline"} data-testid={`badge-role-${u.id}`}>
+                    {u.role}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right space-x-1">
+                  <Button data-testid={`button-edit-user-${u.id}`} variant="ghost" size="sm" onClick={() => {
+                    setSelectedUser(u);
+                    setForm({ username: u.username || "", password: "", name: u.name || "", role: u.role || "teacher", email: u.email || "" });
+                    setEditOpen(true);
+                  }}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button data-testid={`button-delete-user-${u.id}`} variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedUser(u); setDeleteOpen(true); }}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {users.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No users found</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {/* Add Dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add New User</DialogTitle>
+            <DialogDescription>Create a new teacher or parent account.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Full Name</Label>
+              <Input data-testid="input-user-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Ms. Sarah Ahmed" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Username</Label>
+              <Input data-testid="input-user-username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="e.g. sarah" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Password</Label>
+              <Input data-testid="input-user-password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Enter password" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Email</Label>
+              <Input data-testid="input-user-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="e.g. sarah@school.edu" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                <SelectTrigger data-testid="select-user-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="teacher">Teacher</SelectItem>
+                  <SelectItem value="parent">Parent</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="button-submit-add-user" onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Creating..." : "Create User"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>Update user details. Leave password blank to keep unchanged.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Full Name</Label>
+              <Input data-testid="input-edit-user-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Username</Label>
+              <Input data-testid="input-edit-user-username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>New Password (leave blank to keep current)</Label>
+              <Input data-testid="input-edit-user-password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Leave blank to keep current" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Email</Label>
+              <Input data-testid="input-edit-user-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                <SelectTrigger data-testid="select-edit-user-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="teacher">Teacher</SelectItem>
+                  <SelectItem value="parent">Parent</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="button-submit-edit-user" onClick={() => {
+              const payload: any = { name: form.name, username: form.username, email: form.email, role: form.role };
+              if (form.password) payload.password = form.password;
+              updateMutation.mutate(payload);
+            }} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Dialog */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete "{selectedUser?.name}"? This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction data-testid="button-confirm-delete-user" onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 function ClassesTab() {
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<any>(null);
-  const [form, setForm] = useState({ name: "", academicYear: "2025-2026" });
+  const [form, setForm] = useState({ name: "", academicYear: "2025-2026", teacherId: "" });
 
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], queryFn: getQueryFn({ on401: "throw" }) });
+  const teachers = users.filter((u: any) => u.role === "teacher");
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/classes", data),
@@ -47,7 +249,7 @@ function ClassesTab() {
   });
 
   function resetForm() {
-    setForm({ name: "", academicYear: "2025-2026" });
+    setForm({ name: "", academicYear: "2025-2026", teacherId: "" });
   }
 
   return (
@@ -66,6 +268,7 @@ function ClassesTab() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Academic Year</TableHead>
+              <TableHead>Teacher</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -74,10 +277,11 @@ function ClassesTab() {
               <TableRow key={cls.id} data-testid={`row-class-${cls.id}`}>
                 <TableCell className="font-medium">{cls.name}</TableCell>
                 <TableCell className="text-muted-foreground">{cls.academicYear || "-"}</TableCell>
+                <TableCell className="text-muted-foreground">{users.find((u: any) => u.id === cls.teacherId)?.name || "Not assigned"}</TableCell>
                 <TableCell className="text-right space-x-1">
                   <Button data-testid={`button-edit-class-${cls.id}`} variant="ghost" size="sm" onClick={() => {
                     setSelectedClass(cls);
-                    setForm({ name: cls.name || "", academicYear: cls.academicYear || "2025-2026" });
+                    setForm({ name: cls.name || "", academicYear: cls.academicYear || "2025-2026", teacherId: cls.teacherId || "none" });
                     setEditOpen(true);
                   }}>
                     <Pencil className="w-4 h-4" />
@@ -89,7 +293,7 @@ function ClassesTab() {
               </TableRow>
             ))}
             {classes.length === 0 && (
-              <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No classes found</TableCell></TableRow>
+              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No classes found</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -110,9 +314,23 @@ function ClassesTab() {
               <Label>Academic Year</Label>
               <Input data-testid="input-class-academic-year" value={form.academicYear} onChange={(e) => setForm({ ...form, academicYear: e.target.value })} />
             </div>
+            <div className="grid gap-2">
+              <Label>Assigned Teacher</Label>
+              <Select value={form.teacherId} onValueChange={(v) => setForm({ ...form, teacherId: v })}>
+                <SelectTrigger data-testid="select-class-teacher">
+                  <SelectValue placeholder="Select teacher (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No teacher assigned</SelectItem>
+                  {teachers.map((t: any) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
-            <Button data-testid="button-submit-add-class" onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>
+            <Button data-testid="button-submit-add-class" onClick={() => createMutation.mutate({ ...form, teacherId: form.teacherId === "none" || !form.teacherId ? null : form.teacherId })} disabled={createMutation.isPending}>
               {createMutation.isPending ? "Adding..." : "Add Class"}
             </Button>
           </DialogFooter>
@@ -134,9 +352,23 @@ function ClassesTab() {
               <Label>Academic Year</Label>
               <Input data-testid="input-edit-class-academic-year" value={form.academicYear} onChange={(e) => setForm({ ...form, academicYear: e.target.value })} />
             </div>
+            <div className="grid gap-2">
+              <Label>Assigned Teacher</Label>
+              <Select value={form.teacherId} onValueChange={(v) => setForm({ ...form, teacherId: v })}>
+                <SelectTrigger data-testid="select-class-teacher">
+                  <SelectValue placeholder="Select teacher (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No teacher assigned</SelectItem>
+                  {teachers.map((t: any) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
-            <Button data-testid="button-submit-edit-class" onClick={() => updateMutation.mutate(form)} disabled={updateMutation.isPending}>
+            <Button data-testid="button-submit-edit-class" onClick={() => updateMutation.mutate({ ...form, teacherId: form.teacherId === "none" || !form.teacherId ? null : form.teacherId })} disabled={updateMutation.isPending}>
               {updateMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
@@ -1373,7 +1605,11 @@ export default function AdminDashboard() {
       </div>
 
       <Tabs defaultValue="books" className="w-full">
-        <TabsList className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 h-auto p-1 bg-card border border-border rounded-lg gap-1">
+        <TabsList className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 h-auto p-1 bg-card border border-border rounded-lg gap-1">
+          <TabsTrigger data-testid="tab-users" value="users" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary py-2 rounded-md transition-all">
+            <UserPlus className="w-4 h-4 mr-2" />
+            <span className="hidden lg:inline">Users</span>
+          </TabsTrigger>
           <TabsTrigger data-testid="tab-classes" value="classes" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary py-2 rounded-md transition-all">
             <GraduationCap className="w-4 h-4 mr-2" />
             <span className="hidden lg:inline">Classes</span>
@@ -1409,6 +1645,9 @@ export default function AdminDashboard() {
         </TabsList>
 
         <div className="mt-6">
+          <TabsContent value="users" className="m-0">
+            <UsersTab />
+          </TabsContent>
           <TabsContent value="classes" className="m-0">
             <ClassesTab />
           </TabsContent>
