@@ -1,0 +1,86 @@
+PS C:\Users\abood\Downloads\Book-Management-System\Book-Management-System> cd "c:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System"
+PS C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System> npm install
+npm warn deprecated @esbuild-kit/esm-loader@2.6.5: Merged into tsx: https://tsx.is
+npm warn deprecated @esbuild-kit/core-utils@3.3.2: Merged into tsx: https://tsx.is
+
+added 383 packages, and audited 384 packages in 38s
+
+51 packages are looking for funding
+  run `npm fund` for details
+
+6 vulnerabilities (1 low, 5 moderate)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+PS C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System> npm run db:push
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System\drizzle.config.ts'
+DATABASE_URL, ensure the database is provisioned
+PS C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System> npm run dev
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+'NODE_ENV' is not recognized as an internal or external command,
+operable program or batch file.
+PS C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System> npm install
+>> npm run db:push
+>> npm run dev
+
+added 8 packages, and audited 392 packages in 4s
+
+52 packages are looking for funding
+  run `npm fund` for details
+
+6 vulnerabilities (1 low, 5 moderate)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System\drizzle.config.ts'
+Using 'pg' driver for database querying
+[✓] Pulling schema from database...
+[✓] Changes applied
+
+> rest-express@1.0.0 dev
+> cross-env NODE_ENV=development tsx server/index.ts
+
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen ENOTSUP: operation not supported on socket 0.0.0.0:5000
+    at Server.setupListenHandle [as _listen2] (node:net:1918:21)
+    at listenInCluster (node:net:1997:12)
+    at node:net:2206:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1976:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'ENOTSUP',
+  errno: -4049,
+  syscall: 'listen',
+  address: '0.0.0.0',
+  port: 5000
+}
+
+Node.js v22.17.1
+PS C:\Users\abood\Downloads\Book-Management-System(1)\Book-Management-System> 
