@@ -19,10 +19,14 @@ export interface IStorage {
 
   getClasses(): Promise<schema.Class[]>;
   createClass(c: schema.InsertClass): Promise<schema.Class>;
+  updateClass(id: string, c: Partial<schema.InsertClass>): Promise<schema.Class | undefined>;
+  deleteClass(id: string): Promise<void>;
 
   getStudents(): Promise<schema.Student[]>;
   getStudentsByClass(classId: string): Promise<schema.Student[]>;
   createStudent(s: schema.InsertStudent): Promise<schema.Student>;
+  updateStudent(id: string, s: Partial<schema.InsertStudent>): Promise<schema.Student | undefined>;
+  deleteStudent(id: string): Promise<void>;
 
   getBookLevels(): Promise<schema.BookLevel[]>;
   createBookLevel(bl: schema.InsertBookLevel): Promise<schema.BookLevel>;
@@ -139,6 +143,15 @@ class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async updateClass(id: string, c: Partial<schema.InsertClass>): Promise<schema.Class | undefined> {
+    const [updated] = await db.update(schema.classes).set(c).where(eq(schema.classes.id, id)).returning();
+    return updated;
+  }
+
+  async deleteClass(id: string): Promise<void> {
+    await db.delete(schema.classes).where(eq(schema.classes.id, id));
+  }
+
   async getStudents(): Promise<schema.Student[]> {
     return db.select().from(schema.students);
   }
@@ -151,6 +164,15 @@ class DatabaseStorage implements IStorage {
     const code = `STU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const [created] = await db.insert(schema.students).values({ ...s, studentCode: code }).returning();
     return created;
+  }
+
+  async updateStudent(id: string, s: Partial<schema.InsertStudent>): Promise<schema.Student | undefined> {
+    const [updated] = await db.update(schema.students).set(s).where(eq(schema.students.id, id)).returning();
+    return updated;
+  }
+
+  async deleteStudent(id: string): Promise<void> {
+    await db.delete(schema.students).where(eq(schema.students.id, id));
   }
 
   async getBookLevels(): Promise<schema.BookLevel[]> {

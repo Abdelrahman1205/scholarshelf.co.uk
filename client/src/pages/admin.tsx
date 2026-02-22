@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight, QrCode, Download, ScanBarcode, Camera, X, Loader2 } from "lucide-react";
+import { Book, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus, Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight, QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -17,6 +17,311 @@ import { Textarea } from "@/components/ui/textarea";
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import { useToast } from "@/hooks/use-toast";
+
+function ClassesTab() {
+  const { toast } = useToast();
+  const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<any>(null);
+  const [form, setForm] = useState({ name: "", academicYear: "2025-2026" });
+
+  const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/classes", data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/classes"] }); setAddOpen(false); resetForm(); toast({ title: "Class created successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", `/api/classes/${selectedClass?.id}`, data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/classes"] }); setEditOpen(false); toast({ title: "Class updated successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/classes/${selectedClass?.id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/classes"] }); setDeleteOpen(false); toast({ title: "Class deleted successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  function resetForm() {
+    setForm({ name: "", academicYear: "2025-2026" });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-heading font-semibold">All Classes</h3>
+        <Button data-testid="button-add-class" onClick={() => { resetForm(); setAddOpen(true); }}>
+          <Plus className="w-4 h-4 mr-2" />
+          Add Class
+        </Button>
+      </div>
+
+      <Card className="border-border shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Academic Year</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {classes.map((cls: any) => (
+              <TableRow key={cls.id} data-testid={`row-class-${cls.id}`}>
+                <TableCell className="font-medium">{cls.name}</TableCell>
+                <TableCell className="text-muted-foreground">{cls.academicYear || "-"}</TableCell>
+                <TableCell className="text-right space-x-1">
+                  <Button data-testid={`button-edit-class-${cls.id}`} variant="ghost" size="sm" onClick={() => {
+                    setSelectedClass(cls);
+                    setForm({ name: cls.name || "", academicYear: cls.academicYear || "2025-2026" });
+                    setEditOpen(true);
+                  }}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button data-testid={`button-delete-class-${cls.id}`} variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {classes.length === 0 && (
+              <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No classes found</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add New Class</DialogTitle>
+            <DialogDescription>Fill in the details to add a new class.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Name</Label>
+              <Input data-testid="input-class-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Academic Year</Label>
+              <Input data-testid="input-class-academic-year" value={form.academicYear} onChange={(e) => setForm({ ...form, academicYear: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="button-submit-add-class" onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Adding..." : "Add Class"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Class</DialogTitle>
+            <DialogDescription>Update the class details.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Name</Label>
+              <Input data-testid="input-edit-class-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Academic Year</Label>
+              <Input data-testid="input-edit-class-academic-year" value={form.academicYear} onChange={(e) => setForm({ ...form, academicYear: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="button-submit-edit-class" onClick={() => updateMutation.mutate(form)} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Class</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete "{selectedClass?.name}"? This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction data-testid="button-confirm-delete-class" onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function StudentsTab() {
+  const { toast } = useToast();
+  const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [form, setForm] = useState({ name: "", classId: "" });
+
+  const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
+
+  const classMap = Object.fromEntries(classes.map((c: any) => [c.id, c]));
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/students", data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); setAddOpen(false); resetForm(); toast({ title: "Student created successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", `/api/students/${selectedStudent?.id}`, data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); setEditOpen(false); toast({ title: "Student updated successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/students/${selectedStudent?.id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); setDeleteOpen(false); toast({ title: "Student deleted successfully" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  function resetForm() {
+    setForm({ name: "", classId: "" });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-heading font-semibold">All Students</h3>
+        <Button data-testid="button-add-student" onClick={() => { resetForm(); setAddOpen(true); }}>
+          <Plus className="w-4 h-4 mr-2" />
+          Add Student
+        </Button>
+      </div>
+
+      <Card className="border-border shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Student Code</TableHead>
+              <TableHead>Class</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {students.map((student: any) => (
+              <TableRow key={student.id} data-testid={`row-student-${student.id}`}>
+                <TableCell className="font-medium">{student.name}</TableCell>
+                <TableCell className="text-muted-foreground font-mono text-sm">{student.studentCode || "-"}</TableCell>
+                <TableCell className="text-muted-foreground">{classMap[student.classId]?.name || "-"}</TableCell>
+                <TableCell className="text-right space-x-1">
+                  <Button data-testid={`button-edit-student-${student.id}`} variant="ghost" size="sm" onClick={() => {
+                    setSelectedStudent(student);
+                    setForm({ name: student.name || "", classId: student.classId || "" });
+                    setEditOpen(true);
+                  }}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button data-testid={`button-delete-student-${student.id}`} variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedStudent(student); setDeleteOpen(true); }}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {students.length === 0 && (
+              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No students found</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add New Student</DialogTitle>
+            <DialogDescription>Fill in the details to add a new student.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Name</Label>
+              <Input data-testid="input-student-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Class</Label>
+              <Select data-testid="select-student-class" value={form.classId} onValueChange={(v) => setForm({ ...form, classId: v })}>
+                <SelectTrigger data-testid="select-student-class-trigger"><SelectValue placeholder="Select a class" /></SelectTrigger>
+                <SelectContent>
+                  {classes.map((cls: any) => (
+                    <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="button-submit-add-student" onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Adding..." : "Add Student"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Student</DialogTitle>
+            <DialogDescription>Update the student details.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Name</Label>
+              <Input data-testid="input-edit-student-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Class</Label>
+              <Select data-testid="select-edit-student-class" value={form.classId} onValueChange={(v) => setForm({ ...form, classId: v })}>
+                <SelectTrigger data-testid="select-edit-student-class-trigger"><SelectValue placeholder="Select a class" /></SelectTrigger>
+                <SelectContent>
+                  {classes.map((cls: any) => (
+                    <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="button-submit-edit-student" onClick={() => updateMutation.mutate(form)} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Student</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete "{selectedStudent?.name}"? This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction data-testid="button-confirm-delete-student" onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
 
 function BooksTab() {
   const { toast } = useToast();
@@ -1068,7 +1373,15 @@ export default function AdminDashboard() {
       </div>
 
       <Tabs defaultValue="books" className="w-full">
-        <TabsList className="grid grid-cols-2 md:grid-cols-6 h-auto p-1 bg-card border border-border rounded-lg gap-1">
+        <TabsList className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 h-auto p-1 bg-card border border-border rounded-lg gap-1">
+          <TabsTrigger data-testid="tab-classes" value="classes" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary py-2 rounded-md transition-all">
+            <GraduationCap className="w-4 h-4 mr-2" />
+            <span className="hidden lg:inline">Classes</span>
+          </TabsTrigger>
+          <TabsTrigger data-testid="tab-students" value="students" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary py-2 rounded-md transition-all">
+            <Users className="w-4 h-4 mr-2" />
+            <span className="hidden lg:inline">Students</span>
+          </TabsTrigger>
           <TabsTrigger data-testid="tab-books" value="books" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary py-2 rounded-md transition-all">
             <Book className="w-4 h-4 mr-2" />
             <span className="hidden lg:inline">Books</span>
@@ -1096,6 +1409,12 @@ export default function AdminDashboard() {
         </TabsList>
 
         <div className="mt-6">
+          <TabsContent value="classes" className="m-0">
+            <ClassesTab />
+          </TabsContent>
+          <TabsContent value="students" className="m-0">
+            <StudentsTab />
+          </TabsContent>
           <TabsContent value="books" className="m-0">
             <BooksTab />
           </TabsContent>

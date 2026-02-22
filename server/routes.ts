@@ -157,6 +157,17 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/classes/:id", requireRole("admin"), async (req, res) => {
+    const cls = await storage.updateClass(req.params.id, req.body);
+    if (!cls) return res.status(404).json({ message: "Class not found" });
+    res.json(cls);
+  });
+
+  app.delete("/api/classes/:id", requireRole("admin"), async (req, res) => {
+    await storage.deleteClass(req.params.id);
+    res.status(204).send();
+  });
+
   // === STUDENTS ===
   app.get("/api/students", requireRole("admin", "teacher"), async (_req, res) => {
     const students = await storage.getStudents();
@@ -170,6 +181,17 @@ export async function registerRoutes(
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
+  });
+
+  app.patch("/api/students/:id", requireRole("admin"), async (req, res) => {
+    const student = await storage.updateStudent(req.params.id, req.body);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    res.json(student);
+  });
+
+  app.delete("/api/students/:id", requireRole("admin"), async (req, res) => {
+    await storage.deleteStudent(req.params.id);
+    res.status(204).send();
   });
 
   // === BOOK LEVELS ===
