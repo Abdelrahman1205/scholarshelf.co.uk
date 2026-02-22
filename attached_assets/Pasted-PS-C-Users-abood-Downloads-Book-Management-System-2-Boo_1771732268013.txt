@@ -1,0 +1,43 @@
+PS C:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System\attached_assets> DATABASE_URL=postgresql://postgres:1205@localhost:5432/Edubook
+>> SESSION_SECRET=any-random-text-here
+DATABASE_URL=postgresql://postgres:1205@localhost:5432/Edubook : The term 'DATABASE_URL=postgresql://postgres:1205@localhost:5432/Edubook' is not recognized as the name of a 
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:1
++ DATABASE_URL=postgresql://postgres:1205@localhost:5432/Edubook
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (DATABASE_URL=po...st:5432/Edubook:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+SESSION_SECRET=any-random-text-here : The term 'SESSION_SECRET=any-random-text-here' is not recognized as the name of a cmdlet, function, script file, or operable program. 
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:2 char:1
++ SESSION_SECRET=any-random-text-here
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (SESSION_SECRET=any-random-text-here:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System\attached_assets> cd "c:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System"
+PS C:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System> npx tsx script/seed-admin.ts
+
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'C:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System\script\seed-admin.ts' imported from C:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System\
+    at finalizeResolution (node:internal/modules/esm/resolve:275:11)
+    at moduleResolve (node:internal/modules/esm/resolve:860:10)
+    at defaultResolve (node:internal/modules/esm/resolve:984:11)
+    at nextResolve (node:internal/modules/esm/hooks:748:28)
+    at resolveBase (file:///C:/Users/abood/Downloads/Book-Management-System(2)/Book-Management-System/node_modules/tsx/dist/esm/index.mjs?1771732143012:2:3744)
+    at resolveDirectory (file:///C:/Users/abood/Downloads/Book-Management-System(2)/Book-Management-System/node_modules/tsx/dist/esm/index.mjs?1771732143012:2:4243)
+    at resolveTsPaths (file:///C:/Users/abood/Downloads/Book-Management-System(2)/Book-Management-System/node_modules/tsx/dist/esm/index.mjs?1771732143012:2:4984)
+    at resolve (file:///C:/Users/abood/Downloads/Book-Management-System(2)/Book-Management-System/node_modules/tsx/dist/esm/index.mjs?1771732143012:2:5361)
+    at nextResolve (node:internal/modules/esm/hooks:748:28)
+    at Hooks.resolve (node:internal/modules/esm/hooks:240:30) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///C:/Users/abood/Downloads/Book-Management-System(2)/Book-Management-System/script/seed-admin.ts'
+}
+
+Node.js v22.17.1
+PS C:\Users\abood\Downloads\Book-Management-System(2)\Book-Management-System> npx cross-env NODE_ENV=development npx tsx server/index.ts
+3:49:43 AM [express] serving on localhost:5000
+3:50:07 AM [express] GET /api/auth/me 401 in 1ms :: {"message":"Not authenticated"}
