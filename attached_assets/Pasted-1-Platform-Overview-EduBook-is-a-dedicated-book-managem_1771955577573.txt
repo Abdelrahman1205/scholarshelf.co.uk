@@ -1,0 +1,211 @@
+1. Platform Overview
+EduBook is a dedicated book management and distribution system for supplementary schools.
+It digitises and controls the entire book lifecycle, from stock entry to final classroom handover, while coordinating administrators, teachers, and parents in a single system.
+Primary Objective:
+Ensure that:
+•	Every required book is paid for
+•	Every book handed out is recorded
+•	Every stakeholder sees only what they need
+________________________________________
+2. User Roles & Access Model
+EduBook is built around strict role-based access control.
+2.1 System Roles
+Role	Purpose
+Admin	Full system control & financial oversight
+Teacher	Book handover & class-level tracking
+Parent	Payment & child-specific visibility
+Each role has hard access boundaries to prevent data leakage or misuse.
+________________________________________
+3. Administrative Console (School Control Centre)
+The Admin Console is the operational heart of EduBook.
+________________________________________
+3.1 Book Inventory & Catalogue Management
+Feature: ISBN Barcode Scanning
+What it does:
+Admins can add books by scanning ISBN barcodes using a camera or scanner.
+Business value:
+•	Eliminates manual data entry errors
+•	Speeds up inventory setup
+•	Allows non-technical staff to manage stock
+________________________________________
+Feature: Automated Book Lookup
+What it does:
+After scanning, the system automatically retrieves:
+•	Book title
+•	Author
+•	Standard identifiers
+Business value:
+•	Ensures consistent book data
+•	Saves admin time
+•	Prevents duplicate or misnamed entries
+________________________________________
+Feature: Real-Time Stock Tracking
+What it does:
+Every book movement is tracked:
+•	Added
+•	Reserved
+•	Allocated
+•	Handed out
+Business value:
+•	Prevents stock loss
+•	Enables accurate reordering
+•	Provides audit-ready records
+________________________________________
+3.2 Academic Structure Configuration
+Feature: Localised Class & Level Setup
+What it does:
+Admins configure school-specific levels such as:
+•	براعم
+•	تمهيدي
+•	Levels 1–6
+•	Pre-GCSE / GCSE
+Business value:
+•	Matches real school structure
+•	No forced “international school” templates
+•	Easy parent understanding
+________________________________________
+Feature: Book Bundling (Book Levels)
+What it does:
+Admins group individual books into predefined bundles per level.
+Business value:
+•	Simplifies parent purchasing
+•	Prevents missed or incorrect books
+•	Standardises requirements per class
+________________________________________
+3.3 Student & Parent Management
+Feature: Student Records
+What it does:
+Each student has a unique system profile linked to:
+•	Class
+•	Book requirements
+•	Payment status
+Business value:
+•	Centralised student tracking
+•	No paper lists
+•	Easy year-to-year continuity
+________________________________________
+Feature: Secure Linking Codes
+What it does:
+Each student is issued a unique linking code that parents use to connect to their child.
+Business value:
+•	Prevents unauthorised access
+•	No need to share personal student data
+•	Simple onboarding for parents
+________________________________________
+3.4 Payment & Allocation Engine
+Feature: Bank Transfer Payment Tracking
+What it does:
+Parents receive:
+•	School bank details
+•	A unique payment reference
+Admins manually verify transfers and confirm payment.
+Business value:
+•	Works without card payments
+•	Suitable for Sudanese & community schools
+•	Clear financial trail
+________________________________________
+Feature: Payment Confirmation Workflow
+What it does:
+Once payment is confirmed:
+•	Books are automatically reserved
+•	Inventory updates instantly
+Business value:
+•	Prevents unpaid book distribution
+•	Removes manual cross-checking
+•	Protects school revenue
+________________________________________
+4. Teacher Portal (Classroom Operations)
+The Teacher Portal is designed for speed and simplicity.
+________________________________________
+4.1 Class-Specific Access
+Feature: Assigned Class View
+What it does:
+Teachers only see:
+•	Their own class
+•	Their own students
+Business value:
+•	Zero confusion
+•	Data privacy
+•	Faster classroom flow
+________________________________________
+4.2 Digital Book Handover Confirmation
+Feature: One-Click Confirmation
+What it does:
+When books are handed out, teachers mark:
+•	Student received books
+•	Time and date auto-recorded
+Business value:
+•	No paper signatures
+•	Instant confirmation
+•	Full accountability
+________________________________________
+4.3 Distribution Status Visibility
+Feature: Live Status Tracking
+What it does:
+Teachers can see:
+•	Paid students
+•	Pending students
+Business value:
+•	No classroom disputes
+•	No guesswork
+•	Smooth distribution days
+________________________________________
+5. Parent Portal (Self-Service Experience)
+Designed to reduce confusion, friction, and back-and-forth messaging.
+________________________________________
+5.1 Secure Parent Access
+Feature: Child Linking via Code
+What it does:
+Parents link only to their own child using a secure code.
+Business value:
+•	Data protection
+•	No manual admin intervention
+•	Fast onboarding
+________________________________________
+5.2 Automated Book Baskets
+Feature: Class-Based Basket Generation
+What it does:
+The system automatically:
+•	Identifies required books
+•	Calculates total cost
+Business value:
+•	Prevents wrong purchases
+•	Eliminates “What do I need to buy?” questions
+________________________________________
+5.3 Payment Guidance & Tracking
+Feature: Guided Bank Transfer Instructions
+What it does:
+Parents receive:
+•	Clear payment steps
+•	Unique reference
+•	Status updates
+Business value:
+•	Reduces payment errors
+•	Builds trust
+•	Improves parent satisfaction
+________________________________________
+6. Security & Data Integrity
+Feature: Role-Based Access Control
+Ensures users only access authorised data.
+Feature: Encrypted Password Storage
+All credentials are securely protected.
+Feature: Audit Trails
+Key actions (payments, allocations, confirmations) are recorded.
+Business value:
+•	Compliance-ready
+•	Dispute resolution
+•	Institutional trust
+________________________________________
+7. Operational & Financial Impact
+Immediate Benefits
+•	Elimination of unpaid book distribution
+•	Faster admin workflows
+•	Reduced staff workload
+Long-Term Benefits
+•	Accurate financial records
+•	Improved parent trust
+•	Scalable system for growth
+________________________________________
+8. Summary (Business Positioning)
+EduBook is not just a software tool.
+It is an operational control system that turns a chaotic, manual process into a predictable, auditable, and scalable workflow.
