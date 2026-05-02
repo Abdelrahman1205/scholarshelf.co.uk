@@ -4,6 +4,11 @@
 A comprehensive school book management and distribution platform that handles the entire lifecycle of textbooks within educational institutions. Connects three groups: school staff (admin), teachers, and parents.
 
 ## Recent Changes
+- 2026-05-02: Payment system overhauled — fixed paidAt bug, added externalPaymentId/externalPaymentStatus/notes columns, rebuilt admin PaymentsTab with revenue summary cards, filtering, detail dialog, and external ID column
+- 2026-05-02: Created server/paymentIntegration.ts — clean plug-in layer for external school management system API (PUSH + webhook PULL flows)
+- 2026-05-02: Added POST /api/webhooks/payment-update — external system can auto-confirm/reject payments via webhook with HMAC-SHA256 signature verification
+- 2026-05-02: Added GET /api/admin/integration-status — shows whether external integration is active
+- 2026-05-02: Created EXTERNAL_API_INTEGRATION_SPEC.md — full API spec for AntiGravity team
 - 2026-02-22: Added Users management tab (admin can create/edit/delete teacher, parent, admin accounts)
 - 2026-02-22: Added teacher-to-class assignment (teacherId on classes, teacher dropdown in class management)
 - 2026-02-22: Teacher dashboard auto-selects assigned class on login

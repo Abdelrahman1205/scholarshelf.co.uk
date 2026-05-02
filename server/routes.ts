@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcrypt";
 import { storage } from "./storage";
+import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration";
 
 function generateLinkingCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -323,22 +324,48 @@ export async function registerRoutes(
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       const { basketIds, paymentMethod, paymentReference } = req.body;
-      const baskets = [];
+      const loadedBaskets = [];
       let total = 0;
       for (const id of basketIds) {
         const basket = await storage.getBasket(id);
         if (!basket) return res.status(404).json({ message: `Basket ${id} not found` });
-        baskets.push(basket);
+        loadedBaskets.push(basket);
         total += parseFloat(basket.totalAmount);
       }
 
       const reference = paymentReference || generatePaymentReference();
+
+      let externalPaymentId: string | undefined;
+      let externalPaymentStatus: string | undefined;
+
+      if (isExternalIntegrationEnabled() && loadedBaskets.length > 0) {
+        const firstBasket = loadedBaskets[0];
+        const extResult = await createExternalPayment({
+          eduBookReference: reference,
+          studentName: firstBasket.student?.name || "Unknown",
+          studentClass: firstBasket.student?.class?.name || "Unknown",
+          parentEmail: user.email,
+          amountGBP: total,
+          items: (firstBasket.items || []).map((item: any) => ({
+            title: item.book?.title || "Book",
+            quantity: item.quantity || 1,
+            unitPrice: parseFloat(item.unitPrice || "0"),
+          })),
+        });
+        if (extResult) {
+          externalPaymentId = extResult.externalPaymentId;
+          externalPaymentStatus = extResult.externalStatus;
+        }
+      }
+
       const payment = await storage.createPayment({
         parentIdentifier: user.email,
         totalAmount: total.toFixed(2),
         paymentMethod: paymentMethod || "bank_transfer",
         paymentReference: reference,
         status: "pending",
+        externalPaymentId,
+        externalPaymentStatus,
       }, basketIds);
 
       res.status(201).json(payment);
@@ -466,6 +493,57 @@ export async function registerRoutes(
   app.delete("/api/users/:id", requireRole("admin"), async (req, res) => {
     await storage.deleteUser(req.params.id);
     res.status(204).send();
+  });
+
+  // === EXTERNAL PAYMENT WEBHOOK ===
+  // This endpoint is called by the external school management system to auto-confirm/reject payments.
+  // The external system must send: { externalPaymentId, eduBookReference, status, confirmedAt?, notes? }
+  // Optionally secured with HMAC signature in the X-Signature header.
+  app.post("/api/webhooks/payment-update", async (req, res) => {
+    try {
+      const rawBody = JSON.stringify(req.body);
+      const signature = req.headers["x-signature"] as string || "";
+      if (!verifyWebhookSignature(rawBody, signature)) {
+        return res.status(401).json({ message: "Invalid webhook signature" });
+      }
+
+      const { externalPaymentId, eduBookReference, status, confirmedAt, notes } = req.body;
+      if (!eduBookReference || !status) {
+        return res.status(400).json({ message: "eduBookReference and status are required" });
+      }
+
+      const payment = await storage.updatePaymentByReference(eduBookReference, {
+        externalPaymentId,
+        externalPaymentStatus: status,
+        notes,
+      });
+
+      if (!payment) {
+        return res.status(404).json({ message: "Payment not found for reference: " + eduBookReference });
+      }
+
+      if (status === "completed") {
+        await storage.confirmPayment(payment.id);
+        console.log(`[Webhook] Auto-confirmed payment ${eduBookReference} from external system`);
+      } else if (status === "failed") {
+        await storage.rejectPayment(payment.id);
+        console.log(`[Webhook] Auto-rejected payment ${eduBookReference} from external system`);
+      }
+
+      res.json({ success: true, message: `Payment ${eduBookReference} updated to status: ${status}` });
+    } catch (e: any) {
+      console.error("[Webhook] Error processing payment update:", e.message);
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === INTEGRATION STATUS ===
+  app.get("/api/admin/integration-status", requireRole("admin"), (_req, res) => {
+    res.json({
+      externalPaymentIntegration: isExternalIntegrationEnabled(),
+      webhookEndpoint: "/api/webhooks/payment-update",
+      webhookSignatureHeader: "X-Signature",
+    });
   });
 
   // === SEED DEFAULT USERS ===

@@ -1487,68 +1487,228 @@ function LinkingCodesTab() {
 }
 
 function PaymentsTab() {
-  const { data: payments = [] } = useQuery<any[]>({ queryKey: ["/api/admin/payments"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { toast } = useToast();
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState<any>(null);
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  const { data: payments = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/admin/payments"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: baskets = [] } = useQuery<any[]>({ queryKey: ["/api/admin/baskets"], queryFn: getQueryFn({ on401: "throw" }) });
 
   const confirmMutation = useMutation({
     mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/confirm`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/allocations"] });
+      toast({ title: "Payment confirmed", description: "Books have been allocated to the student." });
+      setDetailOpen(false);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
   const rejectMutation = useMutation({
     mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/reject`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] });
+      toast({ title: "Payment rejected", description: "The basket has been returned to pending." });
+      setDetailOpen(false);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
   function statusBadge(status: string) {
     switch (status) {
-      case "pending": return <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Pending</Badge>;
-      case "completed": case "confirmed": return <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Completed</Badge>;
-      case "failed": case "rejected": return <Badge variant="secondary" className="bg-destructive/10 text-destructive hover:bg-destructive/20">Failed</Badge>;
+      case "pending": return <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Pending Verification</Badge>;
+      case "completed": return <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Confirmed</Badge>;
+      case "failed": return <Badge variant="secondary" className="bg-destructive/10 text-destructive hover:bg-destructive/20">Rejected</Badge>;
       default: return <Badge variant="secondary">{status}</Badge>;
     }
   }
 
+  const getBasketForPayment = (paymentId: string) => {
+    return baskets.filter((b: any) => b.status !== "pending" || true).find((b: any) => {
+      return baskets.some((bk: any) => bk.id === b.id);
+    });
+  };
+
+  const filtered = filterStatus === "all" ? payments : payments.filter((p: any) => p.status === filterStatus);
+
+  const totalPending = payments.filter((p: any) => p.status === "pending").reduce((s: number, p: any) => s + parseFloat(p.totalAmount || 0), 0);
+  const totalConfirmed = payments.filter((p: any) => p.status === "completed").reduce((s: number, p: any) => s + parseFloat(p.totalAmount || 0), 0);
+
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-heading font-semibold">All Payments</h3>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h3 className="text-lg font-heading font-semibold">Payment Management</h3>
+        <div className="flex gap-2">
+          {["all", "pending", "completed", "failed"].map((s) => (
+            <Button
+              key={s}
+              data-testid={`button-filter-${s}`}
+              size="sm"
+              variant={filterStatus === s ? "default" : "outline"}
+              onClick={() => setFilterStatus(s)}
+              className="capitalize"
+            >
+              {s === "all" ? "All" : s === "completed" ? "Confirmed" : s === "failed" ? "Rejected" : "Pending"}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="border-border shadow-sm">
+          <CardContent className="pt-4 pb-4">
+            <p className="text-sm text-muted-foreground">Total Payments</p>
+            <p className="text-2xl font-bold font-heading mt-1" data-testid="text-total-payments">{payments.length}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-amber-500/30 shadow-sm">
+          <CardContent className="pt-4 pb-4">
+            <p className="text-sm text-amber-600">Pending Verification</p>
+            <p className="text-2xl font-bold font-heading text-amber-600 mt-1" data-testid="text-pending-amount">
+              £{totalPending.toFixed(2)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-emerald-500/30 shadow-sm">
+          <CardContent className="pt-4 pb-4">
+            <p className="text-sm text-emerald-600">Total Confirmed Revenue</p>
+            <p className="text-2xl font-bold font-heading text-emerald-600 mt-1" data-testid="text-confirmed-amount">
+              £{totalConfirmed.toFixed(2)}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card className="border-border shadow-sm">
         <Table>
           <TableHeader className="bg-muted/50">
             <TableRow>
+              <TableHead className="px-4">Date</TableHead>
+              <TableHead>Parent</TableHead>
               <TableHead>Reference</TableHead>
               <TableHead>Amount</TableHead>
               <TableHead>Method</TableHead>
+              <TableHead>External ID</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-right px-4">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {payments.map((p: any) => (
-              <TableRow key={p.id} data-testid={`row-payment-${p.id}`}>
-                <TableCell className="font-mono text-sm">{p.paymentReference}</TableCell>
-                <TableCell className="font-medium">£{parseFloat(p.totalAmount).toFixed(2)}</TableCell>
-                <TableCell className="text-muted-foreground capitalize">{(p.paymentMethod || "").replace("_", " ")}</TableCell>
-                <TableCell>{statusBadge(p.status)}</TableCell>
-                <TableCell className="text-right space-x-1">
-                  {p.status === "pending" && (
-                    <>
-                      <Button data-testid={`button-confirm-payment-${p.id}`} variant="outline" size="sm" className="text-emerald-600 border-emerald-600/30 hover:bg-emerald-500/10" onClick={() => confirmMutation.mutate(p.id)}>
-                        Confirm
-                      </Button>
-                      <Button data-testid={`button-reject-payment-${p.id}`} variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" onClick={() => rejectMutation.mutate(p.id)}>
-                        Reject
-                      </Button>
-                    </>
+            {isLoading && (
+              <TableRow><TableCell colSpan={8} className="text-center py-8"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></TableCell></TableRow>
+            )}
+            {filtered.map((p: any) => (
+              <TableRow key={p.id} data-testid={`row-payment-${p.id}`} className="cursor-pointer hover:bg-muted/30" onClick={() => { setSelectedPayment(p); setDetailOpen(true); }}>
+                <TableCell className="px-4 text-sm text-muted-foreground">
+                  {p.paidAt ? new Date(p.paidAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                </TableCell>
+                <TableCell className="text-sm">{p.parentIdentifier}</TableCell>
+                <TableCell>
+                  <code className="bg-muted px-2 py-1 rounded font-mono text-xs">{p.paymentReference}</code>
+                </TableCell>
+                <TableCell className="font-semibold">£{parseFloat(p.totalAmount).toFixed(2)}</TableCell>
+                <TableCell className="text-muted-foreground capitalize text-sm">{(p.paymentMethod || "").replace(/_/g, " ")}</TableCell>
+                <TableCell className="text-muted-foreground text-xs font-mono">
+                  {p.externalPaymentId ? (
+                    <code className="bg-muted px-1 py-0.5 rounded">{p.externalPaymentId}</code>
+                  ) : (
+                    <span className="text-muted-foreground/50">—</span>
                   )}
+                </TableCell>
+                <TableCell>{statusBadge(p.status)}</TableCell>
+                <TableCell className="text-right px-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex gap-1 justify-end">
+                    {p.status === "pending" && (
+                      <>
+                        <Button data-testid={`button-confirm-payment-${p.id}`} variant="outline" size="sm" className="text-emerald-600 border-emerald-600/30 hover:bg-emerald-500/10" onClick={(e) => { e.stopPropagation(); confirmMutation.mutate(p.id); }} disabled={confirmMutation.isPending}>
+                          Confirm
+                        </Button>
+                        <Button data-testid={`button-reject-payment-${p.id}`} variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" onClick={(e) => { e.stopPropagation(); rejectMutation.mutate(p.id); }} disabled={rejectMutation.isPending}>
+                          Reject
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
-            {payments.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No payments found</TableCell></TableRow>
+            {!isLoading && filtered.length === 0 && (
+              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No payments found</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </Card>
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        {selectedPayment && (
+          <DialogContent className="sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle className="font-heading">Payment Detail</DialogTitle>
+              <DialogDescription>Full record for reference <span className="font-mono">{selectedPayment.paymentReference}</span></DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Parent</p>
+                  <p className="font-medium">{selectedPayment.parentIdentifier}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Amount</p>
+                  <p className="font-bold text-lg text-primary">£{parseFloat(selectedPayment.totalAmount).toFixed(2)}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Payment Method</p>
+                  <p className="capitalize">{(selectedPayment.paymentMethod || "").replace(/_/g, " ")}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Status</p>
+                  <p>{statusBadge(selectedPayment.status)}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Initiated</p>
+                  <p>{selectedPayment.paidAt ? new Date(selectedPayment.paidAt).toLocaleString("en-GB") : "—"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Confirmed</p>
+                  <p>{selectedPayment.confirmedAt ? new Date(selectedPayment.confirmedAt).toLocaleString("en-GB") : "—"}</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border p-3 bg-muted/20 space-y-2 text-sm">
+                <p className="text-muted-foreground text-xs uppercase tracking-wide font-medium">EduBook Reference</p>
+                <p className="font-mono text-base font-bold tracking-widest">{selectedPayment.paymentReference}</p>
+              </div>
+              {selectedPayment.externalPaymentId && (
+                <div className="rounded-lg border border-border p-3 bg-muted/20 space-y-2 text-sm">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide font-medium">External System ID</p>
+                  <p className="font-mono">{selectedPayment.externalPaymentId}</p>
+                  {selectedPayment.externalPaymentStatus && (
+                    <p className="text-muted-foreground">External Status: <span className="capitalize font-medium">{selectedPayment.externalPaymentStatus}</span></p>
+                  )}
+                </div>
+              )}
+              {selectedPayment.notes && (
+                <div className="rounded-lg border border-border p-3 bg-muted/20 text-sm">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide font-medium mb-1">Notes</p>
+                  <p>{selectedPayment.notes}</p>
+                </div>
+              )}
+            </div>
+            {selectedPayment.status === "pending" && (
+              <DialogFooter className="gap-2">
+                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10" onClick={() => rejectMutation.mutate(selectedPayment.id)} disabled={rejectMutation.isPending}>
+                  Reject Payment
+                </Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => confirmMutation.mutate(selectedPayment.id)} disabled={confirmMutation.isPending}>
+                  {confirmMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Confirm & Allocate Books
+                </Button>
+              </DialogFooter>
+            )}
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 }

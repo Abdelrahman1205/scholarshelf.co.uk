@@ -53,6 +53,7 @@ export interface IStorage {
   getPayments(parentIdentifier?: string): Promise<schema.BookPayment[]>;
   confirmPayment(paymentId: string): Promise<schema.BookPayment>;
   rejectPayment(paymentId: string): Promise<schema.BookPayment>;
+  updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null>;
 
   getAllocations(classId?: string): Promise<any[]>;
   confirmReceipt(allocationId: string): Promise<schema.FinanceBookAllocation>;
@@ -374,6 +375,13 @@ class DatabaseStorage implements IStorage {
       await db.update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
     }
     return created;
+  }
+
+  async updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
+    const [payment] = await db.select().from(schema.bookPayments).where(eq(schema.bookPayments.paymentReference, reference));
+    if (!payment) return null;
+    const [updated] = await db.update(schema.bookPayments).set(updates).where(eq(schema.bookPayments.paymentReference, reference)).returning();
+    return updated;
   }
 
   async getPayments(parentIdentifier?: string): Promise<schema.BookPayment[]> {

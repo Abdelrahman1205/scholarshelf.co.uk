@@ -144,8 +144,11 @@ export const bookPayments = pgTable("book_payments", {
   paymentMethod: text("payment_method").default("bank_transfer"),
   paymentReference: text("payment_reference").unique().notNull(),
   status: text("status").default("pending").notNull(),
-  paidAt: timestamp("paid_at"),
+  paidAt: timestamp("paid_at").default(sql`now()`),
   confirmedAt: timestamp("confirmed_at"),
+  externalPaymentId: text("external_payment_id"),
+  externalPaymentStatus: text("external_payment_status"),
+  notes: text("notes"),
 });
 
 export const insertBookPaymentSchema = createInsertSchema(bookPayments).omit({ id: true, paidAt: true, confirmedAt: true });
