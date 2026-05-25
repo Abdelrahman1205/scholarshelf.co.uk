@@ -1,0 +1,61 @@
+2026-05-23 23:24:25.358 BST [26804] LOG:  starting PostgreSQL 18.1 on x86_64-windows, compiled by msvc-19.44.35221, 64-bit
+2026-05-23 23:24:25.384 BST [26804] LOG:  listening on IPv6 address "::1", port 5433
+2026-05-23 23:24:25.385 BST [26804] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-05-23 23:24:25.763 BST [42920] LOG:  database system was shut down at 2026-05-23 23:24:04 BST
+2026-05-23 23:24:25.810 BST [26804] LOG:  database system is ready to accept connections
+2026-05-23 23:24:52.470 BST [23884] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-23 23:29:25.683 BST [43620] LOG:  checkpoint starting: time
+2026-05-23 23:29:40.325 BST [43620] LOG:  checkpoint complete: wrote 132 buffers (0.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=14.533 s, sync=0.072 s, total=14.643 s; sync files=112, longest=0.003 s, average=0.001 s; distance=932 kB, estimate=932 kB; lsn=0/18DA5D8, redo lsn=0/18DA548
+2026-05-23 23:33:24.160 BST [26804] LOG:  background worker "logical replication launcher" (PID 19704) was terminated by exception 0xC000013A
+2026-05-23 23:33:24.160 BST [26804] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-05-23 23:33:24.160 BST [26804] LOG:  terminating any other active server processes
+2026-05-23 23:33:24.172 BST [26804] LOG:  received fast shutdown request
+^C2026-05-23 23:35:24.244 BST [33056] LOG:  starting PostgreSQL 18.1 on x86_64-windows, compiled by msvc-19.44.35221, 64-bit
+2026-05-23 23:35:24.258 BST [33056] LOG:  listening on IPv6 address "::1", port 5433
+2026-05-23 23:35:24.259 BST [33056] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-05-23 23:35:24.548 BST [28824] LOG:  database system was interrupted; last known up at 2026-05-23 23:29:40 BST
+2026-05-23 23:35:25.114 BST [28824] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-05-23 23:35:25.128 BST [28824] LOG:  redo starts at 0/18DA548
+2026-05-23 23:35:25.129 BST [28824] LOG:  invalid record length at 0/18DA688: expected at least 24, got 0
+2026-05-23 23:35:25.130 BST [28824] LOG:  redo done at 0/18DA650 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-05-23 23:35:25.181 BST [44532] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-05-23 23:35:25.239 BST [44532] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.008 s, sync=0.005 s, total=0.100 s; sync files=2, longest=0.003 s, average=0.003 s; distance=0 kB, estimate=0 kB; lsn=0/18DA688, redo lsn=0/18DA688
+2026-05-23 23:35:25.304 BST [33056] LOG:  database system is ready to accept connections
+2026-05-23 23:35:58.805 BST [35372] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-23 23:40:25.246 BST [44532] LOG:  checkpoint starting: time
+2026-05-23 23:40:33.610 BST [44532] LOG:  checkpoint complete: wrote 72 buffers (0.4%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=8.333 s, sync=0.010 s, total=8.365 s; sync files=48, longest=0.002 s, average=0.001 s; distance=265 kB, estimate=265 kB; lsn=0/191CD18, redo lsn=0/191CC88
+2026-05-24 22:02:09.892 BST [44532] LOG:  checkpoint starting: time
+2026-05-24 22:02:10.251 BST [44532] LOG:  checkpoint complete: wrote 3 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.342 s, sync=0.003 s, total=0.359 s; sync files=4, longest=0.002 s, average=0.001 s; distance=19 kB, estimate=240 kB; lsn=0/1921AB0, redo lsn=0/1921A58
+2026-05-24 22:07:09.082 BST [44532] LOG:  checkpoint starting: time
+2026-05-24 22:07:09.797 BST [44532] LOG:  checkpoint complete: wrote 6 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.677 s, sync=0.006 s, total=0.716 s; sync files=6, longest=0.003 s, average=0.001 s; distance=33 kB, estimate=220 kB; lsn=0/192A0D8, redo lsn=0/192A080
+2026-05-24 22:12:09.810 BST [44532] LOG:  checkpoint starting: time
+2026-05-24 22:12:11.274 BST [44532] LOG:  checkpoint complete: wrote 13 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.439 s, sync=0.011 s, total=1.465 s; sync files=10, longest=0.003 s, average=0.002 s; distance=80 kB, estimate=206 kB; lsn=0/193E3D8, redo lsn=0/193E380
+2026-05-24 22:17:09.282 BST [44532] LOG:  checkpoint starting: time
+2026-05-24 22:17:09.658 BST [44532] LOG:  checkpoint complete: wrote 3 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.334 s, sync=0.006 s, total=0.376 s; sync files=4, longest=0.003 s, average=0.002 s; distance=11 kB, estimate=186 kB; lsn=0/1941060, redo lsn=0/1941008
+2026-05-24 22:22:09.670 BST [44532] LOG:  checkpoint starting: time
+2026-05-24 22:22:09.821 BST [44532] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.004 s, total=0.151 s; sync files=1, longest=0.004 s, average=0.004 s; distance=4 kB, estimate=168 kB; lsn=0/19421C0, redo lsn=0/1942168
+2026-05-24 22:36:49.073 BST [39044] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-24 22:36:49.073 BST [18732] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-24 22:36:49.073 BST [47156] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-24 22:36:49.073 BST [47472] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-24 22:36:49.073 BST [47720] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-24 22:37:09.832 BST [44532] LOG:  checkpoint starting: time
+2026-05-24 22:37:10.207 BST [44532] LOG:  checkpoint complete: wrote 3 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.341 s, sync=0.006 s, total=0.377 s; sync files=4, longest=0.002 s, average=0.002 s; distance=6 kB, estimate=152 kB; lsn=0/1943DB0, redo lsn=0/1943D20
+2026-05-25 06:23:11.607 BST [28004] ERROR:  column "status" does not exist at character 68
+2026-05-25 06:23:11.607 BST [28004] STATEMENT:  select "id", "username", "password_hash", "name", "role", "email", "status", "school_id", "email_verified_at", "last_login_at", "created_at", "updated_at" from "users" where "users"."username" = $1
+2026-05-25 06:23:31.405 BST [50980] ERROR:  column "status" does not exist at character 68
+2026-05-25 06:23:31.405 BST [50980] STATEMENT:  select "id", "username", "password_hash", "name", "role", "email", "status", "school_id", "email_verified_at", "last_login_at", "created_at", "updated_at" from "users" where "users"."username" = $1
+2026-05-25 06:28:13.046 BST [44532] LOG:  checkpoint starting: time
+2026-05-25 06:28:13.523 BST [44532] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.453 s, sync=0.002 s, total=0.483 s; sync files=3, longest=0.001 s, average=0.001 s; distance=16 kB, estimate=138 kB; lsn=0/1948138, redo lsn=0/19480E0
+2026-05-25 06:29:37.984 BST [33056] LOG:  background worker "logical replication launcher" (PID 29856) was terminated by exception 0xC000013A
+2026-05-25 06:29:37.984 BST [33056] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-05-25 06:29:37.984 BST [33056] LOG:  terminating any other active server processes
+2026-05-25 06:29:38.050 BST [33056] LOG:  all server processes terminated; reinitializing
+^C

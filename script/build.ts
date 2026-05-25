@@ -9,6 +9,7 @@ const allowlist = [
   "axios",
   "cors",
   "date-fns",
+  "bcryptjs",
   "drizzle-orm",
   "drizzle-zod",
   "express",
