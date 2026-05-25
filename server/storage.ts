@@ -1,52 +1,52 @@
 import { eq, and, lt, desc, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
-import mysql from "mysql2/promise";
+import { drizzle } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import * as schema from "../shared/schema.js";
 
-const pool = mysql.createPool({
-  uri: process.env.DATABASE_URL,
-  waitForConnections: true,
-  connectionLimit: 10,
-});
-const db = drizzle(pool, { schema, mode: "default" });
+// Lazy DB initialisation — safe when DATABASE_URL is absent (falls back to memory)
+let _db: ReturnType<typeof drizzle> | null = null;
+function getDb(): ReturnType<typeof drizzle> {
+  if (!_db) {
+    if (!process.env.DATABASE_URL) throw new Error("No DATABASE_URL configured");
+    const sql = neon(process.env.DATABASE_URL);
+    _db = drizzle(sql, { schema });
+  }
+  return _db;
+}
 
+// PostgreSQL supports RETURNING — no need for a separate SELECT after insert/update
 async function insertAndFetchById<TTable extends { id: any }>(table: TTable, values: unknown): Promise<any> {
-  const [inserted] = await db.insert(table as any).values(values as any).$returningId();
-  const [created] = await db.select().from(table as any).where(eq((table as any).id, inserted.id));
+  const [created] = await getDb().insert(table as any).values(values as any).returning();
   return created as any;
 }
 
 async function updateAndFetchFirst<TTable extends { id: any }>(table: TTable, whereClause: any, values: unknown): Promise<any> {
-  await db.update(table as any).set(values as any).where(whereClause);
-  const [updated] = await db.select().from(table as any).where(whereClause);
+  const [updated] = await getDb().update(table as any).set(values as any).where(whereClause).returning();
   return updated as any;
 }
 
 function isDbUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as { code?: string } | undefined)?.code;
-  const nestedErrors = (error as { errors?: Array<{ code?: string; message?: string }> } | undefined)?.errors ?? [];
 
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND") {
-    return true;
-  }
+  // No DATABASE_URL configured at all
+  if (message.includes("No DATABASE_URL")) return true;
 
-  if (nestedErrors.some((nested) => nested.code === "ECONNREFUSED" || nested.code === "ENOTFOUND")) {
-    return true;
-  }
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND") return true;
 
   return (
     message.includes("ECONNREFUSED") ||
-    message.includes("SASL") ||
-    message.includes("password") ||
-    message.includes("Connection terminated") ||
-    message.includes("ER_ACCESS_DENIED_ERROR") ||
-    message.includes("ER_BAD_DB_ERROR") ||
-    message.includes("ER_NOT_SUPPORTED_AUTH_MODE") ||
     message.includes("ENOTFOUND") ||
-    message.includes("does not exist")
+    message.includes("fetch failed") ||          // Neon HTTP fetch failure
+    message.includes("NeonDbError") ||           // Neon driver error class
+    message.includes("Connection terminated") ||
+    message.includes("SASL") ||
+    message.includes("password authentication") ||
+    message.includes("does not exist") ||
+    message.includes("SSL") ||
+    message.includes("certificate")
   );
 }
 
@@ -217,15 +217,15 @@ class DatabaseStorage implements IStorage {
 
   async getBooks(schoolId?: string | null): Promise<schema.Book[]> {
     const filter = schoolFilter(schema.books, schoolId);
-    if (filter) return db.select().from(schema.books).where(filter);
-    return db.select().from(schema.books);
+    if (filter) return getDb().select().from(schema.books).where(filter);
+    return getDb().select().from(schema.books);
   }
 
   async getBook(id: string, schoolId?: string | null): Promise<schema.Book | undefined> {
     const conditions = [eq(schema.books.id, id)];
     const sf = schoolFilter(schema.books, schoolId);
     if (sf) conditions.push(sf);
-    const [book] = await db.select().from(schema.books).where(and(...conditions));
+    const [book] = await getDb().select().from(schema.books).where(and(...conditions));
     return book;
   }
 
@@ -233,7 +233,7 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.books.isbn, isbn)];
     const sf = schoolFilter(schema.books, schoolId);
     if (sf) conditions.push(sf);
-    const [book] = await db.select().from(schema.books).where(and(...conditions));
+    const [book] = await getDb().select().from(schema.books).where(and(...conditions));
     return book;
   }
 
@@ -254,7 +254,7 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.books.id, id)];
     const sf = schoolFilter(schema.books, schoolId);
     if (sf) conditions.push(sf);
-    await db.delete(schema.books).where(and(...conditions));
+    await getDb().delete(schema.books).where(and(...conditions));
   }
 
   async getLowStockBooks(schoolId?: string | null): Promise<schema.Book[]> {
@@ -264,7 +264,7 @@ class DatabaseStorage implements IStorage {
     ];
     const sf = schoolFilter(schema.books, schoolId);
     if (sf) conditions.push(sf);
-    return db.select().from(schema.books).where(and(...conditions));
+    return getDb().select().from(schema.books).where(and(...conditions));
   }
 
   async adjustStock(bookId: string, quantity: number, type: string, reason?: string, schoolId?: string | null): Promise<schema.Book> {
@@ -284,7 +284,7 @@ class DatabaseStorage implements IStorage {
 
     if (newQty < 0) throw new Error("Stock cannot go below zero");
 
-    await db.insert(schema.bookInventoryTransactions).values({
+    await getDb().insert(schema.bookInventoryTransactions).values({
       bookId,
       transactionType: type,
       quantity,
@@ -300,7 +300,7 @@ class DatabaseStorage implements IStorage {
   async getInventoryTransactions(schoolId?: string | null): Promise<schema.BookInventoryTransaction[]> {
     // bookInventoryTransactions doesn't have schoolId directly — join through books
     if (typeof schoolId === "string") {
-      const txns = await db.select().from(schema.bookInventoryTransactions).orderBy(desc(schema.bookInventoryTransactions.createdAt));
+      const txns = await getDb().select().from(schema.bookInventoryTransactions).orderBy(desc(schema.bookInventoryTransactions.createdAt));
       const result = [];
       for (const txn of txns) {
         const book = await this.getBook(txn.bookId, schoolId);
@@ -308,15 +308,15 @@ class DatabaseStorage implements IStorage {
       }
       return result;
     }
-    return db.select().from(schema.bookInventoryTransactions).orderBy(desc(schema.bookInventoryTransactions.createdAt));
+    return getDb().select().from(schema.bookInventoryTransactions).orderBy(desc(schema.bookInventoryTransactions.createdAt));
   }
 
   // === CLASSES ===
 
   async getClasses(schoolId?: string | null): Promise<schema.Class[]> {
     const filter = schoolFilter(schema.classes, schoolId);
-    if (filter) return db.select().from(schema.classes).where(filter);
-    return db.select().from(schema.classes);
+    if (filter) return getDb().select().from(schema.classes).where(filter);
+    return getDb().select().from(schema.classes);
   }
 
   async createClass(c: schema.InsertClass): Promise<schema.Class> {
@@ -336,22 +336,22 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.classes.id, id)];
     const sf = schoolFilter(schema.classes, schoolId);
     if (sf) conditions.push(sf);
-    await db.delete(schema.classes).where(and(...conditions));
+    await getDb().delete(schema.classes).where(and(...conditions));
   }
 
   // === STUDENTS ===
 
   async getStudents(schoolId?: string | null): Promise<schema.Student[]> {
     const filter = schoolFilter(schema.students, schoolId);
-    if (filter) return db.select().from(schema.students).where(filter);
-    return db.select().from(schema.students);
+    if (filter) return getDb().select().from(schema.students).where(filter);
+    return getDb().select().from(schema.students);
   }
 
   async getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]> {
     const conditions = [eq(schema.students.classId, classId)];
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
-    return db.select().from(schema.students).where(and(...conditions));
+    return getDb().select().from(schema.students).where(and(...conditions));
   }
 
   async createStudent(s: schema.InsertStudent): Promise<schema.Student> {
@@ -372,15 +372,15 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.students.id, id)];
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
-    await db.delete(schema.students).where(and(...conditions));
+    await getDb().delete(schema.students).where(and(...conditions));
   }
 
   // === BOOK LEVELS ===
 
   async getBookLevels(schoolId?: string | null): Promise<schema.BookLevel[]> {
     const filter = schoolFilter(schema.bookLevels, schoolId);
-    if (filter) return db.select().from(schema.bookLevels).where(filter);
-    return db.select().from(schema.bookLevels);
+    if (filter) return getDb().select().from(schema.bookLevels).where(filter);
+    return getDb().select().from(schema.bookLevels);
   }
 
   async createBookLevel(bl: schema.InsertBookLevel): Promise<schema.BookLevel> {
@@ -400,14 +400,14 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.bookLevels.id, id)];
     const sf = schoolFilter(schema.bookLevels, schoolId);
     if (sf) conditions.push(sf);
-    await db.delete(schema.bookLevels).where(and(...conditions));
+    await getDb().delete(schema.bookLevels).where(and(...conditions));
   }
 
   async getBookLevelItems(bookLevelId: string): Promise<(schema.BookLevelItem & { book?: schema.Book })[]> {
-    const items = await db.select().from(schema.bookLevelItems).where(eq(schema.bookLevelItems.bookLevelId, bookLevelId));
+    const items = await getDb().select().from(schema.bookLevelItems).where(eq(schema.bookLevelItems.bookLevelId, bookLevelId));
     const result = [];
     for (const item of items) {
-      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
+      const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, item.bookId));
       result.push({ ...item, book });
     }
     return result;
@@ -419,19 +419,19 @@ class DatabaseStorage implements IStorage {
   }
 
   async removeBookLevelItem(id: string): Promise<void> {
-    await db.delete(schema.bookLevelItems).where(eq(schema.bookLevelItems.id, id));
+    await getDb().delete(schema.bookLevelItems).where(eq(schema.bookLevelItems.id, id));
   }
 
   // === CLASS BOOK LEVELS ===
 
   async getClassBookLevels(schoolId?: string | null): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]> {
-    const cbls = await db.select().from(schema.classBookLevels);
+    const cbls = await getDb().select().from(schema.classBookLevels);
     const result = [];
     for (const cbl of cbls) {
-      const [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, cbl.classId));
+      const [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, cbl.classId));
       // Filter by school: if schoolId is set, only include classes from that school
       if (typeof schoolId === "string" && cls?.schoolId !== schoolId) continue;
-      const [bl] = await db.select().from(schema.bookLevels).where(eq(schema.bookLevels.id, cbl.bookLevelId));
+      const [bl] = await getDb().select().from(schema.bookLevels).where(eq(schema.bookLevels.id, cbl.bookLevelId));
       result.push({ ...cbl, class: cls, bookLevel: bl });
     }
     return result;
@@ -448,16 +448,16 @@ class DatabaseStorage implements IStorage {
     let codes;
     const filter = schoolFilter(schema.childLinkingCodes, schoolId);
     if (filter) {
-      codes = await db.select().from(schema.childLinkingCodes).where(filter);
+      codes = await getDb().select().from(schema.childLinkingCodes).where(filter);
     } else {
-      codes = await db.select().from(schema.childLinkingCodes);
+      codes = await getDb().select().from(schema.childLinkingCodes);
     }
     const result = [];
     for (const code of codes) {
-      const [student] = await db.select().from(schema.students).where(eq(schema.students.id, code.studentId));
+      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, code.studentId));
       let cls;
       if (student?.classId) {
-        [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
       }
       result.push({ ...code, student, class: cls });
     }
@@ -470,17 +470,17 @@ class DatabaseStorage implements IStorage {
   }
 
   async useLinkingCode(code: string, parentIdentifier: string): Promise<{ student: schema.Student; linkingCode: schema.ChildLinkingCode } | null> {
-    const [linkingCode] = await db.select().from(schema.childLinkingCodes).where(
+    const [linkingCode] = await getDb().select().from(schema.childLinkingCodes).where(
       and(eq(schema.childLinkingCodes.code, code), eq(schema.childLinkingCodes.isUsed, false))
     );
     if (!linkingCode) return null;
 
-    const [student] = await db.select().from(schema.students).where(eq(schema.students.id, linkingCode.studentId));
+    const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, linkingCode.studentId));
     if (!student) return null;
 
-    await db.update(schema.childLinkingCodes).set({ isUsed: true, linkedAt: new Date() }).where(eq(schema.childLinkingCodes.id, linkingCode.id));
+    await getDb().update(schema.childLinkingCodes).set({ isUsed: true, linkedAt: new Date() }).where(eq(schema.childLinkingCodes.id, linkingCode.id));
 
-    await db.insert(schema.parentChildren).values({ parentIdentifier, studentId: student.id });
+    await getDb().insert(schema.parentChildren).values({ parentIdentifier, studentId: student.id });
 
     return { student, linkingCode: { ...linkingCode, isUsed: true, linkedAt: new Date() } };
   }
@@ -488,13 +488,13 @@ class DatabaseStorage implements IStorage {
   // === PARENT ===
 
   async getParentChildren(parentIdentifier: string): Promise<(schema.ParentChild & { student?: schema.Student & { class?: schema.Class } })[]> {
-    const links = await db.select().from(schema.parentChildren).where(eq(schema.parentChildren.parentIdentifier, parentIdentifier));
+    const links = await getDb().select().from(schema.parentChildren).where(eq(schema.parentChildren.parentIdentifier, parentIdentifier));
     const result = [];
     for (const link of links) {
-      const [student] = await db.select().from(schema.students).where(eq(schema.students.id, link.studentId));
+      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, link.studentId));
       let cls;
       if (student?.classId) {
-        [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
       }
       result.push({ ...link, student: student ? { ...student, class: cls } : undefined });
     }
@@ -507,10 +507,10 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.students.id, studentId)];
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
-    const [student] = await db.select().from(schema.students).where(and(...conditions));
+    const [student] = await getDb().select().from(schema.students).where(and(...conditions));
     if (!student || !student.classId) throw new Error("Student or class not found");
 
-    const classLevels = await db.select().from(schema.classBookLevels).where(eq(schema.classBookLevels.classId, student.classId));
+    const classLevels = await getDb().select().from(schema.classBookLevels).where(eq(schema.classBookLevels.classId, student.classId));
     if (classLevels.length === 0) throw new Error("No book level assigned to this class");
 
     const allItems: { bookId: string; quantity: number; unitPrice: string }[] = [];
@@ -544,7 +544,7 @@ class DatabaseStorage implements IStorage {
 
     for (const item of allItems) {
       const tp = parseFloat(item.unitPrice) * item.quantity;
-      await db.insert(schema.basketItems).values({
+      await getDb().insert(schema.basketItems).values({
         basketId: basket.id,
         bookId: item.bookId,
         quantity: item.quantity,
@@ -566,23 +566,23 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
 
     if (conditions.length > 0) {
-      baskets = await db.select().from(schema.childBookBaskets).where(and(...conditions));
+      baskets = await getDb().select().from(schema.childBookBaskets).where(and(...conditions));
     } else {
-      baskets = await db.select().from(schema.childBookBaskets);
+      baskets = await getDb().select().from(schema.childBookBaskets);
     }
 
     const result = [];
     for (const basket of baskets) {
-      const items = await db.select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
+      const items = await getDb().select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
       const itemsWithBooks = [];
       for (const item of items) {
-        const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
+        const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, item.bookId));
         itemsWithBooks.push({ ...item, book });
       }
-      const [student] = await db.select().from(schema.students).where(eq(schema.students.id, basket.studentId));
+      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, basket.studentId));
       let cls;
       if (student?.classId) {
-        [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
       }
       result.push({ ...basket, items: itemsWithBooks, student: student ? { ...student, class: cls } : undefined });
     }
@@ -593,12 +593,12 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.childBookBaskets.id, id)];
     const sf = schoolFilter(schema.childBookBaskets, schoolId);
     if (sf) conditions.push(sf);
-    const [basket] = await db.select().from(schema.childBookBaskets).where(and(...conditions));
+    const [basket] = await getDb().select().from(schema.childBookBaskets).where(and(...conditions));
     if (!basket) return null;
-    const items = await db.select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
+    const items = await getDb().select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
     const itemsWithBooks = [];
     for (const item of items) {
-      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
+      const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, item.bookId));
       itemsWithBooks.push({ ...item, book });
     }
     return { ...basket, items: itemsWithBooks };
@@ -609,14 +609,14 @@ class DatabaseStorage implements IStorage {
   async createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment> {
     const created = await insertAndFetchById(schema.bookPayments, payment);
     for (const basketId of basketIds) {
-      await db.insert(schema.basketPayments).values({ basketId, paymentId: created.id });
-      await db.update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
+      await getDb().insert(schema.basketPayments).values({ basketId, paymentId: created.id });
+      await getDb().update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
     }
     return created;
   }
 
   async updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
-    const [payment] = await db.select().from(schema.bookPayments).where(eq(schema.bookPayments.paymentReference, reference));
+    const [payment] = await getDb().select().from(schema.bookPayments).where(eq(schema.bookPayments.paymentReference, reference));
     if (!payment) return null;
     const updated = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.paymentReference, reference), updates);
     return updated;
@@ -631,9 +631,9 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
 
     if (conditions.length > 0) {
-      return db.select().from(schema.bookPayments).where(and(...conditions)).orderBy(desc(schema.bookPayments.paidAt));
+      return getDb().select().from(schema.bookPayments).where(and(...conditions)).orderBy(desc(schema.bookPayments.paidAt));
     }
-    return db.select().from(schema.bookPayments).orderBy(desc(schema.bookPayments.paidAt));
+    return getDb().select().from(schema.bookPayments).orderBy(desc(schema.bookPayments.paidAt));
   }
 
   async confirmPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment> {
@@ -641,19 +641,19 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.bookPayments.id, paymentId)];
     const sf = schoolFilter(schema.bookPayments, schoolId);
     if (sf) conditions.push(sf);
-    const [existing] = await db.select().from(schema.bookPayments).where(and(...conditions));
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
 
     const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), { status: "completed", confirmedAt: new Date() });
 
-    const bps = await db.select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
+    const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
-      await db.update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
+      await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
 
       const basket = await this.getBasket(bp.basketId);
       if (basket) {
         for (const item of basket.items) {
-          await db.insert(schema.financeBookAllocations).values({
+          await getDb().insert(schema.financeBookAllocations).values({
             studentId: basket.studentId,
             bookId: item.bookId,
             basketId: basket.id,
@@ -675,13 +675,13 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.bookPayments.id, paymentId)];
     const sf = schoolFilter(schema.bookPayments, schoolId);
     if (sf) conditions.push(sf);
-    const [existing] = await db.select().from(schema.bookPayments).where(and(...conditions));
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
 
     const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), { status: "failed" });
-    const bps = await db.select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
+    const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
-      await db.update(schema.childBookBaskets).set({ status: "pending" }).where(eq(schema.childBookBaskets.id, bp.basketId));
+      await getDb().update(schema.childBookBaskets).set({ status: "pending" }).where(eq(schema.childBookBaskets.id, bp.basketId));
     }
     return payment;
   }
@@ -692,18 +692,18 @@ class DatabaseStorage implements IStorage {
     let allocs;
     const sf = schoolFilter(schema.financeBookAllocations, schoolId);
     if (sf) {
-      allocs = await db.select().from(schema.financeBookAllocations).where(sf);
+      allocs = await getDb().select().from(schema.financeBookAllocations).where(sf);
     } else {
-      allocs = await db.select().from(schema.financeBookAllocations);
+      allocs = await getDb().select().from(schema.financeBookAllocations);
     }
     const result = [];
     for (const alloc of allocs) {
-      const [student] = await db.select().from(schema.students).where(eq(schema.students.id, alloc.studentId));
-      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, alloc.bookId));
+      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, alloc.studentId));
+      const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, alloc.bookId));
       if (classId && student?.classId !== classId) continue;
       let cls;
       if (student?.classId) {
-        [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
       }
       result.push({ ...alloc, student: student ? { ...student, class: cls } : undefined, book });
     }
@@ -719,7 +719,7 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.financeBookAllocations.id, allocationId)];
     const sf = schoolFilter(schema.financeBookAllocations, schoolId);
     if (sf) conditions.push(sf);
-    const [existing] = await db.select().from(schema.financeBookAllocations).where(and(...conditions));
+    const [existing] = await getDb().select().from(schema.financeBookAllocations).where(and(...conditions));
     if (!existing) throw new Error("Allocation not found");
 
     const updated = await updateAndFetchFirst(
@@ -745,18 +745,18 @@ class DatabaseStorage implements IStorage {
 
     let requests;
     if (conditions.length > 0) {
-      requests = await db.select().from(schema.extraCopyRequests)
+      requests = await getDb().select().from(schema.extraCopyRequests)
         .where(and(...conditions))
         .orderBy(desc(schema.extraCopyRequests.createdAt));
     } else {
-      requests = await db.select().from(schema.extraCopyRequests)
+      requests = await getDb().select().from(schema.extraCopyRequests)
         .orderBy(desc(schema.extraCopyRequests.createdAt));
     }
     const result = [];
     for (const req of requests) {
       const teacher = await this.getUserById(req.teacherId);
-      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, req.bookId));
-      const [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, req.classId));
+      const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, req.bookId));
+      const [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, req.classId));
       result.push({
         ...req,
         teacher: teacher ? { id: teacher.id, name: teacher.name } : undefined,
@@ -776,7 +776,7 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.extraCopyRequests.id, id)];
     const sf = schoolFilter(schema.extraCopyRequests, schoolId);
     if (sf) conditions.push(sf);
-    const [request] = await db.select().from(schema.extraCopyRequests).where(and(...conditions));
+    const [request] = await getDb().select().from(schema.extraCopyRequests).where(and(...conditions));
     if (!request) throw new Error("Request not found");
     if (request.status !== "pending") throw new Error("Request is not pending");
 
@@ -798,7 +798,7 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.extraCopyRequests.id, id)];
     const sf = schoolFilter(schema.extraCopyRequests, schoolId);
     if (sf) conditions.push(sf);
-    const [existing] = await db.select().from(schema.extraCopyRequests).where(and(...conditions));
+    const [existing] = await getDb().select().from(schema.extraCopyRequests).where(and(...conditions));
     if (!existing) throw new Error("Request not found");
 
     const updated = await updateAndFetchFirst(
@@ -813,7 +813,7 @@ class DatabaseStorage implements IStorage {
     const conditions = [eq(schema.financeBookAllocations.id, allocationId)];
     const sf = schoolFilter(schema.financeBookAllocations, schoolId);
     if (sf) conditions.push(sf);
-    const [existing] = await db.select().from(schema.financeBookAllocations).where(and(...conditions));
+    const [existing] = await getDb().select().from(schema.financeBookAllocations).where(and(...conditions));
     if (!existing) throw new Error("Allocation not found");
 
     const updated = await updateAndFetchFirst(
@@ -828,7 +828,7 @@ class DatabaseStorage implements IStorage {
 
   async getUsers(): Promise<schema.User[]> {
     try {
-      return await db.select().from(schema.users);
+      return await getDb().select().from(schema.users);
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       ensureDemoUsersInMemory();
@@ -838,7 +838,7 @@ class DatabaseStorage implements IStorage {
 
   async getUserByUsername(username: string): Promise<schema.User | undefined> {
     try {
-      const [user] = await db.select().from(schema.users).where(eq(schema.users.username, username));
+      const [user] = await getDb().select().from(schema.users).where(eq(schema.users.username, username));
       return user;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
@@ -849,7 +849,7 @@ class DatabaseStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<schema.User | undefined> {
     try {
-      const [user] = await db.select().from(schema.users).where(eq(schema.users.email, email));
+      const [user] = await getDb().select().from(schema.users).where(eq(schema.users.email, email));
       return user;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
@@ -860,7 +860,7 @@ class DatabaseStorage implements IStorage {
 
   async getUserById(id: string): Promise<schema.User | undefined> {
     try {
-      const [user] = await db.select().from(schema.users).where(eq(schema.users.id, id));
+      const [user] = await getDb().select().from(schema.users).where(eq(schema.users.id, id));
       return user;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
@@ -916,7 +916,7 @@ class DatabaseStorage implements IStorage {
 
   async deleteUser(id: string): Promise<void> {
     try {
-      await db.delete(schema.users).where(eq(schema.users.id, id));
+      await getDb().delete(schema.users).where(eq(schema.users.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       memoryUsers.delete(id);
@@ -925,7 +925,7 @@ class DatabaseStorage implements IStorage {
 
   async updateLastLogin(id: string): Promise<void> {
     try {
-      await db.update(schema.users).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(schema.users.id, id));
+      await getDb().update(schema.users).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(schema.users.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       const existing = memoryUsers.get(id);
@@ -961,7 +961,7 @@ class DatabaseStorage implements IStorage {
 
   async getInviteById(id: string): Promise<schema.Invite | undefined> {
     try {
-      const [invite] = await db.select().from(schema.invites).where(eq(schema.invites.id, id));
+      const [invite] = await getDb().select().from(schema.invites).where(eq(schema.invites.id, id));
       return invite;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
@@ -971,7 +971,7 @@ class DatabaseStorage implements IStorage {
 
   async getPendingInviteByEmail(email: string): Promise<schema.Invite | undefined> {
     try {
-      const [invite] = await db.select().from(schema.invites)
+      const [invite] = await getDb().select().from(schema.invites)
         .where(and(eq(schema.invites.email, email), eq(schema.invites.status, "pending")));
       return invite;
     } catch (e) {
@@ -982,7 +982,7 @@ class DatabaseStorage implements IStorage {
 
   async markInviteAccepted(id: string): Promise<void> {
     try {
-      await db.update(schema.invites).set({ status: "accepted", acceptedAt: new Date() }).where(eq(schema.invites.id, id));
+      await getDb().update(schema.invites).set({ status: "accepted", acceptedAt: new Date() }).where(eq(schema.invites.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       const invite = memoryInvites.get(id);
@@ -993,7 +993,7 @@ class DatabaseStorage implements IStorage {
 
   async revokeInvite(id: string): Promise<void> {
     try {
-      await db.update(schema.invites).set({ status: "revoked" }).where(eq(schema.invites.id, id));
+      await getDb().update(schema.invites).set({ status: "revoked" }).where(eq(schema.invites.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       const invite = memoryInvites.get(id);
@@ -1027,7 +1027,7 @@ class DatabaseStorage implements IStorage {
 
   async getAuditLogs(limit = 100): Promise<schema.AuditLog[]> {
     try {
-      return await db.select().from(schema.auditLogs).orderBy(desc(schema.auditLogs.createdAt)).limit(limit);
+      return await getDb().select().from(schema.auditLogs).orderBy(desc(schema.auditLogs.createdAt)).limit(limit);
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       return memoryAuditLogs.slice().reverse().slice(0, limit);
