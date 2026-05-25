@@ -41,6 +41,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const app = express();
   const httpServer = createServer(app);
 
+  if (process.env.NODE_ENV === "production") {
+    // Required on Vercel so secure cookies are issued behind the edge proxy.
+    app.set("trust proxy", 1);
+  }
+
   app.use(
     express.json({
       verify: (req, _res, buf) => {
