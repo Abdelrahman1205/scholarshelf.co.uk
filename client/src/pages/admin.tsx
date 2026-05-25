@@ -648,8 +648,13 @@ function UsersSection() {
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], queryFn: getQueryFn({ on401: "throw" }) });
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/users", data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/users"] }); setAddOpen(false); resetForm(); toast({ title: "User created successfully" }); },
+    mutationFn: (data: any) => apiRequest("POST", "/api/invites", { email: data.email, role: data.role }),
+    onSuccess: () => {
+      setAddOpen(false);
+      resetForm();
+      toast({ title: "Invite sent successfully" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/recent-activity"] });
+    },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
@@ -681,7 +686,7 @@ function UsersSection() {
           <p className="text-muted-foreground text-sm mt-1">Manage admin, teacher, and parent accounts.</p>
         </div>
         <Button data-testid="button-add-user" onClick={() => { resetForm(); setAddOpen(true); }}>
-          <Plus className="w-4 h-4 mr-2" /> Add User
+          <Plus className="w-4 h-4 mr-2" /> Invite Staff
         </Button>
       </div>
 
@@ -732,13 +737,10 @@ function UsersSection() {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
-            <DialogDescription>Create a new teacher or parent account.</DialogDescription>
+            <DialogTitle>Invite Staff Member</DialogTitle>
+            <DialogDescription>Send an invitation email so the staff member can set up their own account.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid gap-2"><Label>Full Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Ms. Sarah Ahmed" /></div>
-            <div className="grid gap-2"><Label>Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="e.g. sarah" /></div>
-            <div className="grid gap-2"><Label>Password</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Enter password" /></div>
             <div className="grid gap-2"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="e.g. sarah@school.edu" /></div>
             <div className="grid gap-2">
               <Label>Role</Label>
@@ -746,15 +748,14 @@ function UsersSection() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="teacher">Teacher</SelectItem>
-                  <SelectItem value="parent">Parent</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="school_admin">School Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
           <DialogFooter>
-            <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Creating..." : "Create User"}
+            <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending || !form.email}>
+              {createMutation.isPending ? "Sending..." : "Send Invite"}
             </Button>
           </DialogFooter>
         </DialogContent>
