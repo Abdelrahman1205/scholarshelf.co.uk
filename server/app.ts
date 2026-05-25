@@ -2,6 +2,8 @@ import "dotenv/config";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
+import connectPgSimple from "connect-pg-simple";
+import { Pool } from "pg";
 import { createServer, type Server } from "http";
 import { registerRoutes } from "./routes.js";
 import { serveStatic } from "./static.js";
@@ -76,7 +78,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   });
 
   const MemoryStore = createMemoryStore(session);
-  const sessionStore = new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 });
+  const PgSession = connectPgSimple(session);
+
+  const sessionStore: session.Store = process.env.DATABASE_URL
+    ? new PgSession({
+        pool: new Pool({
+          connectionString: process.env.DATABASE_URL,
+          ssl: { rejectUnauthorized: false },
+        }),
+        tableName: "user_sessions",
+        createTableIfMissing: true,
+      })
+    : new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 });
 
   app.use(
     session({

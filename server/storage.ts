@@ -18,7 +18,8 @@ function getDb(): ReturnType<typeof drizzle> {
 
 // PostgreSQL supports RETURNING — no need for a separate SELECT after insert/update
 async function insertAndFetchById<TTable extends { id: any }>(table: TTable, values: unknown): Promise<any> {
-  const [created] = await getDb().insert(table as any).values(values as any).returning();
+  const createdRows = (await getDb().insert(table as any).values(values as any).returning()) as any[];
+  const [created] = createdRows;
   return created as any;
 }
 
