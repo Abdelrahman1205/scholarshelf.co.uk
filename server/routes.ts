@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "./storage.js";
 import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration.js";
+import { sendInviteEmail, sendPasswordResetEmail, isResendConfigured } from "./email.js";
 import {
   signInSchema, signUpParentSchema, acceptInviteSchema,
   forgotPasswordSchema, resetPasswordSchema,
@@ -109,6 +110,19 @@ function resolveRole(role: string): string {
 // Safe user response — strips passwordHash
 function safeUser(user: { id: string; username: string; name: string; role: string; email: string | null; status: string; schoolId: string | null }) {
   return { id: user.id, username: user.username, name: user.name, role: user.role, email: user.email, status: user.status, schoolId: user.schoolId };
+}
+
+function getPublicBaseUrl(req: Request): string {
+  const configured = process.env.APP_BASE_URL || process.env.PUBLIC_APP_URL;
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  const forwardedProto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim();
+  const forwardedHost = (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim();
+  const protocol = forwardedProto || req.protocol;
+  const host = forwardedHost || req.get("host") || "localhost:5000";
+  return `${protocol}://${host}`;
 }
 
 export async function registerRoutes(
@@ -345,8 +359,14 @@ export async function registerRoutes(
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       });
 
-      const resetLink = `${req.protocol}://${req.get("host")}/reset-password?token=${invite.id}.${rawToken}`;
-      console.log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`);
+      const resetLink = `${getPublicBaseUrl(req)}/reset-password?token=${invite.id}.${rawToken}`;
+      const sent = await sendPasswordResetEmail(email, resetLink);
+      if (!sent) {
+        console.log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`);
+        if (!isResendConfigured()) {
+          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; using log fallback for reset links.");
+        }
+      }
 
       await auditLog(req, "password_reset_requested", `user:${user.id}`);
 
@@ -966,8 +986,14 @@ export async function registerRoutes(
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
 
-      const inviteLink = `${req.protocol}://${req.get("host")}/accept-invite?token=${invite.id}.${rawToken}`;
-      console.log(`[INVITE] Link for ${email} (${role}): ${inviteLink}`);
+      const inviteLink = `${getPublicBaseUrl(req)}/accept-invite?token=${invite.id}.${rawToken}`;
+      const sent = await sendInviteEmail(email, role, inviteLink);
+      if (!sent) {
+        console.log(`[INVITE] Link for ${email} (${role}): ${inviteLink}`);
+        if (!isResendConfigured()) {
+          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; using log fallback for invite links.");
+        }
+      }
 
       await auditLog(req, "invite_created", `invite:${invite.id}`, { email, role });
 
