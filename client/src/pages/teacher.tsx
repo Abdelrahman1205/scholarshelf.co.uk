@@ -5,39 +5,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Search, CheckCircle2, Circle, Users, BookOpen, Package } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Search, CheckCircle2, Circle, Users, BookOpen, Package, LayoutDashboard, ClipboardList, AlertTriangle, Plus } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 
-interface ClassItem {
-  id: string;
-  name: string;
-  academicYear: string | null;
-  teacherId: string | null;
-}
+interface ClassItem { id: string; name: string; academicYear: string | null; teacherId: string | null; }
 
 interface Allocation {
-  id: string;
-  studentId: string;
-  bookId: string;
-  basketId: string | null;
-  status: "allocated" | "received";
-  allocatedAt: string | null;
-  receivedAt: string | null;
-  student: {
-    id: string;
-    name: string;
-    studentCode: string | null;
-    class: {
-      id: string;
-      name: string;
-    } | null;
-  };
-  book: {
-    id: string;
-    title: string;
-    isbn: string | null;
-  };
+  id: string; studentId: string; bookId: string; basketId: string | null;
+  status: "allocated" | "received" | "absent"; allocatedAt: string | null; receivedAt: string | null;
+  student: { id: string; name: string; studentCode: string | null; class: { id: string; name: string } | null };
+  book: { id: string; title: string; isbn: string | null };
 }
 
 interface StudentGroup {
@@ -48,175 +30,258 @@ interface StudentGroup {
   allReceived: boolean;
 }
 
-export default function TeacherDashboard() {
+interface ExtraRequest {
+  id: string; teacherId: string; classId: string; bookId: string;
+  quantity: number; reason: string; notes: string | null; status: string;
+  adminNotes: string | null; createdAt: string; resolvedAt: string | null;
+  book?: { id: string; title: string }; class?: { id: string; name: string };
+}
+
+interface BookItem { id: string; title: string; isbn: string | null; }
+
+function StatusBadge({ status }: { status: string }) {
+  const m: Record<string, string> = {
+    allocated: "bg-amber-500/10 text-amber-600",
+    received: "bg-emerald-500/10 text-emerald-600",
+    absent: "bg-red-500/10 text-red-600",
+    pending: "bg-amber-500/10 text-amber-600",
+    approved: "bg-emerald-500/10 text-emerald-600",
+    rejected: "bg-red-500/10 text-red-600",
+  };
+  return (
+    <Badge className={m[status] || "bg-muted text-muted-foreground"}>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </Badge>
+  );
+}
+
+const REASONS = [
+  { value: "NEW_STUDENT", label: "New Student" },
+  { value: "DAMAGED_IN_CLASS", label: "Damaged in Class" },
+  { value: "LOST_REPLACEMENT", label: "Lost Replacement" },
+  { value: "SHORTAGE", label: "Shortage" },
+  { value: "OTHER", label: "Other" },
+];
+
+function DashboardSection({ classes, allocations, extraRequests, isLoading }: {
+  classes: ClassItem[]; allocations: Allocation[]; extraRequests: ExtraRequest[]; isLoading: boolean;
+}) {
+  const totalStudents = new Set(allocations.map((a) => a.studentId)).size;
+  const total = allocations.length;
+  const received = allocations.filter((a) => a.status === "received").length;
+  const pending = total - received;
+  const pct = total > 0 ? Math.round((received / total) * 100) : 0;
+  const pendingReqs = extraRequests.filter((r) => r.status === "pending").length;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Dashboard</h1>
+        <p className="text-muted-foreground mt-1">Overview of your classes and book distribution progress.</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="bg-primary/5 border-none shadow-none">
+          <CardContent className="p-5 flex items-center gap-4">
+            <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary">
+              <LayoutDashboard className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">My Classes</div>
+              <div className="text-2xl font-bold font-heading text-primary">{isLoading ? "..." : classes.length}</div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-blue-500/5 border-none shadow-none">
+          <CardContent className="p-5 flex items-center gap-4">
+            <div className="h-11 w-11 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-600">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Students</div>
+              <div className="text-2xl font-bold font-heading text-blue-600">{isLoading ? "..." : totalStudents}</div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-emerald-500/5 border-none shadow-none">
+          <CardContent className="p-5 flex items-center gap-4">
+            <div className="h-11 w-11 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-600">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Distributed</div>
+              <div className="text-2xl font-bold font-heading text-emerald-600">{isLoading ? "..." : `${pct}%`}</div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-amber-500/5 border-none shadow-none">
+          <CardContent className="p-5 flex items-center gap-4">
+            <div className="h-11 w-11 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600">
+              <Package className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pending</div>
+              <div className="text-2xl font-bold font-heading text-amber-600">{isLoading ? "..." : pending}</div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      {(pending > 0 || pendingReqs > 0) && (
+        <Card className="border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-heading">Pending Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {pending > 0 && (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                <Package className="h-5 w-5 text-amber-600" />
+                <div>
+                  <p className="text-sm font-medium">{pending} books awaiting confirmation</p>
+                  <p className="text-xs text-muted-foreground">Go to Book Distribution to confirm receipt</p>
+                </div>
+              </div>
+            )}
+            {pendingReqs > 0 && (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                <ClipboardList className="h-5 w-5 text-blue-600" />
+                <div>
+                  <p className="text-sm font-medium">{pendingReqs} extra copy request{pendingReqs !== 1 ? "s" : ""} pending</p>
+                  <p className="text-xs text-muted-foreground">Awaiting admin approval</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]; classesLoading: boolean }) {
   const { user } = useAuth();
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const { toast } = useToast();
+  const [selectedClassId, setSelectedClassId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-
-  const { data: classes, isLoading: classesLoading } = useQuery<ClassItem[]>({
-    queryKey: ["/api/classes"],
-    queryFn: getQueryFn({ on401: "throw" }),
-  });
-
-  const assignedClass = classes?.find((c) => c.teacherId === user?.id);
+  const assigned = classes?.find((c) => c.teacherId === user?.id);
 
   useEffect(() => {
-    if (assignedClass && !selectedClassId) {
-      setSelectedClassId(assignedClass.id);
-    }
-  }, [assignedClass, selectedClassId]);
+    if (assigned && !selectedClassId) setSelectedClassId(assigned.id);
+  }, [assigned, selectedClassId]);
 
-  const activeClassId = selectedClassId || assignedClass?.id || (classes?.[0]?.id ?? "");
+  const activeClassId = selectedClassId || assigned?.id || (classes?.[0]?.id ?? "");
 
-  const { data: allocations, isLoading: allocationsLoading } = useQuery<Allocation[]>({
-    queryKey: ["/api/allocations", `?classId=${activeClassId}`],
+  const { data: allocations, isLoading: allocLoading } = useQuery<Allocation[]>({
+    queryKey: ["/api/allocations", activeClassId],
     queryFn: async () => {
-      const res = await fetch(`/api/allocations?classId=${activeClassId}`, { credentials: "include" });
-      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-      return res.json();
+      const r = await fetch(`/api/allocations?classId=${activeClassId}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`${r.status}`);
+      return r.json();
     },
     enabled: !!activeClassId,
   });
 
-  const confirmMutation = useMutation({
-    mutationFn: async (allocationId: string) => {
-      await apiRequest("POST", `/api/allocations/${allocationId}/confirm-receipt`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/allocations"] });
-    },
+  const confirmMut = useMutation({
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/confirm-receipt`); },
+    onSuccess: () => { toast({ title: "Confirmed" }); queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); },
   });
 
-  const studentGroups = useMemo(() => {
+  const absentMut = useMutation({
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/mark-absent`); },
+    onSuccess: () => { toast({ title: "Marked Absent" }); queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); },
+  });
+
+  const groups = useMemo(() => {
     if (!allocations) return [];
-    const groupMap = new Map<string, StudentGroup>();
-    for (const alloc of allocations) {
-      const existing = groupMap.get(alloc.studentId);
-      if (existing) {
-        existing.allocations.push(alloc);
-        if (alloc.status === "received") existing.receivedCount++;
-        existing.totalCount++;
-        existing.allReceived = existing.receivedCount === existing.totalCount;
+    const map = new Map<string, StudentGroup>();
+    for (const a of allocations) {
+      const e = map.get(a.studentId);
+      if (e) {
+        e.allocations.push(a);
+        if (a.status === "received") e.receivedCount++;
+        e.totalCount++;
+        e.allReceived = e.receivedCount === e.totalCount;
       } else {
-        const isReceived = alloc.status === "received";
-        groupMap.set(alloc.studentId, {
-          student: alloc.student,
-          allocations: [alloc],
-          receivedCount: isReceived ? 1 : 0,
-          totalCount: 1,
-          allReceived: isReceived,
-        });
+        const r = a.status === "received";
+        map.set(a.studentId, { student: a.student, allocations: [a], receivedCount: r ? 1 : 0, totalCount: 1, allReceived: r });
       }
     }
-    return Array.from(groupMap.values());
+    return Array.from(map.values());
   }, [allocations]);
 
-  const filteredGroups = useMemo(() => {
-    if (!searchQuery.trim()) return studentGroups;
+  const filtered = useMemo(() => {
+    if (!searchQuery.trim()) return groups;
     const q = searchQuery.toLowerCase();
-    return studentGroups.filter((g) => g.student.name.toLowerCase().includes(q));
-  }, [studentGroups, searchQuery]);
+    return groups.filter((g) => g.student.name.toLowerCase().includes(q));
+  }, [groups, searchQuery]);
 
-  const uniqueStudents = studentGroups.length;
-  const totalAllocations = allocations?.length ?? 0;
-  const receivedAllocations = allocations?.filter((a) => a.status === "received").length ?? 0;
-  const pendingAllocations = totalAllocations - receivedAllocations;
-  const distributedPercent = totalAllocations > 0 ? Math.round((receivedAllocations / totalAllocations) * 100) : 0;
-
-  const isLoading = classesLoading || allocationsLoading;
+  const total = allocations?.length ?? 0;
+  const rcvd = allocations?.filter((a) => a.status === "received").length ?? 0;
+  const pend = total - rcvd;
+  const pct = total > 0 ? Math.round((rcvd / total) * 100) : 0;
 
   if (classesLoading) {
-    return (
-      <div className="flex items-center justify-center py-20" data-testid="loading-state">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    );
+    return <div className="flex items-center justify-center py-20"><p className="text-muted-foreground">Loading...</p></div>;
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-heading font-bold tracking-tight text-foreground" data-testid="text-page-title">
-            Teacher Portal
-          </h1>
-          <p className="text-muted-foreground mt-2" data-testid="text-page-subtitle">
-            Confirm textbook receipt for your students.
-          </p>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">Book Distribution</h1>
+          <p className="text-muted-foreground mt-1">Confirm textbook receipt and track absent students.</p>
         </div>
-
-        <div className="flex items-center gap-3 bg-card p-2 rounded-lg border border-border shadow-sm">
-          {classes && classes.length > 0 ? (
-            <Select
-              value={activeClassId}
-              onValueChange={setSelectedClassId}
-            >
-              <SelectTrigger className="w-[220px] border-none bg-transparent shadow-none focus:ring-0" data-testid="select-class">
+        {classes.length > 0 && (
+          <div className="bg-card p-2 rounded-lg border border-border shadow-sm">
+            <Select value={activeClassId} onValueChange={setSelectedClassId}>
+              <SelectTrigger className="w-[220px] border-none bg-transparent shadow-none focus:ring-0">
                 <SelectValue placeholder="Select Class" />
               </SelectTrigger>
               <SelectContent>
-                {classes.map((cls) => (
-                  <SelectItem key={cls.id} value={cls.id} data-testid={`select-class-option-${cls.id}`}>
-                    {cls.name}{cls.academicYear ? ` (${cls.academicYear})` : ""}
+                {classes.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}{c.academicYear ? ` (${c.academicYear})` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          ) : (
-            <span className="text-sm text-muted-foreground px-3" data-testid="text-no-classes">No classes available</span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
-      {!classes || classes.length === 0 ? (
-        <Card className="border-dashed" data-testid="empty-state-no-classes">
+      {classes.length === 0 ? (
+        <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Package className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Classes Found</h3>
-            <p className="text-sm text-muted-foreground mt-1">There are no classes set up yet. Please contact the administrator.</p>
+            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Classes Assigned</h3>
+            <p className="text-sm text-muted-foreground mt-1">Contact the administrator to be assigned to a class.</p>
           </CardContent>
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Card className="bg-primary/5 border-none shadow-none" data-testid="stat-class-size">
-              <CardContent className="p-6 flex items-center gap-4">
-                <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-                  <Users className="w-6 h-6" />
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="bg-primary/5 border-none shadow-none">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary"><Users className="w-5 h-5" /></div>
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Class Size</div>
-                  <div className="text-2xl font-bold font-heading text-primary" data-testid="text-class-size">
-                    {allocationsLoading ? "..." : `${uniqueStudents} Student${uniqueStudents !== 1 ? "s" : ""}`}
-                  </div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Class Size</div>
+                  <div className="text-2xl font-bold font-heading text-primary">{allocLoading ? "..." : groups.length}</div>
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="bg-emerald-500/5 border-none shadow-none" data-testid="stat-books-distributed">
-              <CardContent className="p-6 flex items-center gap-4">
-                <div className="h-12 w-12 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-600">
-                  <CheckCircle2 className="w-6 h-6" />
-                </div>
+            <Card className="bg-emerald-500/5 border-none shadow-none">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-11 w-11 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-600"><CheckCircle2 className="w-5 h-5" /></div>
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Books Distributed</div>
-                  <div className="text-2xl font-bold font-heading text-emerald-600" data-testid="text-books-distributed">
-                    {allocationsLoading ? "..." : `${distributedPercent}%`}
-                  </div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Distributed</div>
+                  <div className="text-2xl font-bold font-heading text-emerald-600">{allocLoading ? "..." : `${pct}%`}</div>
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="bg-amber-500/5 border-none shadow-none" data-testid="stat-pending-receipt">
-              <CardContent className="p-6 flex items-center gap-4">
-                <div className="h-12 w-12 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600">
-                  <BookOpen className="w-6 h-6" />
-                </div>
+            <Card className="bg-amber-500/5 border-none shadow-none">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-11 w-11 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600"><BookOpen className="w-5 h-5" /></div>
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Pending Receipt</div>
-                  <div className="text-2xl font-bold font-heading text-amber-600" data-testid="text-pending-receipt">
-                    {allocationsLoading ? "..." : `${pendingAllocations} Book${pendingAllocations !== 1 ? "s" : ""}`}
-                  </div>
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pending</div>
+                  <div className="text-2xl font-bold font-heading text-amber-600">{allocLoading ? "..." : pend}</div>
                 </div>
               </CardContent>
             </Card>
@@ -224,110 +289,78 @@ export default function TeacherDashboard() {
 
           <div className="relative max-w-md">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Search student name..."
-              className="pl-9 bg-card"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              data-testid="input-search-student"
-            />
+            <Input type="search" placeholder="Search student name..." className="pl-9 bg-card" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
 
-          {allocationsLoading ? (
-            <div className="flex items-center justify-center py-12" data-testid="loading-allocations">
-              <p className="text-muted-foreground">Loading...</p>
-            </div>
-          ) : filteredGroups.length === 0 ? (
-            <Card className="border-dashed" data-testid="empty-state-no-allocations">
+          {allocLoading ? (
+            <div className="flex items-center justify-center py-12"><p className="text-muted-foreground">Loading allocations...</p></div>
+          ) : filtered.length === 0 ? (
+            <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-16 text-center">
                 <Package className="w-12 h-12 text-muted-foreground/50 mb-4" />
                 <h3 className="text-lg font-heading font-semibold text-muted-foreground">
                   {searchQuery ? "No Students Found" : "No Allocations"}
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {searchQuery
-                    ? `No students matching "${searchQuery}" in this class.`
-                    : "No book allocations found for this class yet."}
+                  {searchQuery ? "No students matching your search." : "No book allocations for this class yet."}
                 </p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-4">
-              {filteredGroups.map((group) => (
-                <Card
-                  key={group.student.id}
-                  className="overflow-hidden border-border transition-all hover:shadow-md animate-in fade-in slide-in-from-bottom-4 duration-500"
-                  data-testid={`card-student-${group.student.id}`}
-                >
+              {filtered.map((g) => (
+                <Card key={g.student.id} className="overflow-hidden border-border hover:shadow-md transition-all">
                   <CardHeader className="bg-muted/30 pb-4 border-b border-border flex flex-row items-center justify-between">
                     <div>
-                      <CardTitle className="text-lg flex items-center gap-2" data-testid={`text-student-name-${group.student.id}`}>
-                        {group.student.name}
-                        {group.allReceived && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-2"
-                            data-testid={`badge-all-received-${group.student.id}`}
-                          >
-                            All Received
-                          </Badge>
-                        )}
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        {g.student.name}
+                        {g.allReceived && <Badge className="bg-emerald-500/10 text-emerald-600 ml-2">All Received</Badge>}
                       </CardTitle>
-                      <CardDescription data-testid={`text-student-info-${group.student.id}`}>
-                        {group.student.studentCode ? `${group.student.studentCode}` : "No code"}
-                        {group.student.class ? ` • ${group.student.class.name}` : ""}
+                      <CardDescription>
+                        {g.student.studentCode || "No code"}{g.student.class ? ` • ${g.student.class.name}` : ""}
                       </CardDescription>
                     </div>
-                    <div
-                      className="text-sm font-medium bg-card px-3 py-1 rounded-full border border-border"
-                      data-testid={`text-book-count-${group.student.id}`}
-                    >
-                      {group.receivedCount} / {group.totalCount} Books
+                    <div className="text-sm font-medium bg-card px-3 py-1 rounded-full border border-border">
+                      {g.receivedCount} / {g.totalCount} Books
                     </div>
                   </CardHeader>
                   <CardContent className="p-0">
                     <div className="divide-y divide-border">
-                      {group.allocations.map((alloc) => {
-                        const isReceived = alloc.status === "received";
-                        const isConfirming = confirmMutation.isPending && confirmMutation.variables === alloc.id;
+                      {g.allocations.map((a) => {
+                        const done = a.status === "received";
+                        const abs = a.status === "absent";
+                        const confirming = confirmMut.isPending && confirmMut.variables === a.id;
+                        const marking = absentMut.isPending && absentMut.variables === a.id;
                         return (
-                          <div
-                            key={alloc.id}
-                            className="flex items-center justify-between p-4 hover:bg-muted/10 transition-colors"
-                            data-testid={`row-allocation-${alloc.id}`}
-                          >
+                          <div key={a.id} className="flex items-center justify-between p-4 hover:bg-muted/10 transition-colors">
                             <div className="flex flex-col">
-                              <span className="font-medium text-sm" data-testid={`text-book-title-${alloc.id}`}>
-                                {alloc.book.title}
-                              </span>
-                              <span className="text-xs text-muted-foreground font-mono" data-testid={`text-book-isbn-${alloc.id}`}>
-                                {alloc.book.isbn ? `ISBN: ${alloc.book.isbn}` : "No ISBN"}
+                              <span className="font-medium text-sm">{a.book.title}</span>
+                              <span className="text-xs text-muted-foreground font-mono">
+                                {a.book.isbn ? `ISBN: ${a.book.isbn}` : "No ISBN"}
                               </span>
                             </div>
-                            {isReceived ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled
-                                className="text-emerald-600 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 hover:text-emerald-700 pointer-events-none"
-                                data-testid={`button-confirmed-${alloc.id}`}
-                              >
-                                <CheckCircle2 className="w-4 h-4 mr-1" /> Confirmed
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="default"
-                                size="sm"
-                                className="gap-2"
-                                disabled={isConfirming}
-                                onClick={() => confirmMutation.mutate(alloc.id)}
-                                data-testid={`button-confirm-${alloc.id}`}
-                              >
-                                <Circle className="w-4 h-4 mr-1" />
-                                {isConfirming ? "Confirming..." : "Confirm Receipt"}
-                              </Button>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {done ? (
+                                <Button variant="outline" size="sm" disabled className="text-emerald-600 border-emerald-200 bg-emerald-50 pointer-events-none">
+                                  <CheckCircle2 className="w-4 h-4 mr-1" /> Confirmed
+                                </Button>
+                              ) : abs ? (
+                                <Button variant="outline" size="sm" disabled className="text-red-600 border-red-200 bg-red-50 pointer-events-none">
+                                  <AlertTriangle className="w-4 h-4 mr-1" /> Absent
+                                </Button>
+                              ) : (
+                                <>
+                                  <Button variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50"
+                                    disabled={marking || confirming} onClick={() => absentMut.mutate(a.id)}>
+                                    <AlertTriangle className="w-4 h-4 mr-1" />{marking ? "..." : "Absent"}
+                                  </Button>
+                                  <Button variant="default" size="sm" disabled={confirming || marking}
+                                    onClick={() => confirmMut.mutate(a.id)}>
+                                    <Circle className="w-4 h-4 mr-1" />{confirming ? "..." : "Confirm"}
+                                  </Button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -341,4 +374,238 @@ export default function TeacherDashboard() {
       )}
     </div>
   );
+}
+
+function ExtraRequestsSection({ classes }: { classes: ClassItem[] }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [fClass, setFClass] = useState("");
+  const [fBook, setFBook] = useState("");
+  const [fReason, setFReason] = useState("");
+  const [fQty, setFQty] = useState("1");
+  const [fNotes, setFNotes] = useState("");
+
+  const { data: requests, isLoading } = useQuery<ExtraRequest[]>({
+    queryKey: ["/api/extra-requests"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const { data: books } = useQuery<BookItem[]>({
+    queryKey: ["/api/books"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const resetForm = () => {
+    setFClass(""); setFBook(""); setFReason(""); setFQty("1"); setFNotes("");
+  };
+
+  const createMut = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/extra-requests", {
+        classId: fClass, bookId: fBook, reason: fReason,
+        quantity: parseInt(fQty) || 1, notes: fNotes || undefined,
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Request Submitted", description: "Your extra copy request has been sent to the admin." });
+      setOpen(false); resetForm();
+      queryClient.invalidateQueries({ queryKey: ["/api/extra-requests"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const pendingR = requests?.filter((r) => r.status === "pending") || [];
+  const resolvedR = requests?.filter((r) => r.status !== "pending") || [];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">Extra Copy Requests</h1>
+          <p className="text-muted-foreground mt-1">Request additional book copies from the school admin.</p>
+        </div>
+        <Button onClick={() => setOpen(true)} className="gap-2">
+          <Plus className="w-4 h-4" /> New Request
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      ) : !requests || requests.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <ClipboardList className="w-12 h-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Requests Yet</h3>
+            <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+              Submit your first extra copy request when you need additional books.
+            </p>
+            <Button onClick={() => setOpen(true)} className="mt-4 gap-2">
+              <Plus className="w-4 h-4" /> New Request
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {pendingR.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Pending Review</h2>
+              <Card className="border-border">
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-6">Book</TableHead>
+                        <TableHead>Class</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead className="text-center">Qty</TableHead>
+                        <TableHead className="text-right px-6">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingR.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell className="px-6 font-medium">{r.book?.title || "—"}</TableCell>
+                          <TableCell>{r.class?.name || "—"}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="font-normal">
+                              {REASONS.find((x) => x.value === r.reason)?.label || r.reason}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-center">{r.quantity}</TableCell>
+                          <TableCell className="text-right px-6"><StatusBadge status={r.status} /></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          {resolvedR.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Resolved</h2>
+              <Card className="border-border">
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-6">Book</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead className="text-center">Qty</TableHead>
+                        <TableHead>Admin Notes</TableHead>
+                        <TableHead className="text-right px-6">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {resolvedR.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell className="px-6 font-medium">{r.book?.title || "—"}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="font-normal">
+                              {REASONS.find((x) => x.value === r.reason)?.label || r.reason}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-center">{r.quantity}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{r.adminNotes || "—"}</TableCell>
+                          <TableCell className="text-right px-6"><StatusBadge status={r.status} /></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </>
+      )}
+
+      <Dialog open={open} onOpenChange={(v) => { if (!v) { setOpen(false); resetForm(); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-heading">New Extra Copy Request</DialogTitle>
+            <DialogDescription>
+              Request additional book copies for a class. The admin will review and approve.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Class</label>
+              <Select value={fClass} onValueChange={setFClass}>
+                <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
+                <SelectContent>
+                  {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Book</label>
+              <Select value={fBook} onValueChange={setFBook}>
+                <SelectTrigger><SelectValue placeholder="Select a book" /></SelectTrigger>
+                <SelectContent>
+                  {(books || []).map((b) => <SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reason</label>
+              <Select value={fReason} onValueChange={setFReason}>
+                <SelectTrigger><SelectValue placeholder="Select reason" /></SelectTrigger>
+                <SelectContent>
+                  {REASONS.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Quantity</label>
+              <Input type="number" min="1" max="50" value={fQty} onChange={(e) => setFQty(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Notes (optional)</label>
+              <Textarea placeholder="Additional details..." value={fNotes} onChange={(e) => setFNotes(e.target.value)} rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setOpen(false); resetForm(); }}>Cancel</Button>
+            <Button onClick={() => createMut.mutate()} disabled={!fClass || !fBook || !fReason || createMut.isPending}>
+              {createMut.isPending ? "Submitting..." : "Submit Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+export default function TeacherPage({ section = "dashboard" }: { section?: string }) {
+  const { data: classes, isLoading: classesLoading } = useQuery<ClassItem[]>({
+    queryKey: ["/api/classes"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const { data: allAlloc } = useQuery<Allocation[]>({
+    queryKey: ["/api/allocations"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const { data: extraReqs } = useQuery<ExtraRequest[]>({
+    queryKey: ["/api/extra-requests"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const c = classes || [];
+  const a = allAlloc || [];
+  const r = extraReqs || [];
+
+  switch (section) {
+    case "distribution":
+      return <DistributionSection classes={c} classesLoading={classesLoading} />;
+    case "requests":
+      return <ExtraRequestsSection classes={c} />;
+    default:
+      return <DashboardSection classes={c} allocations={a} extraRequests={r} isLoading={classesLoading} />;
+  }
 }

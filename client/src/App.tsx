@@ -8,13 +8,17 @@ import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/use-auth";
 
 import Layout from "@/components/layout";
-import AdminDashboard from "@/pages/admin";
-import TeacherDashboard from "@/pages/teacher";
-import ParentDashboard from "@/pages/parent";
+import AdminPage from "@/pages/admin";
+import TeacherPage from "@/pages/teacher";
+import ParentPage from "@/pages/parent";
 import LoginPage from "@/pages/login";
+import RegisterPage from "@/pages/register";
+import AcceptInvitePage from "@/pages/accept-invite";
+import ForgotPasswordPage from "@/pages/forgot-password";
+import ResetPasswordPage from "@/pages/reset-password";
 
 function getRoleRoute(role: string) {
-  if (role === "admin") return "/admin";
+  if (role === "admin" || role === "school_admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
   return "/login";
@@ -75,31 +79,50 @@ function RoleRedirect() {
 function Router() {
   return (
     <Switch>
+      {/* Public auth routes */}
       <Route path="/login" component={LoginPage} />
+      <Route path="/register" component={RegisterPage} />
+      <Route path="/accept-invite" component={AcceptInvitePage} />
+      <Route path="/forgot-password" component={ForgotPasswordPage} />
+      <Route path="/reset-password" component={ResetPasswordPage} />
+
       <Route path="/">
         <RoleRedirect />
       </Route>
-      <Route path="/admin">
-        <AuthGuard allowedRoles={["admin"]}>
-          <Layout>
-            <AdminDashboard />
-          </Layout>
-        </AuthGuard>
+
+      {/* Admin routes */}
+      <Route path="/admin/:section?">
+        {(params) => (
+          <AuthGuard allowedRoles={["admin", "school_admin"]}>
+            <Layout>
+              <AdminPage section={params.section || "dashboard"} />
+            </Layout>
+          </AuthGuard>
+        )}
       </Route>
-      <Route path="/teacher">
-        <AuthGuard allowedRoles={["teacher"]}>
-          <Layout>
-            <TeacherDashboard />
-          </Layout>
-        </AuthGuard>
+
+      {/* Teacher routes */}
+      <Route path="/teacher/:section?">
+        {(params) => (
+          <AuthGuard allowedRoles={["teacher"]}>
+            <Layout>
+              <TeacherPage section={params.section || "dashboard"} />
+            </Layout>
+          </AuthGuard>
+        )}
       </Route>
-      <Route path="/parent">
-        <AuthGuard allowedRoles={["parent"]}>
-          <Layout>
-            <ParentDashboard />
-          </Layout>
-        </AuthGuard>
+
+      {/* Parent routes */}
+      <Route path="/parent/:section?">
+        {(params) => (
+          <AuthGuard allowedRoles={["parent"]}>
+            <Layout>
+              <ParentPage section={params.section || "dashboard"} />
+            </Layout>
+          </AuthGuard>
+        )}
       </Route>
+
       <Route component={NotFound} />
     </Switch>
   );

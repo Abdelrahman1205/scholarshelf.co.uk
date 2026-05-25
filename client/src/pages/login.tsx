@@ -1,11 +1,18 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { BookOpen, Eye, EyeOff, LogIn } from "lucide-react";
+import { BookOpen, Eye, EyeOff, LogIn, UserPlus, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
+
+function getRoleRoute(role: string): string {
+  if (role === "admin" || role === "school_admin") return "/admin";
+  if (role === "teacher") return "/teacher";
+  if (role === "parent") return "/parent";
+  return "/login";
+}
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -16,9 +23,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      if (user.role === "admin") setLocation("/admin");
-      else if (user.role === "teacher") setLocation("/teacher");
-      else if (user.role === "parent") setLocation("/parent");
+      setLocation(getRoleRoute(user.role));
     }
   }, [isAuthenticated, user, setLocation]);
 
@@ -26,9 +31,16 @@ export default function LoginPage() {
     e.preventDefault();
     try {
       const loggedInUser = await login({ username, password });
-      if (loggedInUser.role === "admin") setLocation("/admin");
-      else if (loggedInUser.role === "teacher") setLocation("/teacher");
-      else if (loggedInUser.role === "parent") setLocation("/parent");
+      setLocation(getRoleRoute(loggedInUser.role));
+    } catch {}
+  }
+
+  async function loginWithDemo(demoUsername: string, demoPassword: string) {
+    setUsername(demoUsername);
+    setPassword(demoPassword);
+    try {
+      const loggedInUser = await login({ username: demoUsername, password: demoPassword });
+      setLocation(getRoleRoute(loggedInUser.role));
     } catch {}
   }
 
@@ -90,7 +102,11 @@ export default function LoginPage() {
 
               {loginError && (
                 <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md" data-testid="text-login-error">
-                  {loginError.message.includes("401") ? "Invalid username or password" : "Login failed. Please try again."}
+                  {loginError.message.includes("401")
+                    ? "Invalid username or password"
+                    : loginError.message.includes("429")
+                    ? "Too many login attempts. Please try again later."
+                    : "Login failed. Please try again."}
                 </div>
               )}
 
@@ -99,6 +115,25 @@ export default function LoginPage() {
                 {isLoggingIn ? "Signing in..." : "Sign In"}
               </Button>
             </form>
+
+            <div className="mt-4 flex items-center justify-between text-sm">
+              <a
+                href="/forgot-password"
+                className="text-primary hover:underline cursor-pointer"
+                onClick={(e) => { e.preventDefault(); setLocation("/forgot-password"); }}
+              >
+                <KeyRound className="inline h-3 w-3 mr-1" />
+                Forgot password?
+              </a>
+              <a
+                href="/register"
+                className="text-primary hover:underline cursor-pointer"
+                onClick={(e) => { e.preventDefault(); setLocation("/register"); }}
+              >
+                <UserPlus className="inline h-3 w-3 mr-1" />
+                Parent sign up
+              </a>
+            </div>
 
             <div className="mt-6 pt-4 border-t border-border">
               <p className="text-xs text-muted-foreground text-center mb-3">Demo Accounts</p>
@@ -110,14 +145,12 @@ export default function LoginPage() {
                 ].map((demo) => (
                   <Button
                     key={demo.username}
+                    type="button"
                     variant="outline"
                     size="sm"
                     className="text-xs"
                     data-testid={`button-demo-${demo.username}`}
-                    onClick={() => {
-                      setUsername(demo.username);
-                      setPassword(demo.password);
-                    }}
+                    onClick={() => void loginWithDemo(demo.username, demo.password)}
                   >
                     {demo.label}
                   </Button>

@@ -1,116 +1,279 @@
 import { eq, and, lt, desc, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
+import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
+import bcrypt from "bcrypt";
+import { randomUUID } from "crypto";
 import * as schema from "@shared/schema";
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-const db = drizzle(pool, { schema });
+const pool = mysql.createPool({
+  uri: process.env.DATABASE_URL,
+  waitForConnections: true,
+  connectionLimit: 10,
+});
+const db = drizzle(pool, { schema, mode: "default" });
+
+async function insertAndFetchById<TTable extends { id: any }>(table: TTable, values: unknown): Promise<any> {
+  const [inserted] = await db.insert(table as any).values(values as any).$returningId();
+  const [created] = await db.select().from(table as any).where(eq((table as any).id, inserted.id));
+  return created as any;
+}
+
+async function updateAndFetchFirst<TTable extends { id: any }>(table: TTable, whereClause: any, values: unknown): Promise<any> {
+  await db.update(table as any).set(values as any).where(whereClause);
+  const [updated] = await db.select().from(table as any).where(whereClause);
+  return updated as any;
+}
+
+function isDbUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: string } | undefined)?.code;
+  const nestedErrors = (error as { errors?: Array<{ code?: string; message?: string }> } | undefined)?.errors ?? [];
+
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND") {
+    return true;
+  }
+
+  if (nestedErrors.some((nested) => nested.code === "ECONNREFUSED" || nested.code === "ENOTFOUND")) {
+    return true;
+  }
+
+  return (
+    message.includes("ECONNREFUSED") ||
+    message.includes("SASL") ||
+    message.includes("password") ||
+    message.includes("Connection terminated") ||
+    message.includes("ER_ACCESS_DENIED_ERROR") ||
+    message.includes("ER_BAD_DB_ERROR") ||
+    message.includes("ER_NOT_SUPPORTED_AUTH_MODE") ||
+    message.includes("ENOTFOUND") ||
+    message.includes("does not exist")
+  );
+}
+
+const memoryUsers = new Map<string, schema.User>();
+const memoryInvites = new Map<string, schema.Invite>();
+const memoryAuditLogs: schema.AuditLog[] = [];
+
+function now() {
+  return new Date();
+}
+
+function ensureDemoUsersInMemory() {
+  if (memoryUsers.size > 0) return;
+
+  const demoUsers: Array<schema.User> = [
+    {
+      id: randomUUID(),
+      username: "admin",
+      passwordHash: bcrypt.hashSync("admin123", 10),
+      name: "School Administrator",
+      role: "admin",
+      email: "admin@school.edu",
+      status: "active",
+      schoolId: null,
+      emailVerifiedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+      lastLoginAt: null,
+    },
+    {
+      id: randomUUID(),
+      username: "teacher",
+      passwordHash: bcrypt.hashSync("teacher123", 10),
+      name: "Ms. Johnson",
+      role: "teacher",
+      email: "teacher@school.edu",
+      status: "active",
+      schoolId: null,
+      emailVerifiedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+      lastLoginAt: null,
+    },
+    {
+      id: randomUUID(),
+      username: "parent",
+      passwordHash: bcrypt.hashSync("parent123", 10),
+      name: "John Smith",
+      role: "parent",
+      email: "parent@example.com",
+      status: "active",
+      schoolId: null,
+      emailVerifiedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+      lastLoginAt: null,
+    },
+  ];
+
+  for (const user of demoUsers) {
+    memoryUsers.set(user.id, user);
+  }
+}
+
+// Helper: build a school-scoped WHERE condition
+function schoolFilter<T extends { schoolId: any }>(table: T, schoolId?: string | null) {
+  if (typeof schoolId === "string") {
+    return eq(table.schoolId, schoolId);
+  }
+  return undefined; // no filter for owner/demo (null schoolId)
+}
 
 export interface IStorage {
-  getBooks(): Promise<schema.Book[]>;
-  getBook(id: string): Promise<schema.Book | undefined>;
-  getBookByIsbn(isbn: string): Promise<schema.Book | undefined>;
+  // Books
+  getBooks(schoolId?: string | null): Promise<schema.Book[]>;
+  getBook(id: string, schoolId?: string | null): Promise<schema.Book | undefined>;
+  getBookByIsbn(isbn: string, schoolId?: string | null): Promise<schema.Book | undefined>;
   createBook(book: schema.InsertBook): Promise<schema.Book>;
-  updateBook(id: string, book: Partial<schema.InsertBook>): Promise<schema.Book | undefined>;
-  deleteBook(id: string): Promise<void>;
-  getLowStockBooks(): Promise<schema.Book[]>;
-  adjustStock(bookId: string, quantity: number, type: string, reason?: string): Promise<schema.Book>;
-  getInventoryTransactions(): Promise<schema.BookInventoryTransaction[]>;
+  updateBook(id: string, book: Partial<schema.InsertBook>, schoolId?: string | null): Promise<schema.Book | undefined>;
+  deleteBook(id: string, schoolId?: string | null): Promise<void>;
+  getLowStockBooks(schoolId?: string | null): Promise<schema.Book[]>;
+  adjustStock(bookId: string, quantity: number, type: string, reason?: string, schoolId?: string | null): Promise<schema.Book>;
+  getInventoryTransactions(schoolId?: string | null): Promise<schema.BookInventoryTransaction[]>;
 
-  getClasses(): Promise<schema.Class[]>;
+  // Classes
+  getClasses(schoolId?: string | null): Promise<schema.Class[]>;
   createClass(c: schema.InsertClass): Promise<schema.Class>;
-  updateClass(id: string, c: Partial<schema.InsertClass>): Promise<schema.Class | undefined>;
-  deleteClass(id: string): Promise<void>;
+  updateClass(id: string, c: Partial<schema.InsertClass>, schoolId?: string | null): Promise<schema.Class | undefined>;
+  deleteClass(id: string, schoolId?: string | null): Promise<void>;
 
-  getStudents(): Promise<schema.Student[]>;
-  getStudentsByClass(classId: string): Promise<schema.Student[]>;
+  // Students
+  getStudents(schoolId?: string | null): Promise<schema.Student[]>;
+  getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]>;
   createStudent(s: schema.InsertStudent): Promise<schema.Student>;
-  updateStudent(id: string, s: Partial<schema.InsertStudent>): Promise<schema.Student | undefined>;
-  deleteStudent(id: string): Promise<void>;
+  updateStudent(id: string, s: Partial<schema.InsertStudent>, schoolId?: string | null): Promise<schema.Student | undefined>;
+  deleteStudent(id: string, schoolId?: string | null): Promise<void>;
 
-  getBookLevels(): Promise<schema.BookLevel[]>;
+  // Book Levels
+  getBookLevels(schoolId?: string | null): Promise<schema.BookLevel[]>;
   createBookLevel(bl: schema.InsertBookLevel): Promise<schema.BookLevel>;
-  updateBookLevel(id: string, bl: Partial<schema.InsertBookLevel>): Promise<schema.BookLevel | undefined>;
-  deleteBookLevel(id: string): Promise<void>;
+  updateBookLevel(id: string, bl: Partial<schema.InsertBookLevel>, schoolId?: string | null): Promise<schema.BookLevel | undefined>;
+  deleteBookLevel(id: string, schoolId?: string | null): Promise<void>;
   getBookLevelItems(bookLevelId: string): Promise<(schema.BookLevelItem & { book?: schema.Book })[]>;
   addBookLevelItem(item: schema.InsertBookLevelItem): Promise<schema.BookLevelItem>;
   removeBookLevelItem(id: string): Promise<void>;
 
-  getClassBookLevels(): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]>;
+  // Class Book Levels
+  getClassBookLevels(schoolId?: string | null): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]>;
   assignClassBookLevel(cbl: schema.InsertClassBookLevel): Promise<schema.ClassBookLevel>;
 
-  getLinkingCodes(): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]>;
+  // Linking Codes
+  getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]>;
   createLinkingCode(code: schema.InsertChildLinkingCode): Promise<schema.ChildLinkingCode>;
   useLinkingCode(code: string, parentIdentifier: string): Promise<{ student: schema.Student; linkingCode: schema.ChildLinkingCode } | null>;
 
+  // Parent
   getParentChildren(parentIdentifier: string): Promise<(schema.ParentChild & { student?: schema.Student & { class?: schema.Class } })[]>;
 
-  generateBasket(studentId: string, parentIdentifier: string): Promise<schema.ChildBookBasket>;
-  getBaskets(parentIdentifier?: string): Promise<any[]>;
-  getBasket(id: string): Promise<any>;
+  // Baskets
+  generateBasket(studentId: string, parentIdentifier: string, schoolId?: string | null): Promise<schema.ChildBookBasket>;
+  getBaskets(parentIdentifier?: string, schoolId?: string | null): Promise<any[]>;
+  getBasket(id: string, schoolId?: string | null): Promise<any>;
 
+  // Payments
   createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment>;
-  getPayments(parentIdentifier?: string): Promise<schema.BookPayment[]>;
-  confirmPayment(paymentId: string): Promise<schema.BookPayment>;
-  rejectPayment(paymentId: string): Promise<schema.BookPayment>;
+  getPayments(parentIdentifier?: string, schoolId?: string | null): Promise<schema.BookPayment[]>;
+  confirmPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  rejectPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment>;
   updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null>;
 
-  getAllocations(classId?: string): Promise<any[]>;
-  confirmReceipt(allocationId: string): Promise<schema.FinanceBookAllocation>;
+  // Allocations
+  getAllocations(classId?: string, schoolId?: string | null): Promise<any[]>;
+  createAllocation(allocation: schema.InsertAllocation): Promise<schema.FinanceBookAllocation>;
+  confirmReceipt(allocationId: string, schoolId?: string | null): Promise<schema.FinanceBookAllocation>;
 
+  // Extra Copy Requests
+  getExtraCopyRequests(filters?: { teacherId?: string; status?: string; schoolId?: string | null }): Promise<any[]>;
+  createExtraCopyRequest(request: schema.InsertExtraCopyRequest): Promise<schema.ExtraCopyRequest>;
+  approveExtraCopyRequest(id: string, adminNotes?: string, schoolId?: string | null): Promise<schema.ExtraCopyRequest>;
+  rejectExtraCopyRequest(id: string, adminNotes?: string, schoolId?: string | null): Promise<schema.ExtraCopyRequest>;
+
+  markAllocationAbsent(allocationId: string, schoolId?: string | null): Promise<schema.FinanceBookAllocation>;
+
+  // Users (not school-scoped in interface — filtered in routes)
   getUsers(): Promise<schema.User[]>;
   getUserByUsername(username: string): Promise<schema.User | undefined>;
+  getUserByEmail(email: string): Promise<schema.User | undefined>;
   getUserById(id: string): Promise<schema.User | undefined>;
   createUser(user: schema.InsertUser): Promise<schema.User>;
   updateUser(id: string, user: Partial<schema.InsertUser>): Promise<schema.User | undefined>;
   deleteUser(id: string): Promise<void>;
+  updateLastLogin(id: string): Promise<void>;
+
+  // Invites
+  createInvite(invite: schema.InsertInvite): Promise<schema.Invite>;
+  getInviteById(id: string): Promise<schema.Invite | undefined>;
+  getPendingInviteByEmail(email: string): Promise<schema.Invite | undefined>;
+  markInviteAccepted(id: string): Promise<void>;
+  revokeInvite(id: string): Promise<void>;
+
+  // Audit logs
+  createAuditLog(log: schema.InsertAuditLog): Promise<schema.AuditLog>;
+  getAuditLogs(limit?: number): Promise<schema.AuditLog[]>;
 }
 
 class DatabaseStorage implements IStorage {
-  async getBooks(): Promise<schema.Book[]> {
+  // === BOOKS ===
+
+  async getBooks(schoolId?: string | null): Promise<schema.Book[]> {
+    const filter = schoolFilter(schema.books, schoolId);
+    if (filter) return db.select().from(schema.books).where(filter);
     return db.select().from(schema.books);
   }
 
-  async getBook(id: string): Promise<schema.Book | undefined> {
-    const [book] = await db.select().from(schema.books).where(eq(schema.books.id, id));
+  async getBook(id: string, schoolId?: string | null): Promise<schema.Book | undefined> {
+    const conditions = [eq(schema.books.id, id)];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    const [book] = await db.select().from(schema.books).where(and(...conditions));
     return book;
   }
 
-  async getBookByIsbn(isbn: string): Promise<schema.Book | undefined> {
-    const [book] = await db.select().from(schema.books).where(eq(schema.books.isbn, isbn));
+  async getBookByIsbn(isbn: string, schoolId?: string | null): Promise<schema.Book | undefined> {
+    const conditions = [eq(schema.books.isbn, isbn)];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    const [book] = await db.select().from(schema.books).where(and(...conditions));
     return book;
   }
 
   async createBook(book: schema.InsertBook): Promise<schema.Book> {
-    const [created] = await db.insert(schema.books).values(book).returning();
+    const created = await insertAndFetchById(schema.books, book);
     return created;
   }
 
-  async updateBook(id: string, book: Partial<schema.InsertBook>): Promise<schema.Book | undefined> {
-    const [updated] = await db.update(schema.books).set(book).where(eq(schema.books.id, id)).returning();
+  async updateBook(id: string, book: Partial<schema.InsertBook>, schoolId?: string | null): Promise<schema.Book | undefined> {
+    const conditions = [eq(schema.books.id, id)];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    const updated = await updateAndFetchFirst(schema.books, and(...conditions), book);
     return updated;
   }
 
-  async deleteBook(id: string): Promise<void> {
-    await db.delete(schema.books).where(eq(schema.books.id, id));
+  async deleteBook(id: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.books.id, id)];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    await db.delete(schema.books).where(and(...conditions));
   }
 
-  async getLowStockBooks(): Promise<schema.Book[]> {
-    return db.select().from(schema.books).where(
-      and(
-        eq(schema.books.isActive, true),
-        sql`${schema.books.stockQuantity} < ${schema.books.lowStockThreshold}`
-      )
-    );
+  async getLowStockBooks(schoolId?: string | null): Promise<schema.Book[]> {
+    const conditions = [
+      eq(schema.books.isActive, true),
+      sql`${schema.books.stockQuantity} < ${schema.books.lowStockThreshold}`,
+    ];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    return db.select().from(schema.books).where(and(...conditions));
   }
 
-  async adjustStock(bookId: string, quantity: number, type: string, reason?: string): Promise<schema.Book> {
-    const book = await this.getBook(bookId);
+  async adjustStock(bookId: string, quantity: number, type: string, reason?: string, schoolId?: string | null): Promise<schema.Book> {
+    const book = await this.getBook(bookId, schoolId);
     if (!book) throw new Error("Book not found");
-    
+
     const prev = book.stockQuantity ?? 0;
     let newQty: number;
-    
+
     if (type === "purchase" || type === "return" || type === "adjustment") {
       newQty = prev + quantity;
     } else if (type === "damage" || type === "allocation") {
@@ -118,7 +281,7 @@ class DatabaseStorage implements IStorage {
     } else {
       newQty = prev + quantity;
     }
-    
+
     if (newQty < 0) throw new Error("Stock cannot go below zero");
 
     await db.insert(schema.bookInventoryTransactions).values({
@@ -127,88 +290,131 @@ class DatabaseStorage implements IStorage {
       quantity,
       previousQuantity: prev,
       newQuantity: newQty,
-    reason,
+      reason,
     });
 
-    const [updated] = await db.update(schema.books).set({ stockQuantity: newQty }).where(eq(schema.books.id, bookId)).returning();
+    const updated = await updateAndFetchFirst(schema.books, eq(schema.books.id, bookId), { stockQuantity: newQty });
     return updated;
   }
 
-  async getInventoryTransactions(): Promise<schema.BookInventoryTransaction[]> {
+  async getInventoryTransactions(schoolId?: string | null): Promise<schema.BookInventoryTransaction[]> {
+    // bookInventoryTransactions doesn't have schoolId directly — join through books
+    if (typeof schoolId === "string") {
+      const txns = await db.select().from(schema.bookInventoryTransactions).orderBy(desc(schema.bookInventoryTransactions.createdAt));
+      const result = [];
+      for (const txn of txns) {
+        const book = await this.getBook(txn.bookId, schoolId);
+        if (book) result.push(txn);
+      }
+      return result;
+    }
     return db.select().from(schema.bookInventoryTransactions).orderBy(desc(schema.bookInventoryTransactions.createdAt));
   }
 
-  async getClasses(): Promise<schema.Class[]> {
+  // === CLASSES ===
+
+  async getClasses(schoolId?: string | null): Promise<schema.Class[]> {
+    const filter = schoolFilter(schema.classes, schoolId);
+    if (filter) return db.select().from(schema.classes).where(filter);
     return db.select().from(schema.classes);
   }
 
   async createClass(c: schema.InsertClass): Promise<schema.Class> {
-    const [created] = await db.insert(schema.classes).values(c).returning();
+    const created = await insertAndFetchById(schema.classes, c);
     return created;
   }
 
-  async updateClass(id: string, c: Partial<schema.InsertClass>): Promise<schema.Class | undefined> {
-    const [updated] = await db.update(schema.classes).set(c).where(eq(schema.classes.id, id)).returning();
+  async updateClass(id: string, c: Partial<schema.InsertClass>, schoolId?: string | null): Promise<schema.Class | undefined> {
+    const conditions = [eq(schema.classes.id, id)];
+    const sf = schoolFilter(schema.classes, schoolId);
+    if (sf) conditions.push(sf);
+    const updated = await updateAndFetchFirst(schema.classes, and(...conditions), c);
     return updated;
   }
 
-  async deleteClass(id: string): Promise<void> {
-    await db.delete(schema.classes).where(eq(schema.classes.id, id));
+  async deleteClass(id: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.classes.id, id)];
+    const sf = schoolFilter(schema.classes, schoolId);
+    if (sf) conditions.push(sf);
+    await db.delete(schema.classes).where(and(...conditions));
   }
 
-  async getStudents(): Promise<schema.Student[]> {
+  // === STUDENTS ===
+
+  async getStudents(schoolId?: string | null): Promise<schema.Student[]> {
+    const filter = schoolFilter(schema.students, schoolId);
+    if (filter) return db.select().from(schema.students).where(filter);
     return db.select().from(schema.students);
   }
 
-  async getStudentsByClass(classId: string): Promise<schema.Student[]> {
-    return db.select().from(schema.students).where(eq(schema.students.classId, classId));
+  async getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]> {
+    const conditions = [eq(schema.students.classId, classId)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    return db.select().from(schema.students).where(and(...conditions));
   }
 
   async createStudent(s: schema.InsertStudent): Promise<schema.Student> {
     const code = `STU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    const [created] = await db.insert(schema.students).values({ ...s, studentCode: code }).returning();
+    const created = await insertAndFetchById(schema.students, { ...s, studentCode: code });
     return created;
   }
 
-  async updateStudent(id: string, s: Partial<schema.InsertStudent>): Promise<schema.Student | undefined> {
-    const [updated] = await db.update(schema.students).set(s).where(eq(schema.students.id, id)).returning();
+  async updateStudent(id: string, s: Partial<schema.InsertStudent>, schoolId?: string | null): Promise<schema.Student | undefined> {
+    const conditions = [eq(schema.students.id, id)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    const updated = await updateAndFetchFirst(schema.students, and(...conditions), s);
     return updated;
   }
 
-  async deleteStudent(id: string): Promise<void> {
-    await db.delete(schema.students).where(eq(schema.students.id, id));
+  async deleteStudent(id: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.students.id, id)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    await db.delete(schema.students).where(and(...conditions));
   }
 
-  async getBookLevels(): Promise<schema.BookLevel[]> {
+  // === BOOK LEVELS ===
+
+  async getBookLevels(schoolId?: string | null): Promise<schema.BookLevel[]> {
+    const filter = schoolFilter(schema.bookLevels, schoolId);
+    if (filter) return db.select().from(schema.bookLevels).where(filter);
     return db.select().from(schema.bookLevels);
   }
 
   async createBookLevel(bl: schema.InsertBookLevel): Promise<schema.BookLevel> {
-    const [created] = await db.insert(schema.bookLevels).values(bl).returning();
+    const created = await insertAndFetchById(schema.bookLevels, bl);
     return created;
   }
 
-  async updateBookLevel(id: string, bl: Partial<schema.InsertBookLevel>): Promise<schema.BookLevel | undefined> {
-    const [updated] = await db.update(schema.bookLevels).set(bl).where(eq(schema.bookLevels.id, id)).returning();
+  async updateBookLevel(id: string, bl: Partial<schema.InsertBookLevel>, schoolId?: string | null): Promise<schema.BookLevel | undefined> {
+    const conditions = [eq(schema.bookLevels.id, id)];
+    const sf = schoolFilter(schema.bookLevels, schoolId);
+    if (sf) conditions.push(sf);
+    const updated = await updateAndFetchFirst(schema.bookLevels, and(...conditions), bl);
     return updated;
   }
 
-  async deleteBookLevel(id: string): Promise<void> {
-    await db.delete(schema.bookLevels).where(eq(schema.bookLevels.id, id));
+  async deleteBookLevel(id: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.bookLevels.id, id)];
+    const sf = schoolFilter(schema.bookLevels, schoolId);
+    if (sf) conditions.push(sf);
+    await db.delete(schema.bookLevels).where(and(...conditions));
   }
 
   async getBookLevelItems(bookLevelId: string): Promise<(schema.BookLevelItem & { book?: schema.Book })[]> {
     const items = await db.select().from(schema.bookLevelItems).where(eq(schema.bookLevelItems.bookLevelId, bookLevelId));
     const result = [];
     for (const item of items) {
-      const book = await this.getBook(item.bookId);
+      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
       result.push({ ...item, book });
     }
     return result;
   }
 
   async addBookLevelItem(item: schema.InsertBookLevelItem): Promise<schema.BookLevelItem> {
-    const [created] = await db.insert(schema.bookLevelItems).values(item).returning();
+    const created = await insertAndFetchById(schema.bookLevelItems, item);
     return created;
   }
 
@@ -216,11 +422,15 @@ class DatabaseStorage implements IStorage {
     await db.delete(schema.bookLevelItems).where(eq(schema.bookLevelItems.id, id));
   }
 
-  async getClassBookLevels(): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]> {
+  // === CLASS BOOK LEVELS ===
+
+  async getClassBookLevels(schoolId?: string | null): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]> {
     const cbls = await db.select().from(schema.classBookLevels);
     const result = [];
     for (const cbl of cbls) {
       const [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, cbl.classId));
+      // Filter by school: if schoolId is set, only include classes from that school
+      if (typeof schoolId === "string" && cls?.schoolId !== schoolId) continue;
       const [bl] = await db.select().from(schema.bookLevels).where(eq(schema.bookLevels.id, cbl.bookLevelId));
       result.push({ ...cbl, class: cls, bookLevel: bl });
     }
@@ -228,12 +438,20 @@ class DatabaseStorage implements IStorage {
   }
 
   async assignClassBookLevel(cbl: schema.InsertClassBookLevel): Promise<schema.ClassBookLevel> {
-    const [created] = await db.insert(schema.classBookLevels).values(cbl).returning();
+    const created = await insertAndFetchById(schema.classBookLevels, cbl);
     return created;
   }
 
-  async getLinkingCodes(): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]> {
-    const codes = await db.select().from(schema.childLinkingCodes);
+  // === LINKING CODES ===
+
+  async getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]> {
+    let codes;
+    const filter = schoolFilter(schema.childLinkingCodes, schoolId);
+    if (filter) {
+      codes = await db.select().from(schema.childLinkingCodes).where(filter);
+    } else {
+      codes = await db.select().from(schema.childLinkingCodes);
+    }
     const result = [];
     for (const code of codes) {
       const [student] = await db.select().from(schema.students).where(eq(schema.students.id, code.studentId));
@@ -247,7 +465,7 @@ class DatabaseStorage implements IStorage {
   }
 
   async createLinkingCode(codeData: schema.InsertChildLinkingCode): Promise<schema.ChildLinkingCode> {
-    const [created] = await db.insert(schema.childLinkingCodes).values(codeData).returning();
+    const created = await insertAndFetchById(schema.childLinkingCodes, codeData);
     return created;
   }
 
@@ -267,6 +485,8 @@ class DatabaseStorage implements IStorage {
     return { student, linkingCode: { ...linkingCode, isUsed: true, linkedAt: new Date() } };
   }
 
+  // === PARENT ===
+
   async getParentChildren(parentIdentifier: string): Promise<(schema.ParentChild & { student?: schema.Student & { class?: schema.Class } })[]> {
     const links = await db.select().from(schema.parentChildren).where(eq(schema.parentChildren.parentIdentifier, parentIdentifier));
     const result = [];
@@ -281,8 +501,13 @@ class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async generateBasket(studentId: string, parentIdentifier: string): Promise<schema.ChildBookBasket> {
-    const [student] = await db.select().from(schema.students).where(eq(schema.students.id, studentId));
+  // === BASKETS ===
+
+  async generateBasket(studentId: string, parentIdentifier: string, schoolId?: string | null): Promise<schema.ChildBookBasket> {
+    const conditions = [eq(schema.students.id, studentId)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    const [student] = await db.select().from(schema.students).where(and(...conditions));
     if (!student || !student.classId) throw new Error("Student or class not found");
 
     const classLevels = await db.select().from(schema.classBookLevels).where(eq(schema.classBookLevels.classId, student.classId));
@@ -309,12 +534,13 @@ class DatabaseStorage implements IStorage {
       total += parseFloat(item.unitPrice) * item.quantity;
     }
 
-    const [basket] = await db.insert(schema.childBookBaskets).values({
+    const basket = await insertAndFetchById(schema.childBookBaskets, {
       studentId,
       parentIdentifier,
       status: "pending",
       totalAmount: total.toFixed(2),
-    }).returning();
+      schoolId: student.schoolId,
+    });
 
     for (const item of allItems) {
       const tp = parseFloat(item.unitPrice) * item.quantity;
@@ -330,10 +556,17 @@ class DatabaseStorage implements IStorage {
     return basket;
   }
 
-  async getBaskets(parentIdentifier?: string): Promise<any[]> {
+  async getBaskets(parentIdentifier?: string, schoolId?: string | null): Promise<any[]> {
     let baskets;
+    const conditions = [];
     if (parentIdentifier) {
-      baskets = await db.select().from(schema.childBookBaskets).where(eq(schema.childBookBaskets.parentIdentifier, parentIdentifier));
+      conditions.push(eq(schema.childBookBaskets.parentIdentifier, parentIdentifier));
+    }
+    const sf = schoolFilter(schema.childBookBaskets, schoolId);
+    if (sf) conditions.push(sf);
+
+    if (conditions.length > 0) {
+      baskets = await db.select().from(schema.childBookBaskets).where(and(...conditions));
     } else {
       baskets = await db.select().from(schema.childBookBaskets);
     }
@@ -343,7 +576,7 @@ class DatabaseStorage implements IStorage {
       const items = await db.select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
       const itemsWithBooks = [];
       for (const item of items) {
-        const book = await this.getBook(item.bookId);
+        const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
         itemsWithBooks.push({ ...item, book });
       }
       const [student] = await db.select().from(schema.students).where(eq(schema.students.id, basket.studentId));
@@ -356,20 +589,25 @@ class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async getBasket(id: string): Promise<any> {
-    const [basket] = await db.select().from(schema.childBookBaskets).where(eq(schema.childBookBaskets.id, id));
+  async getBasket(id: string, schoolId?: string | null): Promise<any> {
+    const conditions = [eq(schema.childBookBaskets.id, id)];
+    const sf = schoolFilter(schema.childBookBaskets, schoolId);
+    if (sf) conditions.push(sf);
+    const [basket] = await db.select().from(schema.childBookBaskets).where(and(...conditions));
     if (!basket) return null;
     const items = await db.select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
     const itemsWithBooks = [];
     for (const item of items) {
-      const book = await this.getBook(item.bookId);
+      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
       itemsWithBooks.push({ ...item, book });
     }
     return { ...basket, items: itemsWithBooks };
   }
 
+  // === PAYMENTS ===
+
   async createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment> {
-    const [created] = await db.insert(schema.bookPayments).values(payment).returning();
+    const created = await insertAndFetchById(schema.bookPayments, payment);
     for (const basketId of basketIds) {
       await db.insert(schema.basketPayments).values({ basketId, paymentId: created.id });
       await db.update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
@@ -380,24 +618,38 @@ class DatabaseStorage implements IStorage {
   async updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
     const [payment] = await db.select().from(schema.bookPayments).where(eq(schema.bookPayments.paymentReference, reference));
     if (!payment) return null;
-    const [updated] = await db.update(schema.bookPayments).set(updates).where(eq(schema.bookPayments.paymentReference, reference)).returning();
+    const updated = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.paymentReference, reference), updates);
     return updated;
   }
 
-  async getPayments(parentIdentifier?: string): Promise<schema.BookPayment[]> {
+  async getPayments(parentIdentifier?: string, schoolId?: string | null): Promise<schema.BookPayment[]> {
+    const conditions = [];
     if (parentIdentifier) {
-      return db.select().from(schema.bookPayments).where(eq(schema.bookPayments.parentIdentifier, parentIdentifier)).orderBy(desc(schema.bookPayments.paidAt));
+      conditions.push(eq(schema.bookPayments.parentIdentifier, parentIdentifier));
+    }
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+
+    if (conditions.length > 0) {
+      return db.select().from(schema.bookPayments).where(and(...conditions)).orderBy(desc(schema.bookPayments.paidAt));
     }
     return db.select().from(schema.bookPayments).orderBy(desc(schema.bookPayments.paidAt));
   }
 
-  async confirmPayment(paymentId: string): Promise<schema.BookPayment> {
-    const [payment] = await db.update(schema.bookPayments).set({ status: "completed", confirmedAt: new Date() }).where(eq(schema.bookPayments.id, paymentId)).returning();
+  async confirmPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    // Verify ownership if schoolId set
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await db.select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+
+    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), { status: "completed", confirmedAt: new Date() });
 
     const bps = await db.select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
       await db.update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
-      
+
       const basket = await this.getBasket(bp.basketId);
       if (basket) {
         for (const item of basket.items) {
@@ -406,6 +658,7 @@ class DatabaseStorage implements IStorage {
             bookId: item.bookId,
             basketId: basket.id,
             status: "allocated",
+            schoolId: existing.schoolId,
           });
           try {
             await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
@@ -418,8 +671,14 @@ class DatabaseStorage implements IStorage {
     return payment;
   }
 
-  async rejectPayment(paymentId: string): Promise<schema.BookPayment> {
-    const [payment] = await db.update(schema.bookPayments).set({ status: "failed" }).where(eq(schema.bookPayments.id, paymentId)).returning();
+  async rejectPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await db.select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+
+    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), { status: "failed" });
     const bps = await db.select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
       await db.update(schema.childBookBaskets).set({ status: "pending" }).where(eq(schema.childBookBaskets.id, bp.basketId));
@@ -427,12 +686,20 @@ class DatabaseStorage implements IStorage {
     return payment;
   }
 
-  async getAllocations(classId?: string): Promise<any[]> {
-    const allocs = await db.select().from(schema.financeBookAllocations);
+  // === ALLOCATIONS ===
+
+  async getAllocations(classId?: string, schoolId?: string | null): Promise<any[]> {
+    let allocs;
+    const sf = schoolFilter(schema.financeBookAllocations, schoolId);
+    if (sf) {
+      allocs = await db.select().from(schema.financeBookAllocations).where(sf);
+    } else {
+      allocs = await db.select().from(schema.financeBookAllocations);
+    }
     const result = [];
     for (const alloc of allocs) {
       const [student] = await db.select().from(schema.students).where(eq(schema.students.id, alloc.studentId));
-      const book = await this.getBook(alloc.bookId);
+      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, alloc.bookId));
       if (classId && student?.classId !== classId) continue;
       let cls;
       if (student?.classId) {
@@ -443,40 +710,328 @@ class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async confirmReceipt(allocationId: string): Promise<schema.FinanceBookAllocation> {
-    const [updated] = await db.update(schema.financeBookAllocations)
-      .set({ status: "received", receivedAt: new Date() })
-      .where(eq(schema.financeBookAllocations.id, allocationId))
-      .returning();
-    return updated;
-  }
-
-  async getUsers(): Promise<schema.User[]> {
-    return db.select().from(schema.users);
-  }
-
-  async getUserByUsername(username: string): Promise<schema.User | undefined> {
-    const [user] = await db.select().from(schema.users).where(eq(schema.users.username, username));
-    return user;
-  }
-
-  async getUserById(id: string): Promise<schema.User | undefined> {
-    const [user] = await db.select().from(schema.users).where(eq(schema.users.id, id));
-    return user;
-  }
-
-  async createUser(user: schema.InsertUser): Promise<schema.User> {
-    const [created] = await db.insert(schema.users).values(user).returning();
+  async createAllocation(allocation: schema.InsertAllocation): Promise<schema.FinanceBookAllocation> {
+    const created = await insertAndFetchById(schema.financeBookAllocations, allocation);
     return created;
   }
 
-  async updateUser(id: string, user: Partial<schema.InsertUser>): Promise<schema.User | undefined> {
-    const [updated] = await db.update(schema.users).set(user).where(eq(schema.users.id, id)).returning();
+  async confirmReceipt(allocationId: string, schoolId?: string | null): Promise<schema.FinanceBookAllocation> {
+    const conditions = [eq(schema.financeBookAllocations.id, allocationId)];
+    const sf = schoolFilter(schema.financeBookAllocations, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await db.select().from(schema.financeBookAllocations).where(and(...conditions));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      { status: "received", receivedAt: new Date() }
+    );
     return updated;
   }
 
+  // === EXTRA COPY REQUESTS ===
+
+  async getExtraCopyRequests(filters?: { teacherId?: string; status?: string; schoolId?: string | null }): Promise<any[]> {
+    const conditions = [];
+    if (filters?.teacherId) {
+      conditions.push(eq(schema.extraCopyRequests.teacherId, filters.teacherId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(schema.extraCopyRequests.status, filters.status));
+    }
+    const sf = schoolFilter(schema.extraCopyRequests, filters?.schoolId);
+    if (sf) conditions.push(sf);
+
+    let requests;
+    if (conditions.length > 0) {
+      requests = await db.select().from(schema.extraCopyRequests)
+        .where(and(...conditions))
+        .orderBy(desc(schema.extraCopyRequests.createdAt));
+    } else {
+      requests = await db.select().from(schema.extraCopyRequests)
+        .orderBy(desc(schema.extraCopyRequests.createdAt));
+    }
+    const result = [];
+    for (const req of requests) {
+      const teacher = await this.getUserById(req.teacherId);
+      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, req.bookId));
+      const [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, req.classId));
+      result.push({
+        ...req,
+        teacher: teacher ? { id: teacher.id, name: teacher.name } : undefined,
+        book: book ? { id: book.id, title: book.title, stockQuantity: book.stockQuantity } : undefined,
+        class: cls ? { id: cls.id, name: cls.name } : undefined,
+      });
+    }
+    return result;
+  }
+
+  async createExtraCopyRequest(request: schema.InsertExtraCopyRequest): Promise<schema.ExtraCopyRequest> {
+    const created = await insertAndFetchById(schema.extraCopyRequests, request);
+    return created;
+  }
+
+  async approveExtraCopyRequest(id: string, adminNotes?: string, schoolId?: string | null): Promise<schema.ExtraCopyRequest> {
+    const conditions = [eq(schema.extraCopyRequests.id, id)];
+    const sf = schoolFilter(schema.extraCopyRequests, schoolId);
+    if (sf) conditions.push(sf);
+    const [request] = await db.select().from(schema.extraCopyRequests).where(and(...conditions));
+    if (!request) throw new Error("Request not found");
+    if (request.status !== "pending") throw new Error("Request is not pending");
+
+    try {
+      await this.adjustStock(request.bookId, request.quantity, "allocation", `Extra copy request approved: ${request.reason}`);
+    } catch (e) {
+      // Stock may be insufficient but we still approve the request
+    }
+
+    const updated = await updateAndFetchFirst(
+      schema.extraCopyRequests,
+      eq(schema.extraCopyRequests.id, id),
+      { status: "approved", adminNotes, resolvedAt: new Date() }
+    );
+    return updated;
+  }
+
+  async rejectExtraCopyRequest(id: string, adminNotes?: string, schoolId?: string | null): Promise<schema.ExtraCopyRequest> {
+    const conditions = [eq(schema.extraCopyRequests.id, id)];
+    const sf = schoolFilter(schema.extraCopyRequests, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await db.select().from(schema.extraCopyRequests).where(and(...conditions));
+    if (!existing) throw new Error("Request not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.extraCopyRequests,
+      eq(schema.extraCopyRequests.id, id),
+      { status: "rejected", adminNotes, resolvedAt: new Date() }
+    );
+    return updated;
+  }
+
+  async markAllocationAbsent(allocationId: string, schoolId?: string | null): Promise<schema.FinanceBookAllocation> {
+    const conditions = [eq(schema.financeBookAllocations.id, allocationId)];
+    const sf = schoolFilter(schema.financeBookAllocations, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await db.select().from(schema.financeBookAllocations).where(and(...conditions));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      { status: "absent" }
+    );
+    return updated;
+  }
+
+  // === USERS ===
+
+  async getUsers(): Promise<schema.User[]> {
+    try {
+      return await db.select().from(schema.users);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      ensureDemoUsersInMemory();
+      return Array.from(memoryUsers.values());
+    }
+  }
+
+  async getUserByUsername(username: string): Promise<schema.User | undefined> {
+    try {
+      const [user] = await db.select().from(schema.users).where(eq(schema.users.username, username));
+      return user;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      ensureDemoUsersInMemory();
+      return Array.from(memoryUsers.values()).find((u) => u.username === username);
+    }
+  }
+
+  async getUserByEmail(email: string): Promise<schema.User | undefined> {
+    try {
+      const [user] = await db.select().from(schema.users).where(eq(schema.users.email, email));
+      return user;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      ensureDemoUsersInMemory();
+      return Array.from(memoryUsers.values()).find((u) => u.email === email);
+    }
+  }
+
+  async getUserById(id: string): Promise<schema.User | undefined> {
+    try {
+      const [user] = await db.select().from(schema.users).where(eq(schema.users.id, id));
+      return user;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      ensureDemoUsersInMemory();
+      return memoryUsers.get(id);
+    }
+  }
+
+  async createUser(user: schema.InsertUser): Promise<schema.User> {
+    try {
+      const created = await insertAndFetchById(schema.users, user);
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      ensureDemoUsersInMemory();
+      const created: schema.User = {
+        id: randomUUID(),
+        username: user.username,
+        passwordHash: user.passwordHash,
+        name: user.name,
+        role: user.role,
+        email: user.email ?? null,
+        status: user.status ?? "active",
+        schoolId: user.schoolId ?? null,
+        emailVerifiedAt: null,
+        createdAt: now(),
+        updatedAt: now(),
+        lastLoginAt: null,
+      };
+      memoryUsers.set(created.id, created);
+      return created;
+    }
+  }
+
+  async updateUser(id: string, user: Partial<schema.InsertUser>): Promise<schema.User | undefined> {
+    try {
+      const updated = await updateAndFetchFirst(schema.users, eq(schema.users.id, id), user);
+      return updated;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      ensureDemoUsersInMemory();
+      const existing = memoryUsers.get(id);
+      if (!existing) return undefined;
+      const updated: schema.User = {
+        ...existing,
+        ...user,
+        updatedAt: now(),
+      } as schema.User;
+      memoryUsers.set(id, updated);
+      return updated;
+    }
+  }
+
   async deleteUser(id: string): Promise<void> {
-    await db.delete(schema.users).where(eq(schema.users.id, id));
+    try {
+      await db.delete(schema.users).where(eq(schema.users.id, id));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      memoryUsers.delete(id);
+    }
+  }
+
+  async updateLastLogin(id: string): Promise<void> {
+    try {
+      await db.update(schema.users).set({ lastLoginAt: new Date(), updatedAt: new Date() }).where(eq(schema.users.id, id));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const existing = memoryUsers.get(id);
+      if (!existing) return;
+      memoryUsers.set(id, { ...existing, lastLoginAt: now(), updatedAt: now() });
+    }
+  }
+
+  // === INVITES ===
+
+  async createInvite(invite: schema.InsertInvite): Promise<schema.Invite> {
+    try {
+      const created = await insertAndFetchById(schema.invites, invite);
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const created: schema.Invite = {
+        id: randomUUID(),
+        email: invite.email,
+        role: invite.role,
+        schoolId: invite.schoolId ?? null,
+        tokenHash: invite.tokenHash,
+        invitedBy: invite.invitedBy ?? null,
+        status: invite.status ?? "pending",
+        expiresAt: invite.expiresAt,
+        createdAt: now(),
+        acceptedAt: null,
+      };
+      memoryInvites.set(created.id, created);
+      return created;
+    }
+  }
+
+  async getInviteById(id: string): Promise<schema.Invite | undefined> {
+    try {
+      const [invite] = await db.select().from(schema.invites).where(eq(schema.invites.id, id));
+      return invite;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memoryInvites.get(id);
+    }
+  }
+
+  async getPendingInviteByEmail(email: string): Promise<schema.Invite | undefined> {
+    try {
+      const [invite] = await db.select().from(schema.invites)
+        .where(and(eq(schema.invites.email, email), eq(schema.invites.status, "pending")));
+      return invite;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return Array.from(memoryInvites.values()).find((i) => i.email === email && i.status === "pending");
+    }
+  }
+
+  async markInviteAccepted(id: string): Promise<void> {
+    try {
+      await db.update(schema.invites).set({ status: "accepted", acceptedAt: new Date() }).where(eq(schema.invites.id, id));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const invite = memoryInvites.get(id);
+      if (!invite) return;
+      memoryInvites.set(id, { ...invite, status: "accepted", acceptedAt: now() });
+    }
+  }
+
+  async revokeInvite(id: string): Promise<void> {
+    try {
+      await db.update(schema.invites).set({ status: "revoked" }).where(eq(schema.invites.id, id));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const invite = memoryInvites.get(id);
+      if (!invite) return;
+      memoryInvites.set(id, { ...invite, status: "revoked" });
+    }
+  }
+
+  // === AUDIT LOGS ===
+
+  async createAuditLog(log: schema.InsertAuditLog): Promise<schema.AuditLog> {
+    try {
+      const created = await insertAndFetchById(schema.auditLogs, log);
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const created: schema.AuditLog = {
+        id: randomUUID(),
+        userId: log.userId ?? null,
+        action: log.action,
+        target: log.target ?? null,
+        metadata: log.metadata ?? null,
+        ipAddress: log.ipAddress ?? null,
+        userAgent: log.userAgent ?? null,
+        createdAt: now(),
+      };
+      memoryAuditLogs.push(created);
+      return created;
+    }
+  }
+
+  async getAuditLogs(limit = 100): Promise<schema.AuditLog[]> {
+    try {
+      return await db.select().from(schema.auditLogs).orderBy(desc(schema.auditLogs.createdAt)).limit(limit);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memoryAuditLogs.slice().reverse().slice(0, limit);
+    }
   }
 }
 

@@ -8,6 +8,8 @@ export interface AuthUser {
   name: string;
   role: string;
   email: string | null;
+  status: string;
+  schoolId: string | null;
 }
 
 export function useAuth() {
@@ -25,7 +27,7 @@ export function useAuth() {
 
   const loginMutation = useMutation({
     mutationFn: async ({ username, password }: { username: string; password: string }) => {
-      const res = await apiRequest("POST", "/api/auth/login", { username, password });
+      const res = await apiRequest("POST", "/api/auth/sign-in", { username, password });
       return res.json();
     },
     onSuccess: () => {
@@ -33,9 +35,43 @@ export function useAuth() {
     },
   });
 
+  const signUpParentMutation = useMutation({
+    mutationFn: async (data: { name: string; email: string; username: string; password: string }) => {
+      const res = await apiRequest("POST", "/api/auth/sign-up-parent", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    },
+  });
+
+  const acceptInviteMutation = useMutation({
+    mutationFn: async (data: { token: string; name: string; username: string; password: string }) => {
+      const res = await apiRequest("POST", "/api/auth/accept-invite", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    },
+  });
+
+  const forgotPasswordMutation = useMutation({
+    mutationFn: async (data: { email: string }) => {
+      const res = await apiRequest("POST", "/api/auth/forgot-password", data);
+      return res.json();
+    },
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (data: { token: string; password: string }) => {
+      const res = await apiRequest("POST", "/api/auth/reset-password", data);
+      return res.json();
+    },
+  });
+
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/auth/logout");
+      await apiRequest("POST", "/api/auth/sign-out");
     },
     onSuccess: () => {
       queryClient.clear();
@@ -51,5 +87,17 @@ export function useAuth() {
     logout: logoutMutation.mutateAsync,
     loginError: loginMutation.error,
     isLoggingIn: loginMutation.isPending,
+    signUpParent: signUpParentMutation.mutateAsync,
+    isSigningUp: signUpParentMutation.isPending,
+    signUpError: signUpParentMutation.error,
+    acceptInvite: acceptInviteMutation.mutateAsync,
+    isAcceptingInvite: acceptInviteMutation.isPending,
+    acceptInviteError: acceptInviteMutation.error,
+    forgotPassword: forgotPasswordMutation.mutateAsync,
+    isForgotPending: forgotPasswordMutation.isPending,
+    forgotPasswordError: forgotPasswordMutation.error,
+    resetPassword: resetPasswordMutation.mutateAsync,
+    isResettingPassword: resetPasswordMutation.isPending,
+    resetPasswordError: resetPasswordMutation.error,
   };
 }
