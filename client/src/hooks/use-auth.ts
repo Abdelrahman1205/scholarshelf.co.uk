@@ -30,8 +30,11 @@ export function useAuth() {
       const res = await apiRequest("POST", "/api/auth/sign-in", { username, password });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    onSuccess: (data) => {
+      // Set cache directly so AuthGuard sees the user immediately on navigate.
+      // invalidateQueries would blank the cache first, causing AuthGuard to
+      // redirect back to /login before the refetch completes.
+      queryClient.setQueryData(["/api/auth/me"], data);
     },
   });
 
