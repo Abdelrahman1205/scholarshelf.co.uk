@@ -2,13 +2,13 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { storage } from "./storage";
-import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration";
+import { storage } from "./storage.js";
+import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration.js";
 import {
   signInSchema, signUpParentSchema, acceptInviteSchema,
   forgotPasswordSchema, resetPasswordSchema,
   LEGACY_ROLE_MAP, USER_ROLES,
-} from "@shared/schema";
+} from "../shared/schema.js";
 
 function generateLinkingCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

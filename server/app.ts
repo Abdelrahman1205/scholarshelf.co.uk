@@ -3,8 +3,8 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import { createServer, type Server } from "http";
-import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
+import { registerRoutes } from "./routes.js";
+import { serveStatic } from "./static.js";
 
 declare module "express-session" {
   interface SessionData {
@@ -112,7 +112,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     if (process.env.NODE_ENV === "production") {
       serveStatic(app);
     } else {
-      const { setupVite } = await import("./vite");
+      const { setupVite } = await import("./vite.js");
       await setupVite(httpServer, app);
     }
   }
