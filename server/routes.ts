@@ -44,11 +44,12 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 function requireRole(...roles: string[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    if (!roles.includes(req.session.role!)) {
+    const currentContext = getActiveRequestContext(req);
+    if (!roles.includes(currentContext)) {
       return res.status(403).json({ message: "Access denied" });
     }
     next();
@@ -181,12 +182,14 @@ async function acceptInviteToken(req: Request, res: Response, token: string, nam
 
   req.session.regenerate((err) => {
     if (err) {
-      return res.status(201).json(safeUser(user));
+      buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
+      return;
     }
     req.session.userId = user.id;
     req.session.role = user.role;
+    req.session.activeContext = resolveRole(user.role);
     req.session.schoolId = user.schoolId;
-    res.status(201).json(safeUser(user));
+    buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
   });
 
   return { invite, user };
@@ -263,11 +266,23 @@ function resolveRole(role: string): string {
 
 const PLATFORM_OWNER_ROLES = ["owner", "platform_admin"];
 const ADMIN_UI_ROLES = ["admin", "school_admin", ...PLATFORM_OWNER_ROLES];
+const CONTEXT_DEFAULT_PATHS: Record<string, string> = {
+  owner: "/admin/owner",
+  platform_admin: "/admin/owner",
+  school_admin: "/admin",
+  admin: "/admin",
+  teacher: "/teacher",
+  parent: "/parent",
+};
 
 function isPlatformOwnerRole(role: string | null | undefined): boolean {
   if (!role) return false;
   const normalized = resolveRole(role);
   return PLATFORM_OWNER_ROLES.includes(normalized);
+}
+
+function getActiveRequestContext(req: Request): string {
+  return resolveRole(req.session.activeContext || req.session.role || "");
 }
 
 function isPlatformOwnerRequest(req: Request): boolean {
@@ -277,6 +292,93 @@ function isPlatformOwnerRequest(req: Request): boolean {
 // Safe user response — strips passwordHash
 function safeUser(user: { id: string; username: string; name: string; role: string; email: string | null; status: string; schoolId: string | null }) {
   return { id: user.id, username: user.username, name: user.name, role: user.role, email: user.email, status: user.status, schoolId: user.schoolId };
+}
+
+async function getUserAccessProfile(user: { id: string; role: string; email: string | null; schoolId: string | null }) {
+  const contexts = new Map<string, { key: string; label: string; defaultPath: string }>();
+  const primaryRole = resolveRole(user.role);
+  const normalizedEmail = normalizeEmail(user.email);
+  const assignedClassIds: string[] = [];
+  const linkedStudentIds: string[] = [];
+
+  const addContext = (key: string) => {
+    const normalizedKey = resolveRole(key);
+    if (!normalizedKey || contexts.has(normalizedKey)) return;
+    const label = normalizedKey === "school_admin"
+      ? "School Admin"
+      : normalizedKey === "platform_admin"
+        ? "Platform Admin"
+        : normalizedKey.charAt(0).toUpperCase() + normalizedKey.slice(1).replace(/_/g, " ");
+    contexts.set(normalizedKey, {
+      key: normalizedKey,
+      label,
+      defaultPath: CONTEXT_DEFAULT_PATHS[normalizedKey] || "/login",
+    });
+  };
+
+  addContext(primaryRole);
+
+  if (normalizedEmail) {
+    const parentLinks = await storage.getParentChildren(user.email!);
+    for (const link of parentLinks) {
+      if (!user.schoolId || link.student?.schoolId === user.schoolId) {
+        if (link.studentId) linkedStudentIds.push(link.studentId);
+      }
+    }
+
+    const linkingCodes = user.schoolId ? await storage.getLinkingCodes(user.schoolId) : await storage.getLinkingCodes();
+    const hasPendingParentLink = linkingCodes.some((code) => normalizeEmail(code.parentEmail) === normalizedEmail);
+    if (primaryRole === "parent" || linkedStudentIds.length > 0 || hasPendingParentLink) {
+      addContext("parent");
+    }
+  }
+
+  if (user.schoolId) {
+    const classes = await storage.getClasses(user.schoolId);
+    for (const cls of classes) {
+      if (cls.teacherId === user.id) assignedClassIds.push(cls.id);
+    }
+  }
+
+  if (primaryRole === "teacher" || assignedClassIds.length > 0) {
+    addContext("teacher");
+  }
+
+  return {
+    primaryRole,
+    contexts: Array.from(contexts.values()),
+    assignedClassIds,
+    linkedStudentIds: Array.from(new Set(linkedStudentIds)),
+  };
+}
+
+async function syncSessionActiveContext(req: Request, user: { id: string; role: string; email: string | null; schoolId: string | null }, preferredContext?: string | null) {
+  const profile = await getUserAccessProfile(user);
+  const availableKeys = profile.contexts.map((context) => context.key);
+  const desired = resolveRole(preferredContext || req.session.activeContext || profile.primaryRole);
+  req.session.activeContext = availableKeys.includes(desired) ? desired : (availableKeys[0] || profile.primaryRole);
+  return { profile, activeContext: req.session.activeContext };
+}
+
+async function buildAuthUserResponse(req: Request, user: { id: string; username: string; name: string; role: string; email: string | null; status: string; schoolId: string | null }) {
+  const base = safeUser(user) as any;
+  const { profile, activeContext } = await syncSessionActiveContext(req, user);
+  base.primaryRole = profile.primaryRole;
+  base.role = activeContext;
+  base.activeContext = activeContext;
+  base.availableContexts = profile.contexts;
+  base.contextMetadata = {
+    assignedClassIds: profile.assignedClassIds,
+    linkedStudentIds: profile.linkedStudentIds,
+  };
+  if (isPlatformOwnerRole(user.role)) {
+    base.supportMode = {
+      active: !!req.session.supportSchoolId,
+      schoolId: req.session.supportSchoolId || null,
+      schoolName: req.session.supportSchoolName || null,
+    };
+  }
+  return base;
 }
 
 function getPublicBaseUrl(req: Request): string {
@@ -605,12 +707,13 @@ export async function registerRoutes(
         }
         req.session.userId = user.id;
         req.session.role = user.role;
+        req.session.activeContext = resolveRole(user.role);
         req.session.schoolId = user.schoolId;
 
         storage.updateLastLogin(user.id).catch(() => {});
         auditLog(req, "login_success", `user:${user.id}`).catch(() => {});
 
-        res.json(safeUser(user));
+        buildAuthUserResponse(req, user).then((response) => res.json(response)).catch(() => res.json(safeUser(user)));
       });
     } catch (e: any) {
       console.error("Sign-in error:", e);
@@ -663,12 +766,14 @@ export async function registerRoutes(
 
       req.session.regenerate((err) => {
         if (err) {
-          return res.status(201).json(safeUser(user));
+          buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
+          return;
         }
         req.session.userId = user.id;
         req.session.role = user.role;
+        req.session.activeContext = "parent";
         req.session.schoolId = null;
-        res.status(201).json(safeUser(user));
+        buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
       });
     } catch (e: any) {
       console.error("Sign-up error:", e);
@@ -693,6 +798,31 @@ export async function registerRoutes(
   app.post("/api/auth/logout", async (req, res, next) => {
     req.url = "/api/auth/sign-out";
     (app as any).handle(req, res, next);
+  });
+
+  app.post("/api/auth/context", requireAuth, async (req, res) => {
+    try {
+      const requestedContext = resolveRole(String(req.body?.context || ""));
+      if (!requestedContext) {
+        return res.status(400).json({ message: "Context is required" });
+      }
+
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user || user.status !== "active") {
+        return res.status(401).json({ message: "User not found" });
+      }
+
+      const { profile, activeContext } = await syncSessionActiveContext(req, user, requestedContext);
+      if (activeContext !== requestedContext) {
+        return res.status(403).json({ message: "Requested context is not available for this account." });
+      }
+
+      const response = await buildAuthUserResponse(req, user);
+      await auditLog(req, "context_switched", `user:${user.id}`, { context: activeContext, availableContexts: profile.contexts.map((item) => item.key) });
+      res.json(response);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to switch context" });
+    }
   });
 
   // POST /api/auth/accept-invite
@@ -866,20 +996,12 @@ export async function registerRoutes(
       req.session.destroy(() => {});
       return res.status(401).json({ message: "Account is not active" });
     }
-    const response: any = safeUser(user);
-    // Include support mode state for owner users
-    if (isPlatformOwnerRole(user.role)) {
-      response.supportMode = {
-        active: !!req.session.supportSchoolId,
-        schoolId: req.session.supportSchoolId || null,
-        schoolName: req.session.supportSchoolName || null,
-      };
-    }
+    const response: any = await buildAuthUserResponse(req, user);
     res.json(response);
   });
 
   // === BOOKS (school-scoped) ===
-  app.get("/api/books", requireAuth, async (req, res) => {
+  app.get("/api/books", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
     const books = await storage.getBooks(sid);
     res.json(books);
@@ -1069,9 +1191,12 @@ export async function registerRoutes(
   });
 
   // === CLASSES (school-scoped) ===
-  app.get("/api/classes", requireAuth, async (req, res) => {
+  app.get("/api/classes", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
     const classes = await storage.getClasses(sid);
+    if (getActiveRequestContext(req) === "teacher") {
+      return res.json(classes.filter((cls) => cls.teacherId === req.session.userId));
+    }
     res.json(classes);
   });
 
@@ -1102,6 +1227,11 @@ export async function registerRoutes(
   app.get("/api/students", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
     const students = await storage.getStudents(sid);
+    if (getActiveRequestContext(req) === "teacher") {
+      const classes = await storage.getClasses(sid);
+      const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
+      return res.json(students.filter((student) => student.classId && assignedClassIds.has(student.classId)));
+    }
     res.json(students);
   });
 
@@ -1482,10 +1612,15 @@ export async function registerRoutes(
   });
 
   // === ALLOCATIONS (school-scoped) ===
-  app.get("/api/allocations", requireAuth, async (req, res) => {
+  app.get("/api/allocations", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
     const classId = req.query.classId as string | undefined;
-    const allocations = await storage.getAllocations(classId, sid);
+    let allocations = await storage.getAllocations(classId, sid);
+    if (getActiveRequestContext(req) === "teacher") {
+      const classes = await storage.getClasses(sid);
+      const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
+      allocations = allocations.filter((allocation: any) => allocation.student?.class?.id && assignedClassIds.has(allocation.student.class.id));
+    }
     res.json(allocations);
   });
 
@@ -1511,7 +1646,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/allocations/:id/confirm", requireAuth, async (req, res) => {
+  app.post("/api/allocations/:id/confirm", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (sid) {
@@ -1526,6 +1661,30 @@ export async function registerRoutes(
           });
         }
       }
+
+      if (getActiveRequestContext(req) === "teacher") {
+        const classes = await storage.getClasses(sid);
+        const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
+        const allocations = await storage.getAllocations(undefined, sid);
+        const targetAllocation = allocations.find((allocation: any) => allocation.id === routeParam(req.params.id));
+        if (!targetAllocation || !targetAllocation.student?.class?.id || !assignedClassIds.has(targetAllocation.student.class.id)) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+
+        const user = await storage.getUserById(req.session.userId!);
+        if (user?.email) {
+          const parentLinks = await storage.getParentChildren(user.email);
+          const linkedStudentIds = new Set(parentLinks.filter((link) => !sid || link.student?.schoolId === sid).map((link) => link.studentId));
+          if (linkedStudentIds.has(targetAllocation.studentId)) {
+            await auditLog(req, "teacher_self_child_allocation_blocked", `allocation:${targetAllocation.id}`, {
+              studentId: targetAllocation.studentId,
+              action: "confirm",
+            });
+            return res.status(403).json({ message: "A school admin or another authorised teacher must confirm handover for your own linked child." });
+          }
+        }
+      }
+
       const allocation = await storage.confirmReceipt(routeParam(req.params.id), sid);
       res.json(allocation);
     } catch (e: any) {
@@ -1533,7 +1692,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/allocations/:id/absent", requireAuth, async (req, res) => {
+  app.post("/api/allocations/:id/absent", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (sid) {
@@ -1548,6 +1707,30 @@ export async function registerRoutes(
           });
         }
       }
+
+      if (getActiveRequestContext(req) === "teacher") {
+        const classes = await storage.getClasses(sid);
+        const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
+        const allocations = await storage.getAllocations(undefined, sid);
+        const targetAllocation = allocations.find((allocation: any) => allocation.id === routeParam(req.params.id));
+        if (!targetAllocation || !targetAllocation.student?.class?.id || !assignedClassIds.has(targetAllocation.student.class.id)) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+
+        const user = await storage.getUserById(req.session.userId!);
+        if (user?.email) {
+          const parentLinks = await storage.getParentChildren(user.email);
+          const linkedStudentIds = new Set(parentLinks.filter((link) => !sid || link.student?.schoolId === sid).map((link) => link.studentId));
+          if (linkedStudentIds.has(targetAllocation.studentId)) {
+            await auditLog(req, "teacher_self_child_allocation_blocked", `allocation:${targetAllocation.id}`, {
+              studentId: targetAllocation.studentId,
+              action: "absent",
+            });
+            return res.status(403).json({ message: "A school admin or another authorised teacher must update handover for your own linked child." });
+          }
+        }
+      }
+
       const allocation = await storage.markAllocationAbsent(routeParam(req.params.id), sid);
       res.json(allocation);
     } catch (e: any) {
@@ -1556,13 +1739,13 @@ export async function registerRoutes(
   });
 
   // === EXTRA COPY REQUESTS (school-scoped) ===
-  app.get("/api/extra-requests", requireAuth, async (req, res) => {
+  app.get("/api/extra-requests", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
     const filters: { teacherId?: string; status?: string; schoolId?: string | null } = { schoolId: sid };
     if (req.query.teacherId) filters.teacherId = req.query.teacherId as string;
     if (req.query.status) filters.status = req.query.status as string;
     // If teacher role, restrict to their own requests
-    if (req.session.role === "teacher") {
+    if (getActiveRequestContext(req) === "teacher") {
       filters.teacherId = req.session.userId!;
     }
     const requests = await storage.getExtraCopyRequests(filters);

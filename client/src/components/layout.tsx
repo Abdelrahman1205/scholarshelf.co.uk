@@ -107,20 +107,22 @@ function isNavActive(href: string, location: string): boolean {
 
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
-  const { user, logout, exitSupportMode, isExitingSupport } = useAuth();
+  const { user, logout, exitSupportMode, switchContext, isExitingSupport, isSwitchingContext } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const isOwner = user?.role === "owner" || user?.role === "platform_admin";
+  const isOwner = user?.primaryRole === "owner" || user?.primaryRole === "platform_admin" || user?.role === "owner" || user?.role === "platform_admin";
   const inSupportMode = isOwner && user?.supportMode?.active;
+  const availableContexts = user?.availableContexts || [];
+  const activeContext = user?.activeContext || user?.role;
 
   // Determine effective role for nav config
   const effectiveRole = inSupportMode
     ? "owner_support"
     : isOwner
       ? "owner"
-      : user?.role === "school_admin" || user?.role === "admin"
+      : activeContext === "school_admin" || activeContext === "admin"
         ? "admin"
-        : user?.role;
+        : activeContext;
 
   const config = effectiveRole ? roleConfig[effectiveRole] : null;
 
@@ -168,6 +170,11 @@ export default function Layout({ children }: LayoutProps) {
     navigateTo("/admin/owner");
   }
 
+  async function handleSwitchContext(context: string, defaultPath: string) {
+    await switchContext(context);
+    navigateTo(defaultPath);
+  }
+
   const SupportBanner = () => {
     if (!inSupportMode) return null;
     return (
@@ -211,6 +218,29 @@ export default function Layout({ children }: LayoutProps) {
         <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
           <div className="text-[10px] uppercase tracking-widest text-amber-600 font-semibold">Supporting</div>
           <div className="text-sm font-medium text-amber-800 truncate">{user?.supportMode?.schoolName}</div>
+        </div>
+      )}
+
+      {!inSupportMode && availableContexts.length > 1 && (
+        <div className="mx-3 mt-3 px-3 py-3 rounded-lg bg-muted/40 border border-border/60 space-y-2">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Current view</div>
+          <div className="flex flex-wrap gap-2">
+            {availableContexts.map((context) => {
+              const selected = context.key === activeContext;
+              return (
+                <Button
+                  key={context.key}
+                  size="sm"
+                  variant={selected ? "default" : "outline"}
+                  className="h-8"
+                  disabled={selected || isSwitchingContext}
+                  onClick={() => void handleSwitchContext(context.key, context.defaultPath)}
+                >
+                  {selected ? `${context.label}` : `Switch to ${context.label}`}
+                </Button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -268,7 +298,7 @@ export default function Layout({ children }: LayoutProps) {
           <div className="text-sm flex-1 min-w-0">
             <div className="font-medium truncate" data-testid="text-user-name">{user?.name}</div>
             <div className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">
-              {inSupportMode ? "Support Operator" : isOwner ? "owner (protected)" : user?.role}
+              {inSupportMode ? "Support Operator" : isOwner ? "owner (protected)" : activeContext}
             </div>
           </div>
         </div>

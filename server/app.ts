@@ -12,6 +12,7 @@ declare module "express-session" {
   interface SessionData {
     userId: string;
     role: string;
+    activeContext: string | null;
     schoolId: string | null;
     /** Support mode: owner enters a school context for troubleshooting */
     supportSchoolId: string | null;

@@ -8,14 +8,27 @@ export interface SupportMode {
   schoolName: string | null;
 }
 
+export interface AvailableContext {
+  key: string;
+  label: string;
+  defaultPath: string;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
   name: string;
   role: string;
+  primaryRole?: string;
+  activeContext?: string;
   email: string | null;
   status: string;
   schoolId: string | null;
+  availableContexts?: AvailableContext[];
+  contextMetadata?: {
+    assignedClassIds?: string[];
+    linkedStudentIds?: string[];
+  };
   supportMode?: SupportMode;
 }
 
@@ -114,6 +127,17 @@ export function useAuth() {
     },
   });
 
+  const switchContextMutation = useMutation({
+    mutationFn: async (context: string) => {
+      const res = await apiRequest("POST", "/api/auth/context", { context });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["/api/auth/me"], data);
+      queryClient.invalidateQueries();
+    },
+  });
+
   return {
     user: user ?? null,
     isLoading,
@@ -136,7 +160,9 @@ export function useAuth() {
     resetPasswordError: resetPasswordMutation.error,
     enterSupportMode: enterSupportMutation.mutateAsync,
     exitSupportMode: exitSupportMutation.mutateAsync,
+    switchContext: switchContextMutation.mutateAsync,
     isEnteringSupport: enterSupportMutation.isPending,
     isExitingSupport: exitSupportMutation.isPending,
+    isSwitchingContext: switchContextMutation.isPending,
   };
 }

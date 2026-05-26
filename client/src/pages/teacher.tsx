@@ -180,12 +180,12 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
   });
 
   const confirmMut = useMutation({
-    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/confirm-receipt`); },
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/confirm`); },
     onSuccess: () => { toast({ title: "Confirmed" }); queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); },
   });
 
   const absentMut = useMutation({
-    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/mark-absent`); },
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/absent`); },
     onSuccess: () => { toast({ title: "Marked Absent" }); queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); },
   });
 
