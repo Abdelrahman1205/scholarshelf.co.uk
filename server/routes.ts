@@ -317,6 +317,121 @@ function formatUserForAdmin(user: any, extras?: Record<string, unknown>) {
   };
 }
 
+const SCHOOL_SETUP_STEP_LABELS: Record<string, string> = {
+  schoolProfileComplete: "School profile complete",
+  classesCreated: "Classes created",
+  booksAdded: "Books added",
+  bookLevelsCreated: "Book levels created",
+  bookLevelsAssignedToClasses: "Book levels assigned to classes",
+  studentsAdded: "Students added",
+  parentCodesGenerated: "Parent codes generated",
+  parentsLinked: "Parents linked",
+  paymentSetupReviewed: "Payment setup reviewed",
+  operationalSetupComplete: "Operational setup complete",
+};
+
+async function getSchoolSetupState(schoolId: string) {
+  const [school, users, classes, books, bookLevels, classBookLevels, students, linkingCodes, payments] = await Promise.all([
+    storage.getSchoolById(schoolId),
+    storage.getUsers(),
+    storage.getClasses(schoolId),
+    storage.getBooks(schoolId),
+    storage.getBookLevels(schoolId),
+    storage.getClassBookLevels(schoolId),
+    storage.getStudents(schoolId),
+    storage.getLinkingCodes(schoolId),
+    storage.getPayments(undefined, schoolId),
+  ]);
+
+  if (!school) return null;
+
+  const schoolUsers = users.filter((user) => user.schoolId === schoolId);
+  const activeSchoolAdmins = schoolUsers.filter((user) => resolveRole(user.role) === "school_admin" && user.status === "active");
+  const teachers = schoolUsers.filter((user) => resolveRole(user.role) === "teacher" && user.status === "active");
+  const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
+
+  const schoolProfileComplete = !!(school.name && school.code);
+  const classesCreated = schoolProfileComplete && classes.length > 0;
+  const booksAdded = classesCreated && books.length > 0;
+  const bookLevelsCreated = booksAdded && bookLevels.length > 0;
+  const bookLevelsAssignedToClasses = bookLevelsCreated && classBookLevels.length > 0;
+  const studentsAdded = bookLevelsAssignedToClasses && students.length > 0;
+  const parentCodesGenerated = studentsAdded && linkingCodes.length > 0;
+  const parentsLinked = parentCodesGenerated && linkingCodes.some((code) => code.isUsed);
+  const paymentSetupReviewed = parentsLinked && payments.length > 0;
+  const readyForOperationalCompletion = paymentSetupReviewed;
+  const operationalSetupComplete =
+    readyForOperationalCompletion && COMPLETE_SETUP_STATUSES.has(setupStatus) && school.status === "active";
+
+  const checklist = {
+    schoolProfileComplete,
+    classesCreated,
+    booksAdded,
+    bookLevelsCreated,
+    bookLevelsAssignedToClasses,
+    studentsAdded,
+    parentCodesGenerated,
+    parentsLinked,
+    paymentSetupReviewed,
+    operationalSetupComplete,
+  };
+
+  const orderedStepKeys = [
+    "schoolProfileComplete",
+    "classesCreated",
+    "booksAdded",
+    "bookLevelsCreated",
+    "bookLevelsAssignedToClasses",
+    "studentsAdded",
+    "parentCodesGenerated",
+    "parentsLinked",
+    "paymentSetupReviewed",
+    "operationalSetupComplete",
+  ];
+
+  const missingStepKeys = orderedStepKeys.filter((key) => !(checklist as any)[key]);
+  const missingSteps = missingStepKeys.map((key) => SCHOOL_SETUP_STEP_LABELS[key] || key);
+
+  const nextRecommendedAction =
+    missingSteps[0] || "Setup complete. School is operational.";
+
+  return {
+    school,
+    setupStatus,
+    schoolUsers,
+    activeSchoolAdmins,
+    teachers,
+    counts: {
+      classes: classes.length,
+      books: books.length,
+      bookLevels: bookLevels.length,
+      classBookLevels: classBookLevels.length,
+      students: students.length,
+      linkingCodes: linkingCodes.length,
+      linkedParents: linkingCodes.filter((code) => code.isUsed).length,
+      payments: payments.length,
+      verifiedPayments: payments.filter((payment) => payment.status === "completed").length,
+      pendingPayments: payments.filter((payment) => payment.status === "pending").length,
+    },
+    checklist,
+    missingStepKeys,
+    missingSteps,
+    nextRecommendedAction,
+    readyForOperationalCompletion,
+    operationalSetupComplete,
+    completionRules: [
+      "Create at least one class.",
+      "Add at least one book.",
+      "Create at least one book level.",
+      "Assign at least one book level to a class.",
+      "Add at least one student.",
+      "Generate at least one parent linking code.",
+      "Link at least one parent account.",
+      "Record at least one payment submission to confirm payment setup.",
+    ],
+  };
+}
+
 async function getScopedAdminUsers(req: Request): Promise<any[]> {
   if (isPlatformOwnerRequest(req)) {
     const schoolFilter = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
@@ -777,40 +892,28 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No school is currently selected." });
       }
 
-      const [school, users, invites, classes, books, levels, linkingCodes] = await Promise.all([
-        storage.getSchoolById(schoolId),
-        storage.getUsers(),
+      const [setupState, invites] = await Promise.all([
+        getSchoolSetupState(schoolId),
         storage.getInvitesBySchool(schoolId),
-        storage.getClasses(schoolId),
-        storage.getBooks(schoolId),
-        storage.getBookLevels(schoolId),
-        storage.getLinkingCodes(schoolId),
       ]);
 
-      if (!school) {
+      if (!setupState) {
         return res.status(404).json({ message: "School not found" });
       }
 
-      const schoolUsers = users.filter((user) => user.schoolId === schoolId);
-      const activeSchoolAdmins = schoolUsers.filter((user) => resolveRole(user.role) === "school_admin" && user.status === "active");
-      const teachers = schoolUsers.filter((user) => resolveRole(user.role) === "teacher" && user.status === "active");
+      const school = setupState.school;
+      const activeSchoolAdmins = setupState.activeSchoolAdmins;
       const schoolAdminInvites = invites.filter((invite) => resolveRole(invite.role) === "school_admin");
       const latestInvite = schoolAdminInvites[0] || null;
       const firstAdminInviteStatus = deriveInviteStatus(latestInvite);
       const firstAdminAccepted = schoolAdminInvites.some((invite) => deriveInviteStatus(invite) === "accepted") || activeSchoolAdmins.length > 0;
-      const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
+      const setupStatus = setupState.setupStatus;
       const schoolActive = school.status === "active";
-      const operationalSetupCompleted = COMPLETE_SETUP_STATUSES.has(setupStatus) && schoolActive;
-
-      const checklist = {
-        schoolDetailsConfirmed: !!(school.name && school.code),
-        classesYearGroupsCreated: classes.length > 0,
-        booksAddedOrSkipped: books.length > 0,
-        bookLevelsBundlesCreatedOrSkipped: levels.length > 0,
-        paymentInstructionsConfiguredOrSkipped: true,
-        parentLinkingConfigured: linkingCodes.length > 0,
-        teacherSetupCompletedOrSkipped: teachers.length > 0,
-      };
+      const operationalSetupCompleted = setupState.operationalSetupComplete;
+      const checklist = setupState.checklist;
+      const setupProgressTotal = Object.keys(checklist).length;
+      const setupProgressDone = Object.values(checklist).filter(Boolean).length;
+      const setupPercent = Math.round((setupProgressDone / Math.max(setupProgressTotal, 1)) * 100);
 
       res.json({
         school: {
@@ -838,11 +941,21 @@ export async function registerRoutes(
         firstAdminAccepted,
         operationalSetupCompleted,
         schoolActive,
+        readyForOperationalCompletion: setupState.readyForOperationalCompletion,
         setupStatus,
         schoolStatus: school.status,
         firstAdminEmail: latestInvite?.email || activeSchoolAdmins[0]?.email || null,
         firstAdminInviteStatus,
         checklist,
+        missingSteps: setupState.missingSteps,
+        missingStepKeys: setupState.missingStepKeys,
+        completionRules: setupState.completionRules,
+        setupProgress: {
+          done: setupProgressDone,
+          total: setupProgressTotal,
+          percent: setupPercent,
+        },
+        counts: setupState.counts,
         progress: {
           schoolCreated: true,
           firstAdminInvited: schoolAdminInvites.length > 0,
@@ -854,8 +967,10 @@ export async function registerRoutes(
             ? "Invite the first School Admin to start onboarding."
             : !firstAdminAccepted
               ? "Waiting for the first School Admin to accept the invite."
-              : !operationalSetupCompleted
-                ? "Complete the remaining operational setup tasks."
+              : !setupState.readyForOperationalCompletion
+                ? `Complete the remaining setup steps. Next: ${setupState.nextRecommendedAction}`
+                : !operationalSetupCompleted
+                  ? "All prerequisites are complete. Mark setup complete to activate school operations."
                 : "Setup complete. You can proceed to the dashboard.",
       });
     } catch (e: any) {
@@ -870,19 +985,25 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No school is currently selected." });
       }
 
-      const school = await storage.getSchoolById(schoolId);
-      if (!school) {
+      const setupState = await getSchoolSetupState(schoolId);
+      if (!setupState) {
         return res.status(404).json({ message: "School not found" });
       }
 
-      const users = await storage.getUsers();
-      const schoolAdmins = users.filter((u) => u.schoolId === schoolId && resolveRole(u.role) === "school_admin" && u.status === "active");
+      const schoolAdmins = setupState.activeSchoolAdmins;
       if (schoolAdmins.length === 0) {
         return res.status(400).json({ message: "First School Admin must accept the invite before setup can be completed." });
       }
 
+      if (!setupState.readyForOperationalCompletion) {
+        return res.status(400).json({
+          message: "Setup prerequisites are not complete.",
+          missingSteps: setupState.missingSteps,
+        });
+      }
+
       const updated = await storage.updateSchool(schoolId, { status: "active", setupStatus: "complete" } as any);
-      await auditLog(req, "school_setup_completed", `school:${schoolId}`, { schoolName: school.name });
+      await auditLog(req, "school_setup_completed", `school:${schoolId}`, { schoolName: setupState.school.name });
       res.json(updated);
     } catch (e: any) {
       res.status(400).json({ message: e.message || "Failed to complete setup" });
@@ -987,6 +1108,14 @@ export async function registerRoutes(
   app.post("/api/students", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+
+      if (sid) {
+        const classes = await storage.getClasses(sid);
+        if (classes.length === 0) {
+          return res.status(409).json({ message: "Create at least one class before adding students." });
+        }
+      }
+
       const student = await storage.createStudent({ ...req.body, schoolId: sid });
       res.status(201).json(student);
     } catch (e: any) {
@@ -1017,6 +1146,14 @@ export async function registerRoutes(
   app.post("/api/book-levels", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+
+      if (sid) {
+        const books = await storage.getBooks(sid);
+        if (books.length === 0) {
+          return res.status(409).json({ message: "Add books before creating book levels." });
+        }
+      }
+
       const level = await storage.createBookLevel({ ...req.body, schoolId: sid });
       res.status(201).json(level);
     } catch (e: any) {
@@ -1065,6 +1202,17 @@ export async function registerRoutes(
 
   app.post("/api/class-book-levels", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
+      const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.checklist.bookLevelsCreated) {
+          return res.status(409).json({ message: "Create book levels before assigning them to classes." });
+        }
+      }
+
       const cbl = await storage.assignClassBookLevel(req.body);
       res.status(201).json(cbl);
     } catch (e: any) {
@@ -1082,6 +1230,19 @@ export async function registerRoutes(
   app.post("/api/students/:id/linking-code", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.checklist.studentsAdded) {
+          return res.status(409).json({ message: "Add students before generating parent linking codes." });
+        }
+        if (!setupState.checklist.bookLevelsAssignedToClasses) {
+          return res.status(409).json({ message: "Assign book levels to classes before generating parent linking codes." });
+        }
+      }
+
       const { parentEmail } = req.body;
       const code = generateLinkingCode();
       const expiresAt = new Date();
@@ -1250,6 +1411,18 @@ export async function registerRoutes(
   app.post("/api/admin/payments/:id/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.operationalSetupComplete) {
+          return res.status(409).json({
+            message: "Complete school setup before confirming payments.",
+            missingSteps: setupState.missingSteps,
+          });
+        }
+      }
       const payment = await storage.confirmPayment(routeParam(req.params.id), sid);
 
       // Notify parent that payment has been verified
@@ -1276,6 +1449,18 @@ export async function registerRoutes(
   app.post("/api/admin/payments/:id/reject", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.operationalSetupComplete) {
+          return res.status(409).json({
+            message: "Complete school setup before processing payments.",
+            missingSteps: setupState.missingSteps,
+          });
+        }
+      }
       const payment = await storage.rejectPayment(routeParam(req.params.id), sid);
 
       // Notify parent that payment has been rejected
@@ -1310,6 +1495,18 @@ export async function registerRoutes(
   app.post("/api/allocations", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.operationalSetupComplete) {
+          return res.status(409).json({
+            message: "Complete school setup before managing allocations.",
+            missingSteps: setupState.missingSteps,
+          });
+        }
+      }
       const allocation = await storage.createAllocation({ ...req.body, schoolId: sid });
       res.status(201).json(allocation);
     } catch (e: any) {
@@ -1320,6 +1517,18 @@ export async function registerRoutes(
   app.post("/api/allocations/:id/confirm", requireAuth, async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.operationalSetupComplete) {
+          return res.status(409).json({
+            message: "Complete school setup before confirming allocations.",
+            missingSteps: setupState.missingSteps,
+          });
+        }
+      }
       const allocation = await storage.confirmReceipt(routeParam(req.params.id), sid);
       res.json(allocation);
     } catch (e: any) {
@@ -1330,6 +1539,18 @@ export async function registerRoutes(
   app.post("/api/allocations/:id/absent", requireAuth, async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (sid) {
+        const setupState = await getSchoolSetupState(sid);
+        if (!setupState) {
+          return res.status(404).json({ message: "School not found" });
+        }
+        if (!setupState.operationalSetupComplete) {
+          return res.status(409).json({
+            message: "Complete school setup before managing allocations.",
+            missingSteps: setupState.missingSteps,
+          });
+        }
+      }
       const allocation = await storage.markAllocationAbsent(routeParam(req.params.id), sid);
       res.json(allocation);
     } catch (e: any) {
@@ -2604,6 +2825,7 @@ export async function registerRoutes(
       const scopedPayments = !ownerMode && !sid ? payments.filter((p) => !p.schoolId) : payments;
       const scopedAllocations = !ownerMode && !sid ? allocations.filter((a: any) => !a.schoolId) : allocations;
       const scopedExtraRequests = !ownerMode && !sid ? extraRequests.filter((r: any) => !r.schoolId) : extraRequests;
+      const setupState = sid ? await getSchoolSetupState(sid) : null;
 
       const lowStockBooks = scopedBooks.filter(
         (b) => b.isActive && (b.stockQuantity ?? 0) < (b.lowStockThreshold ?? 10)
@@ -2625,19 +2847,55 @@ export async function registerRoutes(
 
       const extraCopyRequestsPending = scopedExtraRequests.filter((r: any) => r.status === "pending").length;
 
-      const setupChecklist = {
-        schoolProfileCompleted: true, // Admin is authenticated — account exists
-        classesCreated: scopedClasses.length > 0,
-        booksAdded: scopedBooks.length > 0,
-        bookBundlesCreated: scopedBookLevels.length > 0,
-        bundlesAssignedToClasses: scopedClassBookLevels.length > 0,
-        studentsAdded: scopedStudents.length > 0,
-        parentCodesGenerated: parentCodesGenerated > 0,
-        parentsLinked: parentCodesUsed > 0,
-        paymentSetupReviewed: paymentsVerified > 0 || paymentsSubmitted > 0,
-      };
+      const setupChecklist = setupState
+        ? {
+            schoolProfileComplete: setupState.checklist.schoolProfileComplete,
+            classesCreated: setupState.checklist.classesCreated,
+            booksAdded: setupState.checklist.booksAdded,
+            bookLevelsCreated: setupState.checklist.bookLevelsCreated,
+            bookLevelsAssignedToClasses: setupState.checklist.bookLevelsAssignedToClasses,
+            studentsAdded: setupState.checklist.studentsAdded,
+            parentCodesGenerated: setupState.checklist.parentCodesGenerated,
+            parentsLinked: setupState.checklist.parentsLinked,
+            paymentSetupReviewed: setupState.checklist.paymentSetupReviewed,
+            operationalSetupComplete: setupState.checklist.operationalSetupComplete,
+            // Legacy aliases used by older UI labels
+            schoolProfileCompleted: setupState.checklist.schoolProfileComplete,
+            bookBundlesCreated: setupState.checklist.bookLevelsCreated,
+            bundlesAssignedToClasses: setupState.checklist.bookLevelsAssignedToClasses,
+          }
+        : {
+            schoolProfileComplete: true,
+            classesCreated: scopedClasses.length > 0,
+            booksAdded: scopedBooks.length > 0,
+            bookLevelsCreated: scopedBookLevels.length > 0,
+            bookLevelsAssignedToClasses: scopedClassBookLevels.length > 0,
+            studentsAdded: scopedStudents.length > 0,
+            parentCodesGenerated: parentCodesGenerated > 0,
+            parentsLinked: parentCodesUsed > 0,
+            paymentSetupReviewed: paymentsVerified > 0 || paymentsSubmitted > 0,
+            operationalSetupComplete: false,
+            schoolProfileCompleted: true,
+            bookBundlesCreated: scopedBookLevels.length > 0,
+            bundlesAssignedToClasses: scopedClassBookLevels.length > 0,
+          };
+
+      const setupDoneCount = Object.values(setupChecklist)
+        .filter((value, index) => index < 10 && !!value)
+        .length;
+      const setupTotalCount = 10;
+      const setupPercent = Math.round((setupDoneCount / setupTotalCount) * 100);
 
       res.json({
+        school: setupState
+          ? {
+              id: setupState.school.id,
+              name: setupState.school.name,
+              code: setupState.school.code,
+              status: setupState.school.status,
+              setupStatus: setupState.setupStatus,
+            }
+          : null,
         totalBooks: scopedBooks.length,
         lowStockBooks,
         totalStudents: scopedStudents.length,
@@ -2652,6 +2910,13 @@ export async function registerRoutes(
         totalClasses: scopedClasses.length,
         totalBookLevels: scopedBookLevels.length,
         totalLinkingCodes: parentCodesGenerated,
+        setupMissingSteps: setupState?.missingSteps || [],
+        setupNextAction: setupState?.nextRecommendedAction || null,
+        setupProgress: {
+          done: setupDoneCount,
+          total: setupTotalCount,
+          percent: setupPercent,
+        },
         setupChecklist,
       });
     } catch (e: any) {
@@ -2672,16 +2937,28 @@ export async function registerRoutes(
           totalClasses: 0,
           totalBookLevels: 0,
           totalLinkingCodes: 0,
+          school: null,
+          setupMissingSteps: [],
+          setupNextAction: null,
+          setupProgress: {
+            done: 1,
+            total: 10,
+            percent: 10,
+          },
           setupChecklist: {
-            schoolProfileCompleted: true,
+            schoolProfileComplete: true,
             classesCreated: false,
             booksAdded: false,
-            bookBundlesCreated: false,
-            bundlesAssignedToClasses: false,
+            bookLevelsCreated: false,
+            bookLevelsAssignedToClasses: false,
             studentsAdded: false,
             parentCodesGenerated: false,
             parentsLinked: false,
             paymentSetupReviewed: false,
+            operationalSetupComplete: false,
+            schoolProfileCompleted: true,
+            bookBundlesCreated: false,
+            bundlesAssignedToClasses: false,
           },
         });
       }

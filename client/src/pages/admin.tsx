@@ -57,21 +57,46 @@ function DashboardSection() {
   // Setup checklist items
   const setupItems = summary
     ? [
-        { label: "School profile completed", done: summary.setupChecklist.schoolProfileCompleted, href: "/admin/users" },
-        { label: "Classes created", done: summary.setupChecklist.classesCreated, href: "/admin/classes", count: summary.totalClasses },
-        { label: "Books added", done: summary.setupChecklist.booksAdded, href: "/admin/books", count: summary.totalBooks },
-        { label: "Book bundles created", done: summary.setupChecklist.bookBundlesCreated, href: "/admin/levels", count: summary.totalBookLevels },
-        { label: "Bundles assigned to classes", done: summary.setupChecklist.bundlesAssignedToClasses, href: "/admin/levels" },
-        { label: "Students added", done: summary.setupChecklist.studentsAdded, href: "/admin/students", count: summary.totalStudents },
-        { label: "Parent codes generated", done: summary.setupChecklist.parentCodesGenerated, href: "/admin/codes", count: summary.totalLinkingCodes },
-        { label: "Parents linked", done: summary.setupChecklist.parentsLinked, href: "/admin/codes" },
-        { label: "Payment setup reviewed", done: summary.setupChecklist.paymentSetupReviewed, href: "/admin/payments" },
+        { key: "schoolProfileComplete", label: "School profile complete", done: summary.setupChecklist.schoolProfileComplete, href: "/admin/users" },
+        { key: "classesCreated", label: "Classes created", done: summary.setupChecklist.classesCreated, href: "/admin/classes", count: summary.totalClasses },
+        { key: "booksAdded", label: "Books added", done: summary.setupChecklist.booksAdded, href: "/admin/books", count: summary.totalBooks },
+        { key: "bookLevelsCreated", label: "Book levels created", done: summary.setupChecklist.bookLevelsCreated, href: "/admin/levels", count: summary.totalBookLevels },
+        { key: "bookLevelsAssignedToClasses", label: "Book levels assigned to classes", done: summary.setupChecklist.bookLevelsAssignedToClasses, href: "/admin/levels?tab=assignments" },
+        { key: "studentsAdded", label: "Students added", done: summary.setupChecklist.studentsAdded, href: "/admin/students", count: summary.totalStudents },
+        { key: "parentCodesGenerated", label: "Parent codes generated", done: summary.setupChecklist.parentCodesGenerated, href: "/admin/codes", count: summary.totalLinkingCodes },
+        { key: "parentsLinked", label: "Parents linked", done: summary.setupChecklist.parentsLinked, href: "/admin/parents" },
+        { key: "paymentSetupReviewed", label: "Payment setup reviewed", done: summary.setupChecklist.paymentSetupReviewed, href: "/admin/payments" },
+        { key: "operationalSetupComplete", label: "Operational setup complete", done: summary.setupChecklist.operationalSetupComplete, href: "/admin/setup" },
       ]
     : [];
 
-  const setupDone = setupItems.filter((i) => i.done).length;
-  const setupTotal = setupItems.length;
-  const setupPercent = setupTotal > 0 ? Math.round((setupDone / setupTotal) * 100) : 0;
+  const setupDependencyMap: Record<string, string | null> = {
+    schoolProfileComplete: null,
+    classesCreated: "schoolProfileComplete",
+    booksAdded: "classesCreated",
+    bookLevelsCreated: "booksAdded",
+    bookLevelsAssignedToClasses: "bookLevelsCreated",
+    studentsAdded: "bookLevelsAssignedToClasses",
+    parentCodesGenerated: "studentsAdded",
+    parentsLinked: "parentCodesGenerated",
+    paymentSetupReviewed: "parentsLinked",
+    operationalSetupComplete: "paymentSetupReviewed",
+  };
+
+  const stepByKey = new Map(setupItems.map((item: any) => [item.key, item]));
+  const enrichedSetupItems = setupItems.map((item: any) => {
+    const prerequisite = setupDependencyMap[item.key];
+    const blockedBy = prerequisite && !(stepByKey.get(prerequisite)?.done) ? prerequisite : null;
+    return {
+      ...item,
+      blockedBy,
+      blockedReason: blockedBy ? `Complete ${stepByKey.get(blockedBy)?.label?.toLowerCase() || "previous step"} first.` : null,
+    };
+  });
+
+  const setupDone = enrichedSetupItems.filter((i: any) => i.done).length;
+  const setupTotal = enrichedSetupItems.length;
+  const setupPercent = summary?.setupProgress?.percent ?? (setupTotal > 0 ? Math.round((setupDone / setupTotal) * 100) : 0);
 
   // Stat cards — 11 required
   const stats = summary
@@ -138,6 +163,17 @@ function DashboardSection() {
       ]
     : [];
 
+  const schoolDisplayName = summary?.school?.name || "School";
+  const schoolDisplayCode = summary?.school?.code || null;
+  const schoolRoleLabel = "School Admin";
+  const schoolLabel = schoolDisplayCode ? `${schoolDisplayName} (${schoolDisplayCode})` : schoolDisplayName;
+
+  const canCreateBookLevels = !!summary?.setupChecklist?.booksAdded;
+  const canAddStudents = !!summary?.setupChecklist?.classesCreated;
+  const canGenerateParentCodes = !!summary?.setupChecklist?.studentsAdded;
+  const canReviewPayments = !!summary?.setupChecklist?.paymentSetupReviewed;
+  const canManageAllocations = !!summary?.setupChecklist?.booksAdded && !!summary?.setupChecklist?.studentsAdded && (summary?.paymentsSubmitted ?? 0) > 0;
+
   // Main action cards — every one routes to an existing section
   const actions = [
     {
@@ -150,13 +186,14 @@ function DashboardSection() {
       enabled: true,
     },
     {
-      label: "Create Book Bundle",
-      description: "Group books into a level bundle for classes",
+      label: "Create Book Level",
+      description: "Group books into school book levels",
       icon: Layers,
       href: "/admin/levels",
       color: "text-violet-600",
       bg: "bg-violet-50",
-      enabled: true,
+      enabled: canCreateBookLevels,
+      disabledReason: "Add books before creating book levels.",
     },
     {
       label: "Add Student",
@@ -165,7 +202,8 @@ function DashboardSection() {
       href: "/admin/students",
       color: "text-emerald-600",
       bg: "bg-emerald-50",
-      enabled: true,
+      enabled: canAddStudents,
+      disabledReason: "Create classes before adding students.",
     },
     {
       label: "Generate Parent Codes",
@@ -174,7 +212,8 @@ function DashboardSection() {
       href: "/admin/codes",
       color: "text-orange-600",
       bg: "bg-orange-50",
-      enabled: true,
+      enabled: canGenerateParentCodes,
+      disabledReason: "Add students before generating parent codes.",
     },
     {
       label: "Review Payments",
@@ -183,7 +222,8 @@ function DashboardSection() {
       href: "/admin/payments",
       color: "text-indigo-600",
       bg: "bg-indigo-50",
-      enabled: true,
+      enabled: canReviewPayments,
+      disabledReason: "Complete setup prerequisites before processing live payments.",
     },
     {
       label: "View Teacher Requests",
@@ -201,17 +241,17 @@ function DashboardSection() {
       href: "/admin/allocations",
       color: "text-cyan-600",
       bg: "bg-cyan-50",
-      enabled: true,
+      enabled: canManageAllocations,
+      disabledReason: "Add books, students, and payment orders before managing allocations.",
     },
     {
       label: "View Reports",
-      description: "Detailed analytics and reporting — coming soon",
+      description: "View setup and operational metrics",
       icon: BarChart2,
-      href: "",
-      color: "text-gray-400",
+      href: "/admin/setup",
+      color: "text-gray-600",
       bg: "bg-gray-50",
-      enabled: false,
-      disabledReason: "Coming soon",
+      enabled: true,
     },
   ];
 
@@ -288,8 +328,6 @@ function DashboardSection() {
     );
   }
 
-  const schoolLabel = user?.schoolId ? `School ${user.schoolId}` : "Demo School";
-
   return (
     <div className="space-y-6">
 
@@ -301,7 +339,7 @@ function DashboardSection() {
               {greeting}, {user?.name?.split(" ")[0] || "Admin"} 👋
             </h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              {user?.name || "School Admin"} · {schoolLabel} · EduBook Setup &amp; Operations Control Centre
+              {user?.name || "School Admin"} · {schoolLabel} · {schoolRoleLabel}
             </p>
           </div>
           <div className="flex items-center gap-3 text-sm">
@@ -312,6 +350,16 @@ function DashboardSection() {
           </div>
         </div>
       </div>
+
+      {setupPercent < 100 && (
+        <Alert className="border-amber-200 bg-amber-50">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTitle>Your school setup is not complete yet.</AlertTitle>
+          <AlertDescription>
+            Complete the remaining setup steps before inviting parents or processing payments.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* ── 2. Setup Progress Checklist ── */}
       {setupTotal > 0 && (
@@ -355,24 +403,34 @@ function DashboardSection() {
             </div>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-0">
-            {setupItems.map((item, i) => (
+            {enrichedSetupItems.map((item: any, i: number) => (
               <button
                 key={i}
                 onClick={() => item.href && navigateTo(item.href)}
-                disabled={item.done}
+                disabled={item.done || !!item.blockedBy}
+                title={item.blockedReason || undefined}
                 className={cn(
                   "flex items-center gap-2.5 text-sm px-3 py-2.5 rounded-lg border transition-all text-left group",
                   item.done
                     ? "bg-emerald-50/70 border-emerald-200/60 text-emerald-700 cursor-default"
-                    : "bg-amber-50/60 border-amber-200/70 text-amber-800 hover:bg-amber-100/80 hover:border-amber-300 cursor-pointer"
+                    : item.blockedBy
+                      ? "bg-muted/60 border-border text-muted-foreground cursor-not-allowed"
+                      : "bg-amber-50/60 border-amber-200/70 text-amber-800 hover:bg-amber-100/80 hover:border-amber-300 cursor-pointer"
                 )}
               >
                 {item.done ? (
                   <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                ) : item.blockedBy ? (
+                  <Clock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 ) : (
                   <XCircle className="h-4 w-4 text-amber-400 flex-shrink-0" />
                 )}
-                <span className="flex-1 font-medium leading-tight">{item.label}</span>
+                <span className="flex-1 leading-tight">
+                  <span className="font-medium block">{item.label}</span>
+                  {item.blockedReason && !item.done && (
+                    <span className="text-xs text-muted-foreground">{item.blockedReason}</span>
+                  )}
+                </span>
                 {(item as any).count !== undefined && (
                   <Badge variant="outline" className="text-xs ml-auto bg-white/60">
                     {(item as any).count}
@@ -598,7 +656,7 @@ function DashboardSection() {
         <div className="flex flex-wrap gap-2">
           {[
             { label: "Books", href: "/admin/books" },
-            { label: "Book Bundles", href: "/admin/levels" },
+            { label: "Book Levels", href: "/admin/levels" },
             { label: "Classes", href: "/admin/classes" },
             { label: "Students", href: "/admin/students" },
             { label: "Parents", href: "/admin/parents" },
@@ -666,7 +724,6 @@ function isProtectedPlatformOwner(role: string | null | undefined) {
 
 function SetupSection() {
   const { toast } = useToast();
-  const { user } = useAuth();
 
   const { data: setup, isLoading } = useQuery<any>({
     queryKey: ["/api/admin/setup-status"],
@@ -708,16 +765,25 @@ function SetupSection() {
   const canGoDashboard = !!setup?.firstAdminAccepted && (setup?.setupStatus === "operational_setup_in_progress" || setup?.setupStatus === "operational_setup_complete" || setup?.setupStatus === "complete" || setup?.setupStatus === "active");
   const setupComplete = !!setup?.operationalSetupCompleted && !!setup?.schoolActive;
   const firstInvitePending = setup?.firstAdminInviteStatus === "pending";
+  const readyForOperationalCompletion = !!setup?.readyForOperationalCompletion;
 
-  const steps = setup
-    ? [
-        { label: "School created", done: setup.schoolCreated },
-        { label: "First School Admin invited", done: setup.firstAdminInvited },
-        { label: "First School Admin accepted", done: setup.firstAdminAccepted },
-        { label: "Operational setup completed", done: setup.operationalSetupCompleted },
-        { label: "School active", done: setup.schoolActive },
-      ]
-    : [];
+  const setupChecklistOrder = [
+    { key: "schoolProfileComplete", label: "School profile complete" },
+    { key: "classesCreated", label: "Classes created" },
+    { key: "booksAdded", label: "Books added" },
+    { key: "bookLevelsCreated", label: "Book levels created" },
+    { key: "bookLevelsAssignedToClasses", label: "Book levels assigned to classes" },
+    { key: "studentsAdded", label: "Students added" },
+    { key: "parentCodesGenerated", label: "Parent codes generated" },
+    { key: "parentsLinked", label: "Parents linked" },
+    { key: "paymentSetupReviewed", label: "Payment setup reviewed" },
+    { key: "operationalSetupComplete", label: "Operational setup complete" },
+  ];
+
+  const checklistSteps = setupChecklistOrder.map((step) => ({
+    ...step,
+    done: !!setup?.checklist?.[step.key],
+  }));
 
   return (
     <div className="space-y-4">
@@ -735,7 +801,7 @@ function SetupSection() {
         <Card className="border-border/50 shadow-sm">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">School</p>
-            <p className="text-lg font-semibold mt-1">{setup?.school?.name || user?.schoolId || "School setup"}</p>
+            <p className="text-lg font-semibold mt-1">{setup?.school?.name || "School setup"}</p>
             <p className="text-sm text-muted-foreground mt-1">{setup?.school?.code || "Awaiting school details"}</p>
             <p className="text-sm text-muted-foreground mt-1 capitalize">Status: {(setup?.schoolStatus || setup?.school?.status || "pending_setup").replace(/_/g, " ")}</p>
           </CardContent>
@@ -777,11 +843,15 @@ function SetupSection() {
       <Card className="border-border/50 shadow-sm">
         <CardHeader>
           <CardTitle>Setup checklist</CardTitle>
-          <CardDescription>Track the handoff from school creation to full operational readiness.</CardDescription>
+          <CardDescription>
+            {setup?.setupProgress
+              ? `${setup.setupProgress.done} of ${setup.setupProgress.total} steps complete (${setup.setupProgress.percent}%).`
+              : "Track the handoff from school creation to full operational readiness."}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {isLoading && <p className="text-sm text-muted-foreground">Loading setup progress...</p>}
-          {steps.map((step) => (
+          {checklistSteps.map((step) => (
             <div key={step.label} className="flex items-center justify-between gap-3 rounded-lg border p-3">
               <span className="text-sm font-medium">{step.label}</span>
               <Badge variant="outline" className={step.done ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-amber-100 text-amber-700 border-amber-200"}>
@@ -790,11 +860,33 @@ function SetupSection() {
             </div>
           ))}
 
+          {!!setup?.missingSteps?.length && (
+            <Alert className="border-amber-200 bg-amber-50">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTitle>Missing steps</AlertTitle>
+              <AlertDescription>{setup.missingSteps.join(" · ")}</AlertDescription>
+            </Alert>
+          )}
+
+          {!!setup?.completionRules?.length && (
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Completion rules</p>
+              <div className="space-y-1">
+                {setup.completionRules.map((rule: string) => (
+                  <p key={rule} className="text-sm text-muted-foreground">• {rule}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
           {!setupComplete && (
             <div className="pt-2 flex flex-wrap gap-2">
-              <Button onClick={() => completeMutation.mutate()} disabled={completeMutation.isPending || !setup?.firstAdminAccepted}>
+              <Button onClick={() => completeMutation.mutate()} disabled={completeMutation.isPending || !setup?.firstAdminAccepted || !readyForOperationalCompletion}>
                 {completeMutation.isPending ? "Completing..." : "Mark Setup Complete"}
               </Button>
+              {!readyForOperationalCompletion && (
+                <p className="text-xs text-muted-foreground self-center">Complete all prerequisite setup steps first.</p>
+              )}
               <Button variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] })}>
                 Refresh Status
               </Button>
@@ -2643,7 +2735,7 @@ function BookLevelsSection() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-heading font-bold tracking-tight">Book Levels</h1>
-          <p className="text-muted-foreground text-sm mt-1">Create book bundles and assign them to classes.</p>
+          <p className="text-muted-foreground text-sm mt-1">Create book levels and assign them to classes.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setAssignOpen(true)}><GraduationCap className="w-4 h-4 mr-2" /> Assign to Class</Button>
