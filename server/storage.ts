@@ -160,6 +160,7 @@ export interface IStorage {
   createSchool(school: schema.InsertSchool): Promise<schema.School>;
   updateSchool(id: string, school: Partial<schema.InsertSchool>): Promise<schema.School | undefined>;
   deleteSchool(id: string): Promise<void>;
+  deleteSchoolAndRelatedData(id: string): Promise<void>;
 
   // Books
   getBooks(schoolId?: string | null): Promise<schema.Book[]>;
@@ -324,6 +325,55 @@ class DatabaseStorage implements IStorage {
       await getDb().delete(schema.schools).where(eq(schema.schools.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
+      memorySchools.delete(id);
+    }
+  }
+
+  async deleteSchoolAndRelatedData(id: string): Promise<void> {
+    try {
+      const db = getDb();
+      const schoolUsers = await db
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.schoolId, id));
+
+      for (const schoolUser of schoolUsers) {
+        await db.update(schema.invites).set({ invitedBy: null }).where(eq(schema.invites.invitedBy, schoolUser.id));
+      }
+
+      await db.delete(schema.extraCopyRequests).where(eq(schema.extraCopyRequests.schoolId, id));
+      await db.delete(schema.financeBookAllocations).where(eq(schema.financeBookAllocations.schoolId, id));
+      await db.delete(schema.childBookBaskets).where(eq(schema.childBookBaskets.schoolId, id));
+      await db.delete(schema.bookPayments).where(eq(schema.bookPayments.schoolId, id));
+      await db.delete(schema.childLinkingCodes).where(eq(schema.childLinkingCodes.schoolId, id));
+      await db.delete(schema.invites).where(eq(schema.invites.schoolId, id));
+      await db.delete(schema.users).where(eq(schema.users.schoolId, id));
+      await db.delete(schema.students).where(eq(schema.students.schoolId, id));
+      await db.delete(schema.classes).where(eq(schema.classes.schoolId, id));
+      await db.delete(schema.bookLevels).where(eq(schema.bookLevels.schoolId, id));
+      await db.delete(schema.books).where(eq(schema.books.schoolId, id));
+      await db.delete(schema.schools).where(eq(schema.schools.id, id));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+
+      const deletedUserIds = new Set<string>();
+      memoryUsers.forEach((user, userId) => {
+        if (user.schoolId === id) {
+          deletedUserIds.add(userId);
+          memoryUsers.delete(userId);
+        }
+      });
+
+      memoryInvites.forEach((invite, inviteId) => {
+        if (invite.schoolId === id) {
+          memoryInvites.delete(inviteId);
+          return;
+        }
+        if (invite.invitedBy && deletedUserIds.has(invite.invitedBy)) {
+          memoryInvites.set(inviteId, { ...invite, invitedBy: null });
+        }
+      });
+
       memorySchools.delete(id);
     }
   }

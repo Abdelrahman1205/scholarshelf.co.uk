@@ -2088,21 +2088,13 @@ export async function registerRoutes(
       const school = await storage.getSchoolById(id);
       if (!school) return res.status(404).json({ message: "School not found" });
 
-      const [users, books, classes, students] = await Promise.all([
-        storage.getUsers(),
-        storage.getBooks(id),
-        storage.getClasses(id),
-        storage.getStudents(id),
-      ]);
-
-      const hasRelatedUsers = users.some((u) => u.schoolId === id);
-      if (hasRelatedUsers || books.length > 0 || classes.length > 0 || students.length > 0) {
+      if (school.status !== "suspended") {
         return res.status(409).json({
-          message: "School cannot be deleted while related users or records exist. Suspend it instead.",
+          message: "School must be suspended before deletion.",
         });
       }
 
-      await storage.deleteSchool(id);
+      await storage.deleteSchoolAndRelatedData(id);
       await auditLog(req, "school_deleted", `school:${id}`, { code: school.code, name: school.name });
       res.status(204).send();
     } catch (e: any) {
