@@ -1504,13 +1504,17 @@ export async function registerRoutes(
     const targetUser = await storage.getUserById(routeParam(req.params.id));
     if (!targetUser) return res.status(404).json({ message: "User not found" });
 
-    if (isPlatformOwnerRequest(req) && !isInSupportMode(req)) {
+    const targetRole = resolveRole(targetUser.role);
+    const ownerCanDeleteAdminAnywhere =
+      isPlatformOwnerRequest(req) && ["admin", "school_admin", "platform_admin", "owner"].includes(targetRole);
+
+    if (isPlatformOwnerRequest(req) && !ownerCanDeleteAdminAnywhere && !isInSupportMode(req)) {
       return res.status(403).json({
         message: "Owner user management is only allowed inside Support Mode for a selected school.",
       });
     }
 
-    if (!(await canManageUser(req, targetUser))) {
+    if (!ownerCanDeleteAdminAnywhere && !(await canManageUser(req, targetUser))) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -1522,7 +1526,6 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Platform owner accounts cannot be deleted from the standard dashboard workflow." });
     }
 
-    const targetRole = resolveRole(targetUser.role);
     if (["admin", "school_admin", "platform_admin", "owner"].includes(targetRole) && !isPlatformOwnerRequest(req)) {
       return res.status(403).json({ message: "Deleting admin-level users is restricted." });
     }
