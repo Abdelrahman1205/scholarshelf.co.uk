@@ -436,7 +436,7 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid credentials" });
       }
-      const { username, password } = parsed.data;
+      const { username, password, schoolCode } = parsed.data;
 
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
       if (rateLimit(`signin:${ip}`, 10, 15 * 60 * 1000)) {
@@ -459,6 +459,28 @@ export async function registerRoutes(
       if (!valid) {
         await auditLog(req, "login_failed", `user:${user.id}`, { reason: "invalid_password" });
         return res.status(401).json({ message: "Invalid username or password" });
+      }
+
+      if (user.schoolId) {
+        const school = await storage.getSchoolById(user.schoolId);
+        if (!school) {
+          await auditLog(req, "login_failed", `user:${user.id}`, {
+            reason: "school_not_found",
+            schoolId: user.schoolId,
+          });
+          return res.status(401).json({ message: "School account is not correctly configured" });
+        }
+
+        const providedSchoolCode = normalizeSchoolCode(String(schoolCode || ""));
+        const expectedSchoolCode = normalizeSchoolCode(String(school.code || ""));
+
+        if (!providedSchoolCode || providedSchoolCode !== expectedSchoolCode) {
+          await auditLog(req, "login_failed", `user:${user.id}`, {
+            reason: "school_code_mismatch",
+            schoolId: user.schoolId,
+          });
+          return res.status(401).json({ message: "Invalid school code for this account" });
+        }
       }
 
       req.session.regenerate((err) => {

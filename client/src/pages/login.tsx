@@ -19,6 +19,7 @@ function getRoleRoute(role: string): string {
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [schoolCode, setSchoolCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const { login, isAuthenticated, user, isLoggingIn, loginError } = useAuth();
   const [, setLocation] = useLocation();
@@ -32,16 +33,17 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const loggedInUser = await login({ username, password });
+      const loggedInUser = await login({ username, password, schoolCode: schoolCode.trim() || undefined });
       setLocation(getRoleRoute(loggedInUser.role));
     } catch {}
   }
 
-  async function loginWithDemo(demoUsername: string, demoPassword: string) {
+  async function loginWithDemo(demoUsername: string, demoPassword: string, demoSchoolCode?: string) {
     setUsername(demoUsername);
     setPassword(demoPassword);
+    setSchoolCode(demoSchoolCode || "");
     try {
-      const loggedInUser = await login({ username: demoUsername, password: demoPassword });
+      const loggedInUser = await login({ username: demoUsername, password: demoPassword, schoolCode: demoSchoolCode });
       setLocation(getRoleRoute(loggedInUser.role));
     } catch {}
   }
@@ -102,10 +104,27 @@ export default function LoginPage() {
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="school-code">School Code</Label>
+                <Input
+                  id="school-code"
+                  data-testid="input-school-code"
+                  type="text"
+                  placeholder="Enter your school code"
+                  value={schoolCode}
+                  onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Required for school-linked accounts (School Admin, Teacher, Parent, Student).
+                </p>
+              </div>
+
               {loginError && (
                 <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md" data-testid="text-login-error">
                   {loginError.message.includes("401")
-                    ? "Invalid username or password"
+                    ? loginError.message.toLowerCase().includes("school code")
+                      ? "Invalid school code for this account"
+                      : "Invalid username or password"
                     : loginError.message.includes("429")
                     ? "Too many login attempts. Please try again later."
                     : "Login failed. Please try again."}
@@ -142,9 +161,9 @@ export default function LoginPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
                   { label: "BytHub", username: "bythub", password: "bythub123" },
-                  { label: "Admin", username: "admin", password: "admin123" },
-                  { label: "Teacher", username: "teacher", password: "teacher123" },
-                  { label: "Parent", username: "parent", password: "parent123" },
+                  { label: "Admin", username: "admin", password: "admin123", schoolCode: "DEMO-001" },
+                  { label: "Teacher", username: "teacher", password: "teacher123", schoolCode: "DEMO-001" },
+                  { label: "Parent", username: "parent", password: "parent123", schoolCode: "DEMO-001" },
                 ].map((demo) => (
                   <Button
                     key={demo.username}
@@ -153,7 +172,7 @@ export default function LoginPage() {
                     size="sm"
                     className="text-xs"
                     data-testid={`button-demo-${demo.username}`}
-                    onClick={() => void loginWithDemo(demo.username, demo.password)}
+                    onClick={() => void loginWithDemo(demo.username, demo.password, demo.schoolCode)}
                   >
                     {demo.label}
                   </Button>
