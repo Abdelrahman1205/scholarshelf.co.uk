@@ -352,13 +352,13 @@ async function getSchoolSetupState(schoolId: string) {
 
   const schoolProfileComplete = !!(school.name && school.code);
   const classesCreated = schoolProfileComplete && classes.length > 0;
-  const booksAdded = classesCreated && books.length > 0;
-  const bookLevelsCreated = booksAdded && bookLevels.length > 0;
-  const bookLevelsAssignedToClasses = bookLevelsCreated && classBookLevels.length > 0;
-  const studentsAdded = bookLevelsAssignedToClasses && students.length > 0;
-  const parentCodesGenerated = studentsAdded && linkingCodes.length > 0;
-  const parentsLinked = parentCodesGenerated && linkingCodes.some((code) => code.isUsed);
-  const paymentSetupReviewed = parentsLinked && payments.length > 0;
+  const booksAdded = books.length > 0;
+  const bookLevelsCreated = bookLevels.length > 0;
+  const bookLevelsAssignedToClasses = classBookLevels.length > 0;
+  const studentsAdded = students.length > 0;
+  const parentCodesGenerated = linkingCodes.length > 0;
+  const parentsLinked = linkingCodes.some((code) => code.isUsed);
+  const paymentSetupReviewed = payments.length > 0;
   const readyForOperationalCompletion = paymentSetupReviewed;
   const operationalSetupComplete =
     readyForOperationalCompletion && COMPLETE_SETUP_STATUSES.has(setupStatus) && school.status === "active";
@@ -1237,9 +1237,6 @@ export async function registerRoutes(
         }
         if (!setupState.checklist.studentsAdded) {
           return res.status(409).json({ message: "Add students before generating parent linking codes." });
-        }
-        if (!setupState.checklist.bookLevelsAssignedToClasses) {
-          return res.status(409).json({ message: "Assign book levels to classes before generating parent linking codes." });
         }
       }
 
