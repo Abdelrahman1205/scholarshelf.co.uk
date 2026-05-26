@@ -1039,10 +1039,17 @@ class DatabaseStorage implements IStorage {
 
   async deleteUser(id: string): Promise<void> {
     try {
+      // Preserve invite history while allowing inviter accounts to be removed.
+      await getDb().update(schema.invites).set({ invitedBy: null }).where(eq(schema.invites.invitedBy, id));
       await getDb().delete(schema.users).where(eq(schema.users.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       memoryUsers.delete(id);
+      memoryInvites.forEach((invite, inviteId) => {
+        if (invite.invitedBy === id) {
+          memoryInvites.set(inviteId, { ...invite, invitedBy: null });
+        }
+      });
     }
   }
 
