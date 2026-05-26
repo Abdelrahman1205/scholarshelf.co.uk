@@ -1080,6 +1080,29 @@ function OwnerActivitySection() {
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
+  const { data: schoolsData } = useQuery<any>({
+    queryKey: ["/api/owner/schools"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const schoolNameById = new Map<string, string>(
+    (schoolsData?.items || []).map((school: any) => [school.id, school.name]),
+  );
+
+  const formatTarget = (item: any): string => {
+    const metadata = item?.metadata && typeof item.metadata === "object" ? item.metadata : null;
+    const metadataSchoolName = metadata?.schoolName || metadata?.name || metadata?.school?.name;
+    if (metadataSchoolName) return metadataSchoolName;
+
+    const rawTarget = String(item?.target || "");
+    if (rawTarget.startsWith("school:")) {
+      const schoolId = rawTarget.slice("school:".length);
+      return schoolNameById.get(schoolId) || schoolId;
+    }
+
+    return rawTarget || "Platform";
+  };
+
   if (isLoading) return <Card><CardContent className="py-10 text-center text-muted-foreground">Loading activity logs...</CardContent></Card>;
   if (isError) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>Failed to load activity logs</AlertTitle></Alert>;
 
@@ -1104,7 +1127,7 @@ function OwnerActivitySection() {
             {(data?.items || []).map((item: any) => (
               <TableRow key={item.id}>
                 <TableCell className="capitalize">{String(item.action || "").replace(/_/g, " ")}</TableCell>
-                <TableCell>{item.target || "Platform"}</TableCell>
+                <TableCell>{formatTarget(item)}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{item.actorUserId || "System"}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.timestamp)}</TableCell>
               </TableRow>
