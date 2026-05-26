@@ -6,7 +6,8 @@ import {
   Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight,
   QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
   Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
-  XCircle, Eye, History, BarChart2, Settings
+  XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
+  Archive, RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,18 @@ import { cn } from "@/lib/utils";
 function navigateTo(href: string) {
   window.history.pushState({}, "", href);
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** Safely format school display text — never expose raw UUIDs */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function formatSchoolDisplay(item: { schoolCode?: string | null; schoolName?: string | null; schoolId?: string | null }): string {
+  const code = item.schoolCode;
+  const name = item.schoolName;
+  if (code && !UUID_RE.test(code)) {
+    return `${name && !UUID_RE.test(name) ? name : "School"} (${code})`;
+  }
+  if (name && !UUID_RE.test(name)) return name;
+  return "Not available";
 }
 
 // ─── DASHBOARD ─────────────────────────────────────────────────
@@ -65,6 +78,7 @@ function DashboardSection() {
         { key: "studentsAdded", label: "Students added", done: summary.setupChecklist.studentsAdded, href: "/admin/students", count: summary.totalStudents },
         { key: "parentCodesGenerated", label: "Parent codes generated", done: summary.setupChecklist.parentCodesGenerated, href: "/admin/codes", count: summary.totalLinkingCodes },
         { key: "parentsLinked", label: "Parents linked", done: summary.setupChecklist.parentsLinked, href: "/admin/parents" },
+        { key: "brandingDesignConfigured", label: "Branding & design configured", done: summary.setupChecklist.brandingDesignConfigured, href: "/admin/branding" },
         { key: "paymentSetupReviewed", label: "Payment setup reviewed", done: summary.setupChecklist.paymentSetupReviewed, href: "/admin/payments" },
         { key: "operationalSetupComplete", label: "Operational setup complete", done: summary.setupChecklist.operationalSetupComplete, href: "/admin/setup" },
       ]
@@ -79,7 +93,8 @@ function DashboardSection() {
     studentsAdded: "bookLevelsAssignedToClasses",
     parentCodesGenerated: "studentsAdded",
     parentsLinked: "parentCodesGenerated",
-    paymentSetupReviewed: "parentsLinked",
+    brandingDesignConfigured: "parentsLinked",
+    paymentSetupReviewed: "brandingDesignConfigured",
     operationalSetupComplete: "paymentSetupReviewed",
   };
 
@@ -722,6 +737,14 @@ function isProtectedPlatformOwner(role: string | null | undefined) {
   return normalizeRole(role) === "platform_owner";
 }
 
+const BRANDING_PERMISSION_OPTIONS = [
+  { key: "BRANDING_VIEW", label: "View branding" },
+  { key: "BRANDING_MANAGE", label: "Manage branding" },
+  { key: "BRANDING_UPLOAD_LOGO", label: "Upload logo" },
+  { key: "BRANDING_UPDATE_THEME", label: "Update theme" },
+  { key: "BRANDING_RESET_DEFAULT", label: "Reset defaults" },
+];
+
 function SetupSection() {
   const { toast } = useToast();
 
@@ -903,6 +926,25 @@ function OwnerDashboardSection() {
     queryKey: ["/api/owner/dashboard"],
     queryFn: getQueryFn({ on401: "throw" }),
   });
+  const { data: schoolsData } = useQuery<any>({
+    queryKey: ["/api/owner/schools"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const schools = Array.isArray(schoolsData) ? schoolsData : (schoolsData?.items || []);
+  const schoolLabelById = new Map<string, string>(
+    schools.map((school: any) => [school.id, `${school.name || "School"}${school.code ? ` (${school.code})` : ""}`]),
+  );
+
+  const formatTargetLabel = (item: any): string => {
+    if (item?.targetLabel) return item.targetLabel;
+    const rawTarget = String(item?.target || "");
+    if (rawTarget.startsWith("school:")) {
+      const schoolId = rawTarget.slice("school:".length);
+      return schoolLabelById.get(schoolId) || "School";
+    }
+    return rawTarget || "Platform";
+  };
 
   if (isLoading) {
     return <Card className="border-border/50 shadow-sm"><CardContent className="py-10 text-center text-muted-foreground">Loading owner dashboard...</CardContent></Card>;
@@ -965,7 +1007,7 @@ function OwnerDashboardSection() {
             <div key={item.id} className="rounded-lg border p-3 flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium capitalize">{String(item.action || "activity").replace(/_/g, " ")}</p>
-                <p className="text-xs text-muted-foreground mt-1">{item.target || "Platform"}</p>
+                <p className="text-xs text-muted-foreground mt-1">{formatTargetLabel(item)}</p>
               </div>
               <span className="text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</span>
             </div>
@@ -1177,11 +1219,14 @@ function OwnerActivitySection() {
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
-  const schoolNameById = new Map<string, string>(
-    (schoolsData?.items || []).map((school: any) => [school.id, school.name]),
+  const schools = Array.isArray(schoolsData) ? schoolsData : (schoolsData?.items || []);
+  const schoolLabelById = new Map<string, string>(
+    schools.map((school: any) => [school.id, `${school.name || "School"}${school.code ? ` (${school.code})` : ""}`]),
   );
 
   const formatTarget = (item: any): string => {
+    if (item?.targetLabel) return item.targetLabel;
+
     const metadata = item?.metadata && typeof item.metadata === "object" ? item.metadata : null;
     const metadataSchoolName = metadata?.schoolName || metadata?.name || metadata?.school?.name;
     if (metadataSchoolName) return metadataSchoolName;
@@ -1189,7 +1234,7 @@ function OwnerActivitySection() {
     const rawTarget = String(item?.target || "");
     if (rawTarget.startsWith("school:")) {
       const schoolId = rawTarget.slice("school:".length);
-      return schoolNameById.get(schoolId) || schoolId;
+      return schoolLabelById.get(schoolId) || "School";
     }
 
     return rawTarget || "Platform";
@@ -1793,6 +1838,7 @@ function SchoolsSection() {
 function UsersSection() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
+  const requesterIsOwner = normalizeRole(currentUser?.role) === "platform_owner";
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -1801,6 +1847,7 @@ function UsersSection() {
   const [schoolFilter, setSchoolFilter] = useState("all");
   const [form, setForm] = useState({ username: "", password: "", name: "", email: "" });
   const [inviteRole, setInviteRole] = useState("teacher");
+  const [brandingPermissions, setBrandingPermissions] = useState<string[]>([]);
 
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/admin/users"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -1830,15 +1877,38 @@ function UsersSection() {
   function resetForm() {
     setForm({ username: "", password: "", name: "", email: "" });
     setInviteRole("teacher");
+    setBrandingPermissions([]);
+  }
+
+  const selectedUserIsIT = normalizeRole(selectedUser?.role) === "it_personnel";
+
+  function toggleBrandingPermission(permission: string, checked: boolean) {
+    setBrandingPermissions((current) => {
+      if (checked) {
+        if (current.includes(permission)) return current;
+        return [...current, permission];
+      }
+      return current.filter((item) => item !== permission);
+    });
   }
 
   const filtered = users.filter((u: any) =>
     u.name?.toLowerCase().includes(search.toLowerCase()) ||
     u.username?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
-  ).filter((u: any) => schoolFilter === "all" ? true : (u.schoolId || "Not available") === schoolFilter);
+  ).filter((u: any) => schoolFilter === "all" ? true : u.schoolId === schoolFilter);
 
-  const schoolOptions = Array.from(new Set(users.map((u: any) => u.schoolId || "Not available")));
+  const schoolOptions = Array.from(new Map(
+    users
+      .filter((u: any) => !!u.schoolId)
+      .map((u: any) => [
+        u.schoolId,
+        {
+          value: u.schoolId,
+          label: formatSchoolDisplay(u),
+        },
+      ]),
+  ).values());
 
   return (
     <div className="space-y-4">
@@ -1857,13 +1927,13 @@ function UsersSection() {
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input type="search" placeholder="Search users..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        {(normalizeRole(currentUser?.role) === "platform_owner") && (
+        {requesterIsOwner && (
           <Select value={schoolFilter} onValueChange={setSchoolFilter}>
             <SelectTrigger className="w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All schools</SelectItem>
-              {schoolOptions.map((sid) => (
-                <SelectItem key={sid} value={sid}>{sid}</SelectItem>
+              {schoolOptions.map((school: any) => (
+                <SelectItem key={school.value} value={school.value}>{school.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -1902,13 +1972,18 @@ function UsersSection() {
                     {u.status || "unknown"}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-muted-foreground text-xs">{u.schoolId || "Not available"}</TableCell>
+                <TableCell className="text-muted-foreground text-xs">{formatSchoolDisplay(u)}</TableCell>
                 <TableCell>{u.linkedChildrenCount ?? 0}</TableCell>
                 <TableCell className="text-muted-foreground text-xs">{formatDateTime(u.createdAt)}</TableCell>
                 <TableCell className="text-muted-foreground text-xs">{formatDateTime(u.lastLoginAt)}</TableCell>
                 <TableCell className="text-right space-x-1">
                   {!isProtectedPlatformOwner(u.role) && (
-                    <Button variant="ghost" size="sm" onClick={() => { setSelectedUser(u); setForm({ username: u.username || "", password: "", name: u.name || "", email: u.email || "" }); setEditOpen(true); }}>
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setSelectedUser(u);
+                      setForm({ username: u.username || "", password: "", name: u.name || "", email: u.email || "" });
+                      setBrandingPermissions(Array.isArray(u.brandingPermissions) ? u.brandingPermissions : []);
+                      setEditOpen(true);
+                    }}>
                       <Pencil className="w-4 h-4" />
                     </Button>
                   )}
@@ -1978,11 +2053,34 @@ function UsersSection() {
                 <AlertDescription>Use invite and onboarding workflows to assign parent, teacher, or admin roles safely.</AlertDescription>
               </Alert>
             )}
+            {requesterIsOwner && selectedUserIsIT && (
+              <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+                <div>
+                  <p className="text-sm font-medium">Branding Permissions</p>
+                  <p className="text-xs text-muted-foreground">Choose what this IT user can do in school branding.</p>
+                </div>
+                <div className="grid gap-2">
+                  {BRANDING_PERMISSION_OPTIONS.map((option) => (
+                    <label key={option.key} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={brandingPermissions.includes(option.key)}
+                        onChange={(event) => toggleBrandingPermission(option.key, event.target.checked)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={() => {
               const payload: any = { name: form.name, username: form.username, email: form.email };
               if (form.password) payload.password = form.password;
+              if (requesterIsOwner && selectedUserIsIT) {
+                payload.brandingPermissions = brandingPermissions;
+              }
               updateMutation.mutate(payload);
             }} disabled={updateMutation.isPending}>
               {updateMutation.isPending ? "Saving..." : "Save Changes"}
@@ -2053,7 +2151,17 @@ function ParentsSection() {
     return matchesSearch && matchesStatus;
   });
 
-  const schools = Array.from(new Set(parents.map((p: any) => p.schoolId).filter(Boolean))).sort();
+  const schools = Array.from(new Map(
+    parents
+      .filter((p: any) => !!p.schoolId)
+      .map((p: any) => [
+        p.schoolId,
+        {
+          value: p.schoolId,
+          label: formatSchoolDisplay(p),
+        },
+      ]),
+  ).values()).sort((a: any, b: any) => a.label.localeCompare(b.label));
 
   const totalLinkedChildren = parents.reduce((acc, p: any) => acc + (p.linkedChildrenCount || 0), 0);
 
@@ -2080,8 +2188,8 @@ function ParentsSection() {
             <SelectTrigger className="w-full sm:w-[200px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Schools</SelectItem>
-              {schools.map((sid) => (
-                <SelectItem key={sid} value={sid}>{sid}</SelectItem>
+              {schools.map((school: any) => (
+                <SelectItem key={school.value} value={school.value}>{school.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -2146,7 +2254,7 @@ function ParentsSection() {
                       {parent.parentStatus || "unknown"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{parent.schoolId || "Not available"}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{formatSchoolDisplay(parent)}</TableCell>
                   <TableCell>{parent.linkedChildrenCount ?? 0}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {(parent.linkedStudents || []).length > 0
@@ -3177,6 +3285,464 @@ function ExtraRequestsSection() {
   );
 }
 
+// ─── COMMUNICATIONS OVERSIGHT ─────────────────────────────────
+function CommunicationsSection() {
+  const { toast } = useToast();
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+
+  // ── Thread list query
+  const { data: threads = [], isLoading: threadsLoading } = useQuery<any[]>({
+    queryKey: ["/api/admin/communications", statusFilter],
+    queryFn: async () => {
+      const params = statusFilter !== "all" ? `?status=${statusFilter}` : "";
+      const res = await apiRequest("GET", `/api/admin/communications${params}`);
+      return res.json();
+    },
+  });
+
+  // ── Thread detail query
+  const { data: threadDetail, isLoading: detailLoading } = useQuery<any>({
+    queryKey: ["/api/admin/communications", selectedThreadId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/communications/${selectedThreadId}`);
+      return res.json();
+    },
+    enabled: !!selectedThreadId,
+  });
+
+  // ── Status mutation
+  const statusMutation = useMutation({
+    mutationFn: async ({ threadId, status, reason }: { threadId: string; status: string; reason?: string }) => {
+      const res = await apiRequest("PATCH", `/api/admin/communications/${threadId}/status`, { status, reason });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Thread status updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/communications"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to update status", variant: "destructive" });
+    },
+  });
+
+  // ── Filter threads by search
+  const filteredThreads = threads.filter((t: any) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (t.subject || "").toLowerCase().includes(q) ||
+      (t.parentName || "").toLowerCase().includes(q) ||
+      (t.teacherName || "").toLowerCase().includes(q) ||
+      (t.studentName || "").toLowerCase().includes(q)
+    );
+  });
+
+  const statusBadgeVariant = (status: string) => {
+    switch (status) {
+      case "open": return "default";
+      case "closed": return "secondary";
+      case "archived": return "outline";
+      default: return "default";
+    }
+  };
+
+  // ── Detail view
+  if (selectedThreadId) {
+    const thread = threadDetail?.thread;
+    const messages = threadDetail?.messages || [];
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setSelectedThreadId(null)}>
+            <ArrowLeft className="h-4 w-4 mr-1" /> Back to threads
+          </Button>
+        </div>
+
+        {detailLoading ? (
+          <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        ) : thread ? (
+          <>
+            {/* Thread metadata */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <CardTitle className="text-lg">{thread.subject || "No Subject"}</CardTitle>
+                    <CardDescription className="mt-1">Thread #{thread.id}</CardDescription>
+                  </div>
+                  <Badge variant={statusBadgeVariant(thread.status)}>{thread.status}</Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div><span className="text-muted-foreground">Parent:</span> <span className="font-medium">{thread.parentName || "—"}</span></div>
+                  <div><span className="text-muted-foreground">Teacher:</span> <span className="font-medium">{thread.teacherName || "—"}</span></div>
+                  <div><span className="text-muted-foreground">Student:</span> <span className="font-medium">{thread.studentName || "—"}</span></div>
+                  <div><span className="text-muted-foreground">Created:</span> <span className="font-medium">{formatDateTime(thread.createdAt)}</span></div>
+                </div>
+
+                {/* Admin actions */}
+                <div className="flex gap-2 mt-4 pt-4 border-t">
+                  {thread.status !== "closed" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={statusMutation.isPending}
+                      onClick={() => statusMutation.mutate({ threadId: thread.id, status: "closed" })}
+                    >
+                      <XCircle className="h-4 w-4 mr-1" /> Close Thread
+                    </Button>
+                  )}
+                  {thread.status === "closed" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={statusMutation.isPending}
+                      onClick={() => statusMutation.mutate({ threadId: thread.id, status: "open" })}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-1" /> Reopen Thread
+                    </Button>
+                  )}
+                  {thread.status !== "archived" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={statusMutation.isPending}
+                      onClick={() => statusMutation.mutate({ threadId: thread.id, status: "archived" })}
+                    >
+                      <Archive className="h-4 w-4 mr-1" /> Archive Thread
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Messages */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Messages ({messages.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {messages.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No messages in this thread.</p>
+                )}
+                {messages.map((msg: any) => (
+                  <div key={msg.id} className="rounded-lg border p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-medium text-sm">{msg.senderName || "Unknown"}</span>
+                      <span className="text-xs text-muted-foreground">{formatDateTime(msg.createdAt)}</span>
+                    </div>
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </>
+        ) : (
+          <Card><CardContent className="py-8 text-center text-muted-foreground">Thread not found.</CardContent></Card>
+        )}
+      </div>
+    );
+  }
+
+  // ── List view
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <MessageSquare className="h-6 w-6" /> Communication Oversight
+        </h2>
+        <p className="text-muted-foreground mt-1">Monitor and manage all parent-teacher conversations across the school.</p>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name or subject..."
+            className="pl-9"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="closed">Closed</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Thread table */}
+      <Card>
+        <CardContent className="p-0">
+          {threadsLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Subject</TableHead>
+                  <TableHead>Parent</TableHead>
+                  <TableHead>Teacher</TableHead>
+                  <TableHead>Student</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-center">Messages</TableHead>
+                  <TableHead>Last Updated</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredThreads.map((t: any) => (
+                  <TableRow
+                    key={t.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => setSelectedThreadId(t.id)}
+                  >
+                    <TableCell className="font-medium max-w-[200px] truncate">{t.subject || "No Subject"}</TableCell>
+                    <TableCell>{t.parentName || "—"}</TableCell>
+                    <TableCell>{t.teacherName || "—"}</TableCell>
+                    <TableCell>{t.studentName || "—"}</TableCell>
+                    <TableCell><Badge variant={statusBadgeVariant(t.status)}>{t.status}</Badge></TableCell>
+                    <TableCell className="text-center">{t.totalMessages ?? 0}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{formatDateTime(t.updatedAt)}</TableCell>
+                  </TableRow>
+                ))}
+                {filteredThreads.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      {searchQuery ? "No threads match your search." : "No communication threads found."}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function BrandingSection() {
+  const { toast } = useToast();
+  const { data: branding, isLoading } = useQuery<any>({
+    queryKey: ["/api/school/branding"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const [primaryColour, setPrimaryColour] = useState("#2563EB");
+  const [secondaryColour, setSecondaryColour] = useState("#1E3A8A");
+  const [accentColour, setAccentColour] = useState("#0EA5E9");
+  const [themeName, setThemeName] = useState("");
+  const [fontPreference, setFontPreference] = useState("system");
+
+  useEffect(() => {
+    if (!branding) return;
+    setPrimaryColour(branding.primaryColour || "#2563EB");
+    setSecondaryColour(branding.secondaryColour || "#1E3A8A");
+    setAccentColour(branding.accentColour || "#0EA5E9");
+    setThemeName(branding.themeName || "");
+    setFontPreference(branding.fontPreference || "system");
+  }, [branding]);
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", "/api/school/branding", {
+        primaryColour,
+        secondaryColour,
+        accentColour,
+        themeName,
+        fontPreference,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/school/branding"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] });
+      toast({ title: "Branding updated", description: "Theme colours and settings were saved." });
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/school/branding/reset");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/school/branding"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] });
+      toast({ title: "Branding reset", description: "Defaults restored for this school." });
+    },
+  });
+
+  const skipMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/setup/branding-skip");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/school/branding"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] });
+      toast({ title: "Branding skipped", description: "Setup checklist updated for branding." });
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: async ({ endpoint, file }: { endpoint: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/school/branding"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] });
+      toast({ title: "Asset uploaded", description: "Branding asset saved." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Upload failed", description: error?.message || "Unable to upload file", variant: "destructive" });
+    },
+  });
+
+  const onUpload = (endpoint: string) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    uploadMutation.mutate({ endpoint, file });
+    event.target.value = "";
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <h2 className="text-2xl font-semibold tracking-tight">Branding & Design Identity</h2>
+        <p className="text-sm text-muted-foreground">Configure tenant-specific colours, theme metadata, and visual assets.</p>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Theme Settings</CardTitle>
+            <CardDescription>These values are used across login, dashboard, and invite flows.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="branding-primary">Primary</Label>
+                <Input id="branding-primary" type="color" value={primaryColour} onChange={(e) => setPrimaryColour(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="branding-secondary">Secondary</Label>
+                <Input id="branding-secondary" type="color" value={secondaryColour} onChange={(e) => setSecondaryColour(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="branding-accent">Accent</Label>
+                <Input id="branding-accent" type="color" value={accentColour} onChange={(e) => setAccentColour(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="branding-theme-name">Theme Name</Label>
+              <Input id="branding-theme-name" value={themeName} onChange={(e) => setThemeName(e.target.value)} placeholder="Default" />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="branding-font">Font Preference</Label>
+              <Input id="branding-font" value={fontPreference} onChange={(e) => setFontPreference(e.target.value)} placeholder="system" />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => updateMutation.mutate()} disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? "Saving..." : "Save Theme"}
+              </Button>
+              <Button variant="outline" onClick={() => skipMutation.mutate()} disabled={skipMutation.isPending}>
+                {skipMutation.isPending ? "Skipping..." : "Skip In Setup"}
+              </Button>
+              <Button variant="destructive" onClick={() => resetMutation.mutate()} disabled={resetMutation.isPending}>
+                {resetMutation.isPending ? "Resetting..." : "Reset To Default"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Assets</CardTitle>
+            <CardDescription>Supported formats: PNG, JPG, JPEG, WEBP. Max size 5MB.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[
+              { id: "branding-logo", label: "Logo", endpoint: "/api/school/branding/logo", currentUrl: branding?.logoUrl },
+              { id: "branding-banner", label: "Banner", endpoint: "/api/school/branding/banner", currentUrl: branding?.bannerImageUrl },
+              { id: "branding-favicon", label: "Favicon", endpoint: "/api/school/branding/favicon", currentUrl: branding?.faviconUrl },
+              { id: "branding-email-logo", label: "Email Logo", endpoint: "/api/school/branding/email-logo", currentUrl: branding?.emailHeaderLogoUrl },
+              { id: "branding-pdf-logo", label: "PDF Logo", endpoint: "/api/school/branding/pdf-logo", currentUrl: branding?.pdfLogoUrl },
+            ].map((asset) => (
+              <div key={asset.id} className="space-y-2">
+                <Label htmlFor={asset.id}>{asset.label}</Label>
+                <div className="flex items-center gap-3">
+                  {asset.currentUrl && (
+                    <img src={asset.currentUrl} alt={asset.label} className="h-10 w-10 rounded border object-contain bg-muted flex-shrink-0" />
+                  )}
+                  <Input id={asset.id} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={onUpload(asset.endpoint)} className="flex-1" />
+                </div>
+              </div>
+            ))}
+            {uploadMutation.isPending && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Uploading...
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Live Preview</CardTitle>
+          <CardDescription>Preview of current logo and colour palette.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-xl border overflow-hidden">
+            <div className="h-14 px-4 flex items-center justify-between" style={{ backgroundColor: primaryColour }}>
+              <div className="text-white font-semibold">{branding?.schoolName || "Your School"}</div>
+              {branding?.logoUrl && <img src={branding.logoUrl} alt="School logo" className="h-8 w-auto object-contain bg-white rounded px-1" />}
+            </div>
+            <div className="p-4 grid md:grid-cols-3 gap-3 bg-background">
+              <div className="h-16 rounded-md" style={{ backgroundColor: primaryColour }} />
+              <div className="h-16 rounded-md" style={{ backgroundColor: secondaryColour }} />
+              <div className="h-16 rounded-md" style={{ backgroundColor: accentColour }} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── MAIN ADMIN PAGE ───────────────────────────────────────────
 export default function AdminPage({ section }: { section: string }) {
   const { user } = useAuth();
@@ -3203,7 +3769,9 @@ export default function AdminPage({ section }: { section: string }) {
     payments: <PaymentsSection />,
     allocations: <AllocationsSection />,
     requests: <ExtraRequestsSection />,
+    communications: <CommunicationsSection />,
     users: <UsersSection />,
+    branding: <BrandingSection />,
   };
 
   let resolvedSection = section;

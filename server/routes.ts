@@ -2,8 +2,20 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import multer from "multer";
 import { storage } from "./storage.js";
 import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration.js";
+import {
+  BRANDING_UPLOAD_MAX_BYTES,
+  brandingFileFilter,
+  buildBrandingResponse,
+  getBrandingFieldColumns,
+  normalizeFontPreference,
+  normalizeHexColour,
+  normalizeThemeName,
+  storeBrandingImage,
+  type BrandingUploadField,
+} from "./branding.js";
 import {
   sendInviteEmail,
   sendSchoolSetupInviteEmail,
@@ -17,7 +29,7 @@ import {
 import {
   signInSchema, signUpParentSchema, acceptInviteSchema,
   forgotPasswordSchema, resetPasswordSchema,
-  LEGACY_ROLE_MAP, USER_ROLES,
+  LEGACY_ROLE_MAP, USER_ROLES, BRANDING_PERMISSIONS,
 } from "../shared/schema.js";
 
 function generateLinkingCode(): string {
@@ -266,6 +278,11 @@ function resolveRole(role: string): string {
 
 const PLATFORM_OWNER_ROLES = ["owner", "platform_admin"];
 const ADMIN_UI_ROLES = ["admin", "school_admin", ...PLATFORM_OWNER_ROLES];
+const BRANDING_VIEW_PERMISSION = "BRANDING_VIEW";
+const BRANDING_MANAGE_PERMISSION = "BRANDING_MANAGE";
+const BRANDING_UPLOAD_LOGO_PERMISSION = "BRANDING_UPLOAD_LOGO";
+const BRANDING_UPDATE_THEME_PERMISSION = "BRANDING_UPDATE_THEME";
+const BRANDING_RESET_DEFAULT_PERMISSION = "BRANDING_RESET_DEFAULT";
 const CONTEXT_DEFAULT_PATHS: Record<string, string> = {
   owner: "/admin/owner",
   platform_admin: "/admin/owner",
@@ -274,6 +291,111 @@ const CONTEXT_DEFAULT_PATHS: Record<string, string> = {
   teacher: "/teacher",
   parent: "/parent",
 };
+
+const brandingUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: BRANDING_UPLOAD_MAX_BYTES,
+    files: 1,
+  },
+  fileFilter: brandingFileFilter,
+});
+
+function extractSupportReason(req: Request): string | null {
+  const fromBody = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  const fromQuery = typeof req.query?.reason === "string" ? req.query.reason.trim() : "";
+  return fromBody || fromQuery || null;
+}
+
+async function getBrandingPermissionSet(userId: string): Promise<Set<string>> {
+  const permissions = await storage.getUserPermissions(userId);
+  return new Set(permissions.filter((permission) => BRANDING_PERMISSIONS.includes(permission as any)));
+}
+
+async function canViewBranding(req: Request, schoolId: string): Promise<boolean> {
+  if (!req.session.userId) return false;
+  if (isPlatformOwnerRole(req.session.role)) {
+    if (!isInSupportMode(req)) return false;
+    return req.session.supportSchoolId === schoolId;
+  }
+
+  const user = await storage.getUserById(req.session.userId);
+  if (!user || user.status !== "active") return false;
+  const context = getActiveRequestContext(req);
+  if (context === "school_admin" || context === "admin") {
+    return user.schoolId === schoolId;
+  }
+  if (context === "it_personnel") {
+    if (user.schoolId !== schoolId) return false;
+    const permissionSet = await getBrandingPermissionSet(user.id);
+    return permissionSet.has(BRANDING_VIEW_PERMISSION) || permissionSet.has(BRANDING_MANAGE_PERMISSION);
+  }
+
+  return user.schoolId === schoolId;
+}
+
+async function canManageBranding(req: Request, schoolId: string): Promise<boolean> {
+  if (!req.session.userId) return false;
+
+  if (isPlatformOwnerRole(req.session.role)) {
+    if (!isInSupportMode(req)) return false;
+    return req.session.supportSchoolId === schoolId;
+  }
+
+  const user = await storage.getUserById(req.session.userId);
+  if (!user || user.status !== "active") return false;
+  const context = getActiveRequestContext(req);
+  if ((context === "school_admin" || context === "admin") && user.schoolId === schoolId) {
+    return true;
+  }
+  if (context === "it_personnel" && user.schoolId === schoolId) {
+    const permissionSet = await getBrandingPermissionSet(user.id);
+    return permissionSet.has(BRANDING_MANAGE_PERMISSION);
+  }
+  return false;
+}
+
+async function canManageBrandingOperation(req: Request, schoolId: string, requiredPermission: string): Promise<boolean> {
+  if (!req.session.userId) return false;
+  if (isPlatformOwnerRole(req.session.role)) {
+    return canManageBranding(req, schoolId);
+  }
+
+  const user = await storage.getUserById(req.session.userId);
+  if (!user || user.status !== "active") return false;
+  const context = getActiveRequestContext(req);
+  if ((context === "school_admin" || context === "admin") && user.schoolId === schoolId) return true;
+
+  if (context === "it_personnel" && user.schoolId === schoolId) {
+    const permissionSet = await getBrandingPermissionSet(user.id);
+    if (!permissionSet.has(BRANDING_MANAGE_PERMISSION)) return false;
+    return permissionSet.has(requiredPermission) || requiredPermission === BRANDING_MANAGE_PERMISSION;
+  }
+  return false;
+}
+
+async function resolveTenantBranding(schoolId: string) {
+  const school = await storage.getSchoolById(schoolId);
+  if (!school) return null;
+  const branding = await storage.getSchoolBranding(schoolId);
+  return {
+    school,
+    branding,
+    brandingResponse: buildBrandingResponse(branding, school.name),
+  };
+}
+
+function runSingleBrandingUpload(req: Request, res: Response): Promise<void> {
+  return new Promise((resolve, reject) => {
+    brandingUpload.single("file")(req as any, res as any, (error: unknown) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
 
 function isPlatformOwnerRole(role: string | null | undefined): boolean {
   if (!role) return false;
@@ -362,10 +484,13 @@ async function syncSessionActiveContext(req: Request, user: { id: string; role: 
 
 async function buildAuthUserResponse(req: Request, user: { id: string; username: string; name: string; role: string; email: string | null; status: string; schoolId: string | null }) {
   const base = safeUser(user) as any;
+  const school = user.schoolId ? await storage.getSchoolById(user.schoolId) : null;
   const { profile, activeContext } = await syncSessionActiveContext(req, user);
   base.primaryRole = profile.primaryRole;
   base.role = activeContext;
   base.activeContext = activeContext;
+  base.schoolName = school?.name || null;
+  base.schoolCode = school?.code || null;
   base.availableContexts = profile.contexts;
   base.contextMetadata = {
     assignedClassIds: profile.assignedClassIds,
@@ -421,6 +546,7 @@ function formatUserForAdmin(user: any, extras?: Record<string, unknown>) {
 
 const SCHOOL_SETUP_STEP_LABELS: Record<string, string> = {
   schoolProfileComplete: "School profile complete",
+  brandingDesignConfigured: "Branding & design configured",
   classesCreated: "Classes created",
   booksAdded: "Books added",
   bookLevelsCreated: "Book levels created",
@@ -433,7 +559,7 @@ const SCHOOL_SETUP_STEP_LABELS: Record<string, string> = {
 };
 
 async function getSchoolSetupState(schoolId: string) {
-  const [school, users, classes, books, bookLevels, classBookLevels, students, linkingCodes, payments] = await Promise.all([
+  const [school, users, classes, books, bookLevels, classBookLevels, students, linkingCodes, payments, branding] = await Promise.all([
     storage.getSchoolById(schoolId),
     storage.getUsers(),
     storage.getClasses(schoolId),
@@ -443,6 +569,7 @@ async function getSchoolSetupState(schoolId: string) {
     storage.getStudents(schoolId),
     storage.getLinkingCodes(schoolId),
     storage.getPayments(undefined, schoolId),
+    storage.getSchoolBranding(schoolId),
   ]);
 
   if (!school) return null;
@@ -453,6 +580,8 @@ async function getSchoolSetupState(schoolId: string) {
   const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
 
   const schoolProfileComplete = !!(school.name && school.code);
+  const brandingSetupStatus = branding?.setupStatus || "pending";
+  const brandingDesignConfigured = brandingSetupStatus === "completed" || brandingSetupStatus === "skipped";
   const classesCreated = schoolProfileComplete && classes.length > 0;
   const booksAdded = books.length > 0;
   const bookLevelsCreated = bookLevels.length > 0;
@@ -467,6 +596,7 @@ async function getSchoolSetupState(schoolId: string) {
 
   const checklist = {
     schoolProfileComplete,
+    brandingDesignConfigured,
     classesCreated,
     booksAdded,
     bookLevelsCreated,
@@ -480,6 +610,7 @@ async function getSchoolSetupState(schoolId: string) {
 
   const orderedStepKeys = [
     "schoolProfileComplete",
+    "brandingDesignConfigured",
     "classesCreated",
     "booksAdded",
     "bookLevelsCreated",
@@ -514,6 +645,7 @@ async function getSchoolSetupState(schoolId: string) {
       payments: payments.length,
       verifiedPayments: payments.filter((payment) => payment.status === "completed").length,
       pendingPayments: payments.filter((payment) => payment.status === "pending").length,
+      brandingConfigured: brandingSetupStatus,
     },
     checklist,
     missingStepKeys,
@@ -522,6 +654,7 @@ async function getSchoolSetupState(schoolId: string) {
     readyForOperationalCompletion,
     operationalSetupComplete,
     completionRules: [
+      "Configure Branding & Design or mark it as skipped (recommended but optional).",
       "Create at least one class.",
       "Add at least one book.",
       "Create at least one book level.",
@@ -849,6 +982,7 @@ export async function registerRoutes(
       }
 
       const { invite, school } = resolved;
+      const branding = school ? await storage.getSchoolBranding(school.id) : null;
       const inviteStatus = deriveInviteStatus(invite);
       res.json({
         id: invite.id,
@@ -858,6 +992,7 @@ export async function registerRoutes(
         schoolId: invite.schoolId,
         schoolName: school?.name || null,
         schoolCode: school?.code || null,
+        schoolBranding: buildBrandingResponse(branding, school?.name || null),
         schoolStatus: school?.status || null,
         setupStatus: school?.setupStatus || null,
         status: inviteStatus,
@@ -1042,6 +1177,7 @@ export async function registerRoutes(
           id: school.id,
           name: school.name,
           code: school.code,
+          schoolCode: school.code,
           status: school.status,
           setupStatus,
           contactEmail: school.contactEmail,
@@ -1097,6 +1233,321 @@ export async function registerRoutes(
       });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to load setup status" });
+    }
+  });
+
+  async function handleBrandingUpload(req: Request, res: Response, schoolId: string, field: BrandingUploadField, auditAction: string, requiredPermission: string) {
+    if (!(await canManageBrandingOperation(req, schoolId, requiredPermission))) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    await runSingleBrandingUpload(req, res);
+    if (!req.file) {
+      return res.status(400).json({ message: "File upload is required" });
+    }
+
+    const existing = await storage.getSchoolBranding(schoolId);
+    const columns = getBrandingFieldColumns(field);
+    const previousFileId = (existing?.[columns.fileId] as string | null | undefined) || null;
+    const uploaded = await storeBrandingImage(schoolId, field, req.file, previousFileId);
+
+    const updatedBranding = await storage.upsertSchoolBranding(
+      schoolId,
+      {
+        [columns.url]: uploaded.url,
+        [columns.fileId]: uploaded.fileId,
+        setupStatus: "completed",
+      } as any,
+      req.session.userId,
+    );
+
+    await auditLog(req, auditAction, `school:${schoolId}`, {
+      schoolId,
+      actorUserId: req.session.userId,
+      actorRole: getActiveRequestContext(req),
+      previousValue: existing ? { [columns.url]: existing[columns.url], [columns.fileId]: existing[columns.fileId] } : null,
+      newValue: { [columns.url]: uploaded.url, [columns.fileId]: uploaded.fileId },
+      reason: isPlatformOwnerRole(req.session.role) ? extractSupportReason(req) : null,
+    });
+
+    return res.json({
+      field,
+      url: uploaded.url,
+      fileId: uploaded.fileId,
+      branding: buildBrandingResponse(updatedBranding),
+    });
+  }
+
+  app.get("/api/school/branding", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      if (!(await canViewBranding(req, schoolId))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const resolved = await resolveTenantBranding(schoolId);
+      if (!resolved) return res.status(404).json({ message: "School not found" });
+      res.json({ schoolId, ...resolved.brandingResponse });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load branding" });
+    }
+  });
+
+  app.patch("/api/school/branding", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      if (!(await canManageBrandingOperation(req, schoolId, BRANDING_UPDATE_THEME_PERMISSION))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const existing = await storage.getSchoolBranding(schoolId);
+      const payload = {
+        primaryColour: normalizeHexColour(req.body?.primaryColour, existing?.primaryColour || "#2563EB"),
+        secondaryColour: normalizeHexColour(req.body?.secondaryColour, existing?.secondaryColour || "#1E3A8A"),
+        accentColour: normalizeHexColour(req.body?.accentColour, existing?.accentColour || "#0EA5E9"),
+        themeName: normalizeThemeName(req.body?.themeName),
+        fontPreference: normalizeFontPreference(req.body?.fontPreference),
+        setupStatus: "completed",
+      };
+
+      const updated = await storage.upsertSchoolBranding(schoolId, payload, req.session.userId);
+      await auditLog(req, "BRANDING_UPDATED", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: getActiveRequestContext(req),
+        previousValue: existing
+          ? {
+              primaryColour: existing.primaryColour,
+              secondaryColour: existing.secondaryColour,
+              accentColour: existing.accentColour,
+              themeName: existing.themeName,
+              fontPreference: existing.fontPreference,
+            }
+          : null,
+        newValue: payload,
+      });
+
+      await auditLog(req, "BRANDING_THEME_CHANGED", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: getActiveRequestContext(req),
+        newValue: {
+          primaryColour: payload.primaryColour,
+          secondaryColour: payload.secondaryColour,
+          accentColour: payload.accentColour,
+          themeName: payload.themeName,
+          fontPreference: payload.fontPreference,
+        },
+      });
+
+      res.json({ schoolId, ...buildBrandingResponse(updated) });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to update branding" });
+    }
+  });
+
+  app.post("/api/school/branding/logo", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      return await handleBrandingUpload(req, res, schoolId, "logo", "BRANDING_LOGO_UPLOADED", BRANDING_UPLOAD_LOGO_PERMISSION);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Logo upload failed" });
+    }
+  });
+
+  app.post("/api/school/branding/banner", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      return await handleBrandingUpload(req, res, schoolId, "banner", "BRANDING_BANNER_UPLOADED", BRANDING_MANAGE_PERMISSION);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Banner upload failed" });
+    }
+  });
+
+  app.post("/api/school/branding/favicon", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      return await handleBrandingUpload(req, res, schoolId, "favicon", "BRANDING_FAVICON_UPLOADED", BRANDING_MANAGE_PERMISSION);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Favicon upload failed" });
+    }
+  });
+
+  app.post("/api/school/branding/email-logo", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      return await handleBrandingUpload(req, res, schoolId, "emailLogo", "BRANDING_EMAIL_LOGO_UPDATED", BRANDING_MANAGE_PERMISSION);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Email logo upload failed" });
+    }
+  });
+
+  app.post("/api/school/branding/pdf-logo", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      return await handleBrandingUpload(req, res, schoolId, "pdfLogo", "BRANDING_PDF_LOGO_UPDATED", BRANDING_MANAGE_PERMISSION);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "PDF logo upload failed" });
+    }
+  });
+
+  app.post("/api/school/branding/reset", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      if (!(await canManageBrandingOperation(req, schoolId, BRANDING_RESET_DEFAULT_PERMISSION))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const previous = await storage.getSchoolBranding(schoolId);
+      const updated = await storage.resetSchoolBranding(schoolId, req.session.userId);
+      await auditLog(req, "BRANDING_RESET_TO_DEFAULT", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: getActiveRequestContext(req),
+        previousValue: previous || null,
+      });
+      res.json({ schoolId, ...buildBrandingResponse(updated) });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to reset branding" });
+    }
+  });
+
+  app.post("/api/admin/setup/branding-skip", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      const updated = await storage.upsertSchoolBranding(schoolId, { setupStatus: "skipped" }, req.session.userId);
+      await auditLog(req, "BRANDING_UPDATED", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: getActiveRequestContext(req),
+        newValue: { setupStatus: "skipped" },
+      });
+      res.json({ schoolId, ...buildBrandingResponse(updated) });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to skip branding setup" });
+    }
+  });
+
+  app.get("/api/owner/schools/:schoolId/branding", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const reason = extractSupportReason(req);
+      if (isInSupportMode(req) && !reason) {
+        return res.status(400).json({ message: "Support mode reason is required for owner branding access" });
+      }
+
+      const branding = await storage.getSchoolBranding(schoolId);
+      await auditLog(req, "BRANDING_VIEWED_BY_OWNER", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: req.session.role,
+        reason: reason || null,
+      });
+      res.json({ schoolId, ...buildBrandingResponse(branding, school.name) });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load school branding" });
+    }
+  });
+
+  app.patch("/api/owner/schools/:schoolId/branding", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const reason = extractSupportReason(req);
+      if (isInSupportMode(req) && !reason) {
+        return res.status(400).json({ message: "Support mode reason is required for owner branding updates" });
+      }
+
+      const existing = await storage.getSchoolBranding(schoolId);
+      const payload = {
+        primaryColour: normalizeHexColour(req.body?.primaryColour, existing?.primaryColour || "#2563EB"),
+        secondaryColour: normalizeHexColour(req.body?.secondaryColour, existing?.secondaryColour || "#1E3A8A"),
+        accentColour: normalizeHexColour(req.body?.accentColour, existing?.accentColour || "#0EA5E9"),
+        themeName: normalizeThemeName(req.body?.themeName),
+        fontPreference: normalizeFontPreference(req.body?.fontPreference),
+        setupStatus: "completed",
+      };
+      const updated = await storage.upsertSchoolBranding(schoolId, payload, req.session.userId);
+      await auditLog(req, "BRANDING_UPDATED", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: req.session.role,
+        reason: reason || null,
+        previousValue: existing || null,
+        newValue: payload,
+      });
+      res.json({ schoolId, ...buildBrandingResponse(updated, school.name) });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to update school branding" });
+    }
+  });
+
+  app.post("/api/owner/schools/:schoolId/branding/logo", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const reason = extractSupportReason(req);
+      if (isInSupportMode(req) && !reason) {
+        return res.status(400).json({ message: "Support mode reason is required for owner logo upload" });
+      }
+
+      return await handleBrandingUpload(req, res, schoolId, "logo", "BRANDING_LOGO_UPLOADED", BRANDING_MANAGE_PERMISSION);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to upload school logo" });
+    }
+  });
+
+  app.post("/api/owner/schools/:schoolId/branding/reset", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const reason = extractSupportReason(req);
+      if (isInSupportMode(req) && !reason) {
+        return res.status(400).json({ message: "Support mode reason is required for owner branding reset" });
+      }
+
+      const previous = await storage.getSchoolBranding(schoolId);
+      const updated = await storage.resetSchoolBranding(schoolId, req.session.userId);
+      await auditLog(req, "BRANDING_RESET_TO_DEFAULT", `school:${schoolId}`, {
+        schoolId,
+        actorUserId: req.session.userId,
+        actorRole: req.session.role,
+        reason: reason || null,
+        previousValue: previous || null,
+      });
+      res.json({ schoolId, ...buildBrandingResponse(updated, school.name) });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to reset school branding" });
+    }
+  });
+
+  app.get("/api/public/schools/:code/branding", async (req, res) => {
+    try {
+      const code = normalizeSchoolCode(routeParam(req.params.code));
+      const schools = await storage.getSchools();
+      const school = schools.find((item) => normalizeSchoolCode(item.code) === code);
+      if (!school) return res.status(404).json({ message: "School not found" });
+      const branding = await storage.getSchoolBranding(school.id);
+      res.json({ schoolId: school.id, schoolCode: school.code, ...buildBrandingResponse(branding, school.name) });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load public branding" });
     }
   });
 
@@ -1789,8 +2240,29 @@ export async function registerRoutes(
   // === USERS (admin-scoped; includes school-linked parents) ===
   const listAdminUsers = async (req: Request, res: Response) => {
     try {
-      const users = await getScopedAdminUsers(req);
+      const [users, schools] = await Promise.all([
+        getScopedAdminUsers(req),
+        storage.getSchools(),
+      ]);
       const parentChildrenCount = new Map<string, number>();
+      const brandingPermissionMap = new Map<string, string[]>();
+      const schoolsById = new Map<string, { name: string; code: string }>(
+        schools.map((school) => [school.id, { name: school.name, code: school.code }]),
+      );
+
+      // For users whose school is not in the bulk list, try individual lookup
+      const missingSchoolIds = new Set<string>();
+      for (const u of users) {
+        if (u.schoolId && !schoolsById.has(u.schoolId)) {
+          missingSchoolIds.add(u.schoolId);
+        }
+      }
+      await Promise.all(Array.from(missingSchoolIds).map(async (sid) => {
+        try {
+          const school = await storage.getSchoolById(sid);
+          if (school) schoolsById.set(school.id, { name: school.name, code: school.code });
+        } catch { /* ignore lookup failures */ }
+      }));
 
       await Promise.all(users.map(async (user) => {
         if (resolveRole(user.role) !== "parent" || !user.email) return;
@@ -1800,9 +2272,21 @@ export async function registerRoutes(
         parentChildrenCount.set(user.id, scopedChildren.length);
       }));
 
-      const payload = users.map((u) => formatUserForAdmin(u, {
-        linkedChildrenCount: parentChildrenCount.get(u.id) ?? 0,
+      await Promise.all(users.map(async (user) => {
+        if (resolveRole(user.role) !== "it_personnel") return;
+        const permissions = await storage.getUserPermissions(user.id);
+        brandingPermissionMap.set(user.id, permissions.filter((permission) => BRANDING_PERMISSIONS.includes(permission as any)));
       }));
+
+      const payload = users.map((u) => {
+        const school = u.schoolId ? schoolsById.get(u.schoolId) : undefined;
+        return formatUserForAdmin(u, {
+          schoolName: school?.name || null,
+          schoolCode: school?.code || null,
+          linkedChildrenCount: parentChildrenCount.get(u.id) ?? 0,
+          brandingPermissions: brandingPermissionMap.get(u.id) || [],
+        });
+      });
       res.json(payload);
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to load users" });
@@ -1816,7 +2300,13 @@ export async function registerRoutes(
     try {
       const requestedSchoolId = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
       const sid = isPlatformOwnerRequest(req) ? requestedSchoolId : sessionSchoolId(req);
-      const users = await getScopedAdminUsers(req);
+      const [users, schools] = await Promise.all([
+        getScopedAdminUsers(req),
+        storage.getSchools(),
+      ]);
+      const schoolsById = new Map<string, { name: string; code: string }>(
+        schools.map((school) => [school.id, { name: school.name, code: school.code }]),
+      );
       const parents = users.filter((u) => resolveRole(u.role) === "parent" && !!u.email);
       const linkingCodes = sid ? await storage.getLinkingCodes(sid) : await storage.getLinkingCodes();
 
@@ -1833,8 +2323,22 @@ export async function registerRoutes(
           className: link.student?.class?.name || null,
         })).filter((s) => !!s.id);
 
+        const resolvedSchoolId = parent.schoolId || scopedLinks[0]?.student?.schoolId || null;
+        let resolvedSchool = resolvedSchoolId ? schoolsById.get(resolvedSchoolId) : undefined;
+        // Fallback: try individual lookup if not found in bulk list
+        if (!resolvedSchool && resolvedSchoolId) {
+          try {
+            const school = await storage.getSchoolById(resolvedSchoolId);
+            if (school) {
+              resolvedSchool = { name: school.name, code: school.code };
+              schoolsById.set(school.id, resolvedSchool);
+            }
+          } catch { /* ignore lookup failures */ }
+        }
+
         return formatUserForAdmin(parent, {
-          schoolId: parent.schoolId || scopedLinks[0]?.student?.schoolId || "Not available",
+          schoolName: resolvedSchool?.name || null,
+          schoolCode: resolvedSchool?.code || null,
           linkedChildrenCount: scopedLinks.length,
           linkedStudents,
           linkingCodesIssued: parentCodes.length,
@@ -1861,7 +2365,7 @@ export async function registerRoutes(
   app.post("/api/users", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
-      const { username, password, name, role, email } = req.body;
+      const { username, password, name, role, email, brandingPermissions } = req.body;
       if (!username || !password || !name || !role) {
         return res.status(400).json({ message: "Username, password, name, and role are required" });
       }
@@ -1881,8 +2385,12 @@ export async function registerRoutes(
 
       const hash = await bcrypt.hash(password, 12);
       const user = await storage.createUser({ username, passwordHash: hash, name, role: normalizedRole, email, status: "active", schoolId: sid });
+      if (normalizedRole === "it_personnel" && Array.isArray(brandingPermissions)) {
+        const scoped = brandingPermissions.filter((permission: string) => BRANDING_PERMISSIONS.includes(permission as any));
+        await storage.setUserPermissions(user.id, scoped);
+      }
       const { passwordHash: _ph, ...safeUserData } = user;
-      res.status(201).json(safeUserData);
+      res.status(201).json({ ...safeUserData, brandingPermissions: normalizedRole === "it_personnel" ? await storage.getUserPermissions(user.id) : [] });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
@@ -1902,7 +2410,7 @@ export async function registerRoutes(
         return res.status(403).json({ message: guardMessage });
       }
 
-      const { password, ...rest } = req.body;
+      const { password, brandingPermissions, ...rest } = req.body;
       const updates: any = { ...rest };
       if (password) {
         updates.passwordHash = await bcrypt.hash(password, 12);
@@ -1914,7 +2422,13 @@ export async function registerRoutes(
 
       const user = await storage.updateUser(routeParam(req.params.id), updates);
       if (!user) return res.status(404).json({ message: "User not found" });
-      res.json(formatUserForAdmin(user));
+      const targetRole = resolveRole(user.role);
+      if (targetRole === "it_personnel" && Array.isArray(brandingPermissions)) {
+        const scoped = brandingPermissions.filter((permission: string) => BRANDING_PERMISSIONS.includes(permission as any));
+        await storage.setUserPermissions(user.id, scoped);
+      }
+      const effectivePermissions = targetRole === "it_personnel" ? await storage.getUserPermissions(user.id) : [];
+      res.json(formatUserForAdmin(user, { brandingPermissions: effectivePermissions }));
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
@@ -2055,6 +2569,348 @@ export async function registerRoutes(
       }
 
       res.json({ message: "Payment updated", paymentId: payment.id });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ═══ PARENT–TEACHER MESSAGING ════════════════════════════════
+
+  // Helper: get the parent's linked children with class + teacher info
+  async function getParentLinkedTeachers(parentEmail: string, schoolId: string) {
+    const children = await storage.getParentChildren(parentEmail);
+    const classes = await storage.getClasses(schoolId);
+    const users = await storage.getUsers();
+
+    const contacts: Array<{ teacherUserId: string; teacherName: string; studentId: string; studentName: string; className: string }> = [];
+    for (const link of children) {
+      if (!link.student?.classId) continue;
+      const cls = classes.find((c) => c.id === link.student!.classId && c.schoolId === schoolId);
+      if (!cls?.teacherId) continue;
+      const teacher = users.find((u) => u.id === cls.teacherId && u.schoolId === schoolId);
+      if (!teacher) continue;
+      contacts.push({
+        teacherUserId: teacher.id,
+        teacherName: teacher.name,
+        studentId: link.student.id,
+        studentName: link.student.name,
+        className: cls.name,
+      });
+    }
+    return contacts;
+  }
+
+  // Helper: verify teacher teaches the given student's class
+  async function teacherTeachesStudent(teacherUserId: string, studentId: string, schoolId: string): Promise<boolean> {
+    const students = await storage.getStudents(schoolId);
+    const student = students.find((s) => s.id === studentId);
+    if (!student?.classId) return false;
+    const classes = await storage.getClasses(schoolId);
+    const cls = classes.find((c) => c.id === student.classId && c.teacherId === teacherUserId && c.schoolId === schoolId);
+    return !!cls;
+  }
+
+  // ── Parent messaging routes ────────────────────────────────
+  // GET /api/parent/message-contacts — teachers the parent can message
+  app.get("/api/parent/message-contacts", requireRole("parent"), async (req, res) => {
+    try {
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email linked to your account" });
+      const sid = user.schoolId;
+      if (!sid) return res.json([]);
+      const contacts = await getParentLinkedTeachers(user.email, sid);
+      res.json(contacts);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET /api/parent/message-threads
+  app.get("/api/parent/message-threads", requireRole("parent"), async (req, res) => {
+    try {
+      const sid = req.session.schoolId;
+      if (!sid) return res.json([]);
+      const threads = await storage.getMessageThreads({ schoolId: sid, parentUserId: req.session.userId! });
+      res.json(threads);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/parent/message-threads — start a new conversation
+  app.post("/api/parent/message-threads", requireRole("parent"), async (req, res) => {
+    try {
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email linked to your account" });
+      const sid = user.schoolId;
+      if (!sid) return res.status(400).json({ message: "No school context" });
+
+      const { teacherUserId, studentId, subject, body } = req.body;
+      if (!teacherUserId || !studentId || !subject || !body) {
+        return res.status(400).json({ message: "teacherUserId, studentId, subject, and body are required" });
+      }
+      if (typeof subject !== "string" || subject.trim().length < 2) {
+        return res.status(400).json({ message: "Subject must be at least 2 characters" });
+      }
+      if (typeof body !== "string" || body.trim().length < 1) {
+        return res.status(400).json({ message: "Message body cannot be empty" });
+      }
+
+      // RBAC: verify parent is linked to this student and teacher teaches the student
+      const contacts = await getParentLinkedTeachers(user.email, sid);
+      const allowed = contacts.find((c) => c.teacherUserId === teacherUserId && c.studentId === studentId);
+      if (!allowed) {
+        return res.status(403).json({ message: "You can only message teachers assigned to your linked children" });
+      }
+
+      const thread = await storage.createMessageThread({
+        schoolId: sid,
+        studentId,
+        parentUserId: user.id,
+        teacherUserId,
+        subject: subject.trim(),
+        status: "open",
+      });
+
+      await storage.createMessage({
+        threadId: thread.id,
+        schoolId: sid,
+        senderUserId: user.id,
+        senderRole: "parent",
+        body: body.trim(),
+      });
+
+      await auditLog(req, "message_thread_created", `thread:${thread.id}`, { studentId, teacherUserId });
+
+      res.status(201).json(thread);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET /api/parent/message-threads/:id — conversation detail
+  app.get("/api/parent/message-threads/:id", requireRole("parent"), async (req, res) => {
+    try {
+      const sid = req.session.schoolId;
+      if (!sid) return res.status(400).json({ message: "No school context" });
+      const thread = await storage.getMessageThread(routeParam(req.params.id), sid);
+      if (!thread || thread.parentUserId !== req.session.userId) {
+        return res.status(404).json({ message: "Thread not found" });
+      }
+      const messages = await storage.getMessages(thread.id, sid);
+      // Mark messages from teacher as read
+      await storage.markMessagesRead(thread.id, req.session.userId!, sid);
+      res.json({ thread, messages });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/parent/message-threads/:id/messages — reply
+  app.post("/api/parent/message-threads/:id/messages", requireRole("parent"), async (req, res) => {
+    try {
+      const sid = req.session.schoolId;
+      if (!sid) return res.status(400).json({ message: "No school context" });
+      const thread = await storage.getMessageThread(routeParam(req.params.id), sid);
+      if (!thread || thread.parentUserId !== req.session.userId) {
+        return res.status(404).json({ message: "Thread not found" });
+      }
+      if (thread.status !== "open") {
+        return res.status(400).json({ message: "This conversation is closed. Please ask the school admin to reopen it." });
+      }
+      const { body } = req.body;
+      if (!body || typeof body !== "string" || body.trim().length < 1) {
+        return res.status(400).json({ message: "Message body cannot be empty" });
+      }
+      const msg = await storage.createMessage({
+        threadId: thread.id,
+        schoolId: sid,
+        senderUserId: req.session.userId!,
+        senderRole: "parent",
+        body: body.trim(),
+      });
+      res.status(201).json(msg);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET /api/parent/message-unread — unread count for badge
+  app.get("/api/parent/message-unread", requireRole("parent"), async (req, res) => {
+    const sid = req.session.schoolId;
+    if (!sid) return res.json({ count: 0 });
+    const count = await storage.getUnreadCount(req.session.userId!, sid);
+    res.json({ count });
+  });
+
+  // ── Teacher messaging routes ───────────────────────────────
+  // GET /api/teacher/message-threads
+  app.get("/api/teacher/message-threads", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = req.session.schoolId;
+      if (!sid) return res.json([]);
+      const threads = await storage.getMessageThreads({ schoolId: sid, teacherUserId: req.session.userId! });
+      res.json(threads);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET /api/teacher/message-threads/:id
+  app.get("/api/teacher/message-threads/:id", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = req.session.schoolId;
+      if (!sid) return res.status(400).json({ message: "No school context" });
+      const thread = await storage.getMessageThread(routeParam(req.params.id), sid);
+      if (!thread || thread.teacherUserId !== req.session.userId) {
+        return res.status(404).json({ message: "Thread not found" });
+      }
+      const messages = await storage.getMessages(thread.id, sid);
+      await storage.markMessagesRead(thread.id, req.session.userId!, sid);
+      res.json({ thread, messages });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/teacher/message-threads/:id/messages — reply
+  app.post("/api/teacher/message-threads/:id/messages", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = req.session.schoolId;
+      if (!sid) return res.status(400).json({ message: "No school context" });
+      const thread = await storage.getMessageThread(routeParam(req.params.id), sid);
+      if (!thread || thread.teacherUserId !== req.session.userId) {
+        return res.status(404).json({ message: "Thread not found" });
+      }
+      if (thread.status !== "open") {
+        return res.status(400).json({ message: "This conversation is closed." });
+      }
+      const { body } = req.body;
+      if (!body || typeof body !== "string" || body.trim().length < 1) {
+        return res.status(400).json({ message: "Message body cannot be empty" });
+      }
+      const msg = await storage.createMessage({
+        threadId: thread.id,
+        schoolId: sid,
+        senderUserId: req.session.userId!,
+        senderRole: "teacher",
+        body: body.trim(),
+      });
+      res.status(201).json(msg);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET /api/teacher/message-unread
+  app.get("/api/teacher/message-unread", requireRole("teacher"), async (req, res) => {
+    const sid = req.session.schoolId;
+    if (!sid) return res.json({ count: 0 });
+    const count = await storage.getUnreadCount(req.session.userId!, sid);
+    res.json({ count });
+  });
+
+  // ── School Admin communication oversight ────────────────────
+  app.get("/api/admin/communications", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.json([]);
+      const statusFilter = typeof req.query.status === "string" ? req.query.status : undefined;
+      const threads = await storage.getMessageThreads({ schoolId: sid, status: statusFilter });
+      res.json(threads);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/admin/communications/:threadId", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "No school context" });
+      const thread = await storage.getMessageThread(routeParam(req.params.threadId), sid);
+      if (!thread) return res.status(404).json({ message: "Thread not found" });
+      const messages = await storage.getMessages(thread.id, sid);
+      res.json({ thread, messages });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/admin/communications/:threadId/status", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "No school context" });
+      const { status } = req.body;
+      if (!status || !["open", "closed", "archived"].includes(status)) {
+        return res.status(400).json({ message: "Status must be open, closed, or archived" });
+      }
+      const thread = await storage.updateThreadStatus(routeParam(req.params.threadId), status, req.session.userId, sid);
+      if (!thread) return res.status(404).json({ message: "Thread not found" });
+
+      await storage.createMessageAuditLog({
+        schoolId: sid,
+        threadId: thread.id,
+        actorUserId: req.session.userId!,
+        action: `thread_${status}`,
+        reason: req.body.reason || null,
+      });
+
+      await auditLog(req, `communication_thread_${status}`, `thread:${thread.id}`);
+      res.json(thread);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ── Owner Support Mode — communications access ─────────────
+  // Requires active support mode and creates audit log with reason
+  app.get("/api/owner/support/schools/:schoolId/communications", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      if (!req.session.supportSchoolId) {
+        return res.status(403).json({ message: "Support mode must be active to view school communications" });
+      }
+      const schoolId = routeParam(req.params.schoolId);
+      if (schoolId !== req.session.supportSchoolId) {
+        return res.status(403).json({ message: "You can only view communications for the school you are currently supporting" });
+      }
+      const reason = typeof req.query.reason === "string" ? req.query.reason : "Support access — viewing communications";
+      await storage.createMessageAuditLog({
+        schoolId,
+        threadId: null,
+        actorUserId: req.session.userId!,
+        action: "owner_support_view_threads",
+        reason,
+      });
+      await auditLog(req, "support_view_communications", `school:${schoolId}`, { reason });
+
+      const threads = await storage.getMessageThreads({ schoolId });
+      res.json(threads);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/owner/support/communications/:threadId", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      if (!req.session.supportSchoolId) {
+        return res.status(403).json({ message: "Support mode must be active to view conversations" });
+      }
+      const threadId = routeParam(req.params.threadId);
+      const thread = await storage.getMessageThread(threadId, req.session.supportSchoolId);
+      if (!thread) return res.status(404).json({ message: "Thread not found" });
+
+      const reason = typeof req.query.reason === "string" ? req.query.reason : "Support access — viewing thread";
+      await storage.createMessageAuditLog({
+        schoolId: req.session.supportSchoolId,
+        threadId,
+        actorUserId: req.session.userId!,
+        action: "owner_support_view_thread",
+        reason,
+      });
+      await auditLog(req, "support_view_thread", `thread:${threadId}`, { reason });
+
+      const messages = await storage.getMessages(thread.id, req.session.supportSchoolId);
+      res.json({ thread, messages });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
@@ -2357,6 +3213,7 @@ export async function registerRoutes(
           const latestSchoolAdminInvite = schoolInvites[0] || null;
           return {
             ...school,
+            schoolCode: school.code,
             setupStatus: normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status),
             latestInviteId: latestSchoolAdminInvite?.id || null,
             firstAdminEmail: latestSchoolAdminInvite?.email || null,
@@ -2481,6 +3338,7 @@ export async function registerRoutes(
 
       res.json({
         ...school,
+        schoolCode: school.code,
         setupStatus,
         firstAdminEmail: latestInvite?.email || null,
         firstAdminName: latestInvite?.inviteeName || null,
@@ -2803,7 +3661,13 @@ export async function registerRoutes(
 
   app.get("/api/owner/activity", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
     try {
-      const logs = await storage.getAuditLogs(200);
+      const [logs, schools] = await Promise.all([
+        storage.getAuditLogs(200),
+        storage.getSchools(),
+      ]);
+      const schoolById = new Map<string, { name: string; code: string }>(
+        schools.map((school) => [school.id, { name: school.name, code: school.code }]),
+      );
       const ownerActions = new Set([
         "school_created",
         "school_updated",
@@ -2820,14 +3684,26 @@ export async function registerRoutes(
       const items = logs
         .filter((log) => ownerActions.has(log.action))
         .slice(0, 100)
-        .map((log) => ({
-          id: log.id,
-          action: log.action,
-          target: log.target,
-          actorUserId: log.userId,
-          timestamp: log.createdAt,
-          metadata: log.metadata ? JSON.parse(log.metadata) : null,
-        }));
+        .map((log) => {
+          const target = log.target || null;
+          let targetLabel = target || "Platform";
+          if (target && target.startsWith("school:")) {
+            const school = schoolById.get(target.slice("school:".length));
+            if (school) {
+              targetLabel = `${school.name} (${school.code})`;
+            }
+          }
+
+          return {
+            id: log.id,
+            action: log.action,
+            target,
+            targetLabel,
+            actorUserId: log.userId,
+            timestamp: log.createdAt,
+            metadata: log.metadata ? JSON.parse(log.metadata) : null,
+          };
+        });
 
       res.json({ items });
     } catch (e: any) {
@@ -2955,13 +3831,25 @@ export async function registerRoutes(
         recentActivity: recentActivityLogs
           .filter((log) => ["school_created", "school_updated", "school_setup_invite_sent", "school_setup_invite_resent", "support_mode_enter", "support_mode_exit", "invite_accepted", "school_setup_completed"].includes(log.action))
           .slice(0, 12)
-          .map((log) => ({
-            id: log.id,
-            action: log.action,
-            target: log.target,
-            createdAt: log.createdAt,
-            metadata: log.metadata ? JSON.parse(log.metadata) : null,
-          })),
+          .map((log) => {
+            const target = log.target || null;
+            let targetLabel = target || "Platform";
+            if (target && target.startsWith("school:")) {
+              const school = schools.find((item) => item.id === target.slice("school:".length));
+              if (school) {
+                targetLabel = `${school.name} (${school.code})`;
+              }
+            }
+
+            return {
+              id: log.id,
+              action: log.action,
+              target,
+              targetLabel,
+              createdAt: log.createdAt,
+              metadata: log.metadata ? JSON.parse(log.metadata) : null,
+            };
+          }),
       });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to load owner dashboard" });
