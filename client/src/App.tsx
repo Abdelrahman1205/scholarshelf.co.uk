@@ -18,7 +18,9 @@ import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
 
 function getRoleRoute(role: string) {
-  if (role === "admin" || role === "school_admin") return "/admin";
+  if (role === "owner" || role === "platform_admin") return "/admin/owner";
+  if (role === "school_admin") return "/admin";
+  if (role === "admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
   return "/login";
@@ -83,6 +85,7 @@ function Router() {
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/accept-invite" component={AcceptInvitePage} />
+      <Route path="/accept-invite/:token" component={AcceptInvitePage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
 
@@ -93,7 +96,7 @@ function Router() {
       {/* Admin routes */}
       <Route path="/admin/:section?">
         {(params) => (
-          <AuthGuard allowedRoles={["admin", "school_admin"]}>
+          <AuthGuard allowedRoles={["admin", "school_admin", "owner", "platform_admin"]}>
             <Layout>
               <AdminPage section={params.section || "dashboard"} />
             </Layout>

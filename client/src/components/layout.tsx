@@ -1,13 +1,16 @@
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
-  Link as LinkIcon, History, ClipboardList, Menu, X, ChevronRight
+  Link as LinkIcon, History, ClipboardList, Menu, ChevronRight,
+  ShieldAlert, ArrowLeft
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { getQueryFn } from "@/lib/queryClient";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -21,6 +24,37 @@ interface NavItem {
 }
 
 const roleConfig: Record<string, { label: string; color: string; navItems: NavItem[] }> = {
+  owner: {
+    label: "BytHub Platform Owner",
+    color: "text-amber-600",
+    navItems: [
+      { label: "Owner Dashboard", href: "/admin/owner", icon: LayoutDashboard },
+      { label: "Schools", href: "/admin/schools", icon: Settings },
+      { label: "Pending Setups", href: "/admin/pending-setups", icon: ClipboardList },
+      { label: "Admin Invites", href: "/admin/admin-invites", icon: UserPlus },
+      { label: "Email Status", href: "/admin/email-status", icon: Key },
+      { label: "Activity Logs", href: "/admin/activity", icon: History },
+      { label: "Settings", href: "/admin/owner-settings", icon: Settings },
+    ],
+  },
+  // Support mode: owner operating inside a specific school
+  owner_support: {
+    label: "Support Mode",
+    color: "text-amber-600",
+    navItems: [
+      { label: "School Dashboard", href: "/admin", icon: LayoutDashboard },
+      { label: "Books", href: "/admin/books", icon: BookOpen },
+      { label: "Book Levels", href: "/admin/levels", icon: Layers },
+      { label: "Classes", href: "/admin/classes", icon: GraduationCap },
+      { label: "Students", href: "/admin/students", icon: Users },
+      { label: "Parents", href: "/admin/parents", icon: Users },
+      { label: "Linking Codes", href: "/admin/codes", icon: Key },
+      { label: "Payments", href: "/admin/payments", icon: CreditCard },
+      { label: "Allocations", href: "/admin/allocations", icon: BoxSelect },
+      { label: "Extra Requests", href: "/admin/requests", icon: ClipboardList },
+      { label: "Users", href: "/admin/users", icon: UserPlus },
+    ],
+  },
   admin: {
     label: "School Admin",
     color: "text-blue-600",
@@ -30,6 +64,7 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Book Levels", href: "/admin/levels", icon: Layers },
       { label: "Classes", href: "/admin/classes", icon: GraduationCap },
       { label: "Students", href: "/admin/students", icon: Users },
+      { label: "Parents", href: "/admin/parents", icon: Users },
       { label: "Linking Codes", href: "/admin/codes", icon: Key },
       { label: "Payments", href: "/admin/payments", icon: CreditCard },
       { label: "Allocations", href: "/admin/allocations", icon: BoxSelect },
@@ -58,6 +93,11 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
   },
 };
 
+function navigateTo(href: string) {
+  window.history.pushState({}, "", href);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 function isNavActive(href: string, location: string): boolean {
   if (href === "/admin" || href === "/teacher" || href === "/parent") {
     return location === href;
@@ -67,12 +107,47 @@ function isNavActive(href: string, location: string): boolean {
 
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, exitSupportMode, isExitingSupport } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Support both legacy "admin" and new "school_admin" role
-  const effectiveRole = user?.role === "school_admin" ? "admin" : user?.role;
+  const isOwner = user?.role === "owner" || user?.role === "platform_admin";
+  const inSupportMode = isOwner && user?.supportMode?.active;
+
+  // Determine effective role for nav config
+  const effectiveRole = inSupportMode
+    ? "owner_support"
+    : isOwner
+      ? "owner"
+      : user?.role === "school_admin" || user?.role === "admin"
+        ? "admin"
+        : user?.role;
+
   const config = effectiveRole ? roleConfig[effectiveRole] : null;
+
+  const shouldFetchSetupStatus = effectiveRole === "admin";
+  const { data: setupStatus } = useQuery<any>({
+    queryKey: ["/api/admin/setup-status"],
+    queryFn: getQueryFn({ on401: "throw" }),
+    enabled: shouldFetchSetupStatus,
+    staleTime: 30_000,
+  });
+
+  const adminSetupComplete = !!setupStatus?.operationalSetupCompleted && !!setupStatus?.schoolActive;
+
+  const navItems = (() => {
+    if (!config) return [] as NavItem[];
+    if (effectiveRole !== "admin") return config.navItems;
+
+    const setupItem: NavItem = {
+      label: adminSetupComplete ? "Setup Summary" : "Continue Setup",
+      href: "/admin/setup",
+      icon: Settings,
+    };
+
+    return adminSetupComplete
+      ? [...config.navItems, setupItem]
+      : [setupItem, ...config.navItems];
+  })();
 
   const initials = user?.name
     ? user.name
@@ -88,6 +163,35 @@ export default function Layout({ children }: LayoutProps) {
     window.location.href = "/login";
   }
 
+  async function handleExitSupport() {
+    await exitSupportMode();
+    navigateTo("/admin/owner");
+  }
+
+  const SupportBanner = () => {
+    if (!inSupportMode) return null;
+    return (
+      <div className="bg-amber-500 text-white px-4 py-2.5 flex items-center justify-between gap-3 shadow-md z-50">
+        <div className="flex items-center gap-2 min-w-0">
+          <ShieldAlert className="h-4 w-4 flex-shrink-0" />
+          <span className="text-sm font-semibold truncate">
+            Support Mode: Viewing {user?.supportMode?.schoolName || "School"}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="bg-white/20 hover:bg-white/30 text-white border-white/30 flex-shrink-0"
+          onClick={handleExitSupport}
+          disabled={isExitingSupport}
+        >
+          <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
+          {isExitingSupport ? "Exiting..." : "Exit Support Mode"}
+        </Button>
+      </div>
+    );
+  };
+
   const SidebarContent = () => (
     <>
       <div className="h-16 flex items-center px-5 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
@@ -96,15 +200,25 @@ export default function Layout({ children }: LayoutProps) {
         </div>
         <div>
           <span className="font-heading font-bold text-lg tracking-tight block leading-tight">EduBook</span>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">School Books</span>
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">
+            {inSupportMode ? "Support Mode" : "School Books"}
+          </span>
         </div>
       </div>
+
+      {/* Support mode school indicator in sidebar */}
+      {inSupportMode && (
+        <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
+          <div className="text-[10px] uppercase tracking-widest text-amber-600 font-semibold">Supporting</div>
+          <div className="text-sm font-medium text-amber-800 truncate">{user?.supportMode?.schoolName}</div>
+        </div>
+      )}
 
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3 px-3">
           {config?.label || "Navigation"}
         </div>
-        {config?.navItems.map((item) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
           const active = isNavActive(item.href, location);
           return (
@@ -113,8 +227,7 @@ export default function Layout({ children }: LayoutProps) {
               href={item.href}
               onClick={(e) => {
                 e.preventDefault();
-                window.history.pushState({}, "", item.href);
-                window.dispatchEvent(new PopStateEvent("popstate"));
+                navigateTo(item.href);
                 setMobileOpen(false);
               }}
               className={cn(
@@ -130,16 +243,33 @@ export default function Layout({ children }: LayoutProps) {
             </a>
           );
         })}
+
+        {/* Exit support mode link at bottom of nav */}
+        {inSupportMode && (
+          <button
+            onClick={handleExitSupport}
+            disabled={isExitingSupport}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 text-amber-600 hover:bg-amber-50 w-full mt-4"
+          >
+            <ArrowLeft className="h-4 w-4 flex-shrink-0" />
+            <span className="truncate">{isExitingSupport ? "Exiting..." : "Back to Platform"}</span>
+          </button>
+        )}
       </nav>
 
       <div className="p-3 border-t border-border/60 space-y-2">
         <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted/30">
-          <div className="h-9 w-9 rounded-full bg-primary/15 flex items-center justify-center text-primary font-semibold text-sm flex-shrink-0">
+          <div className={cn(
+            "h-9 w-9 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0",
+            inSupportMode ? "bg-amber-100 text-amber-700" : "bg-primary/15 text-primary"
+          )}>
             {initials}
           </div>
           <div className="text-sm flex-1 min-w-0">
             <div className="font-medium truncate" data-testid="text-user-name">{user?.name}</div>
-            <div className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">{user?.role}</div>
+            <div className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">
+              {inSupportMode ? "Support Operator" : isOwner ? "owner (protected)" : user?.role}
+            </div>
           </div>
         </div>
         <Button
@@ -159,7 +289,10 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen flex bg-background">
       {/* Desktop sidebar */}
-      <aside className="w-64 bg-card border-r border-border/60 hidden md:flex flex-col fixed inset-y-0 left-0 z-30">
+      <aside className={cn(
+        "w-64 bg-card border-r border-border/60 hidden md:flex flex-col fixed inset-y-0 left-0 z-30",
+        inSupportMode && "border-r-amber-300"
+      )}>
         <SidebarContent />
       </aside>
 
@@ -174,8 +307,14 @@ export default function Layout({ children }: LayoutProps) {
       )}
 
       <main className="flex-1 flex flex-col min-h-screen md:ml-64">
+        {/* Support mode banner — always visible at top */}
+        <SupportBanner />
+
         {/* Mobile header */}
-        <header className="h-14 bg-card border-b border-border/60 flex items-center justify-between px-4 md:hidden sticky top-0 z-20">
+        <header className={cn(
+          "h-14 bg-card border-b border-border/60 flex items-center justify-between px-4 md:hidden sticky top-0 z-20",
+          inSupportMode && "border-b-amber-300"
+        )}>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)} className="h-9 w-9">
               <Menu className="h-5 w-5" />

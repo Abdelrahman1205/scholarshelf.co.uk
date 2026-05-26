@@ -52,6 +52,7 @@ function isDbUnavailableError(error: unknown): boolean {
 }
 
 const memoryUsers = new Map<string, schema.User>();
+const memorySchools = new Map<string, schema.School>();
 const memoryInvites = new Map<string, schema.Invite>();
 const memoryAuditLogs: schema.AuditLog[] = [];
 
@@ -62,16 +63,48 @@ function now() {
 function ensureDemoUsersInMemory() {
   if (memoryUsers.size > 0) return;
 
+  // Create a stable demo school ID for memory-mode tenant scoping
+  const demoSchoolId = "demo-school-00000001";
+  if (!memorySchools.has(demoSchoolId)) {
+    memorySchools.set(demoSchoolId, {
+      id: demoSchoolId,
+      name: "Al-Noor International School",
+      code: "DEMO-001",
+      status: "active",
+      setupStatus: "active",
+      contactEmail: "admin@alnoor.edu.ly",
+      contactPhone: "+218-21-555-0100",
+      address: "Tripoli, Libya",
+      notes: "Demo school (memory mode)",
+      createdAt: now(),
+      updatedAt: now(),
+    });
+  }
+
   const demoUsers: Array<schema.User> = [
+    {
+      id: randomUUID(),
+      username: "bythub",
+      passwordHash: bcrypt.hashSync("bythub123", 10),
+      name: "BytHub Platform Owner",
+      role: "owner",
+      email: "owner@bythub.co",
+      status: "active",
+      schoolId: null,
+      emailVerifiedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+      lastLoginAt: null,
+    },
     {
       id: randomUUID(),
       username: "admin",
       passwordHash: bcrypt.hashSync("admin123", 10),
       name: "School Administrator",
-      role: "admin",
-      email: "admin@school.edu",
+      role: "school_admin",
+      email: "admin@alnoor.edu.ly",
       status: "active",
-      schoolId: null,
+      schoolId: demoSchoolId,
       emailVerifiedAt: null,
       createdAt: now(),
       updatedAt: now(),
@@ -81,11 +114,11 @@ function ensureDemoUsersInMemory() {
       id: randomUUID(),
       username: "teacher",
       passwordHash: bcrypt.hashSync("teacher123", 10),
-      name: "Ms. Johnson",
+      name: "Ms. Fatima Johnson",
       role: "teacher",
-      email: "teacher@school.edu",
+      email: "teacher@alnoor.edu.ly",
       status: "active",
-      schoolId: null,
+      schoolId: demoSchoolId,
       emailVerifiedAt: null,
       createdAt: now(),
       updatedAt: now(),
@@ -95,11 +128,11 @@ function ensureDemoUsersInMemory() {
       id: randomUUID(),
       username: "parent",
       passwordHash: bcrypt.hashSync("parent123", 10),
-      name: "John Smith",
+      name: "Ahmed Al-Mansouri",
       role: "parent",
       email: "parent@example.com",
       status: "active",
-      schoolId: null,
+      schoolId: demoSchoolId,
       emailVerifiedAt: null,
       createdAt: now(),
       updatedAt: now(),
@@ -121,6 +154,13 @@ function schoolFilter<T extends { schoolId: any }>(table: T, schoolId?: string |
 }
 
 export interface IStorage {
+  // Schools (owner-managed tenants)
+  getSchools(): Promise<schema.School[]>;
+  getSchoolById(id: string): Promise<schema.School | undefined>;
+  createSchool(school: schema.InsertSchool): Promise<schema.School>;
+  updateSchool(id: string, school: Partial<schema.InsertSchool>): Promise<schema.School | undefined>;
+  deleteSchool(id: string): Promise<void>;
+
   // Books
   getBooks(schoolId?: string | null): Promise<schema.Book[]>;
   getBook(id: string, schoolId?: string | null): Promise<schema.Book | undefined>;
@@ -205,6 +245,7 @@ export interface IStorage {
   createInvite(invite: schema.InsertInvite): Promise<schema.Invite>;
   getInviteById(id: string): Promise<schema.Invite | undefined>;
   getPendingInviteByEmail(email: string): Promise<schema.Invite | undefined>;
+  getInvitesBySchool(schoolId: string): Promise<schema.Invite[]>;
   markInviteAccepted(id: string): Promise<void>;
   revokeInvite(id: string): Promise<void>;
 
@@ -214,6 +255,79 @@ export interface IStorage {
 }
 
 class DatabaseStorage implements IStorage {
+  // === SCHOOLS ===
+
+  async getSchools(): Promise<schema.School[]> {
+    try {
+      return getDb().select().from(schema.schools);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return Array.from(memorySchools.values());
+    }
+  }
+
+  async getSchoolById(id: string): Promise<schema.School | undefined> {
+    try {
+      const [school] = await getDb().select().from(schema.schools).where(eq(schema.schools.id, id));
+      return school;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memorySchools.get(id);
+    }
+  }
+
+  async createSchool(school: schema.InsertSchool): Promise<schema.School> {
+    try {
+      const created = await insertAndFetchById(schema.schools, school);
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const created: schema.School = {
+        id: randomUUID(),
+        name: school.name,
+        code: school.code,
+        status: school.status ?? "active",
+        setupStatus: school.setupStatus ?? (school.status === "active" ? "active" : "pending_admin_invite"),
+        contactEmail: school.contactEmail ?? null,
+        contactPhone: school.contactPhone ?? null,
+        address: school.address ?? null,
+        notes: school.notes ?? null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      memorySchools.set(created.id, created);
+      return created;
+    }
+  }
+
+  async updateSchool(id: string, school: Partial<schema.InsertSchool>): Promise<schema.School | undefined> {
+    const updates = { ...school, updatedAt: new Date() };
+    try {
+      const updated = await updateAndFetchFirst(schema.schools, eq(schema.schools.id, id), updates);
+      return updated;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const existing = memorySchools.get(id);
+      if (!existing) return undefined;
+      const updated: schema.School = {
+        ...existing,
+        ...school,
+        updatedAt: now(),
+      };
+      memorySchools.set(id, updated);
+      return updated;
+    }
+  }
+
+  async deleteSchool(id: string): Promise<void> {
+    try {
+      await getDb().delete(schema.schools).where(eq(schema.schools.id, id));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      memorySchools.delete(id);
+    }
+  }
+
   // === BOOKS ===
 
   async getBooks(schoolId?: string | null): Promise<schema.Book[]> {
@@ -346,6 +460,14 @@ class DatabaseStorage implements IStorage {
     const filter = schoolFilter(schema.students, schoolId);
     if (filter) return getDb().select().from(schema.students).where(filter);
     return getDb().select().from(schema.students);
+  }
+
+  async getStudentById(id: string, schoolId?: string | null): Promise<schema.Student | undefined> {
+    const conditions = [eq(schema.students.id, id)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    const [student] = await getDb().select().from(schema.students).where(and(...conditions)).limit(1);
+    return student;
   }
 
   async getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]> {
@@ -946,6 +1068,7 @@ class DatabaseStorage implements IStorage {
       const created: schema.Invite = {
         id: randomUUID(),
         email: invite.email,
+        inviteeName: invite.inviteeName ?? null,
         role: invite.role,
         schoolId: invite.schoolId ?? null,
         tokenHash: invite.tokenHash,
@@ -978,6 +1101,23 @@ class DatabaseStorage implements IStorage {
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       return Array.from(memoryInvites.values()).find((i) => i.email === email && i.status === "pending");
+    }
+  }
+
+  async getInvitesBySchool(schoolId: string): Promise<schema.Invite[]> {
+    try {
+      return await getDb().select().from(schema.invites)
+        .where(eq(schema.invites.schoolId, schoolId))
+        .orderBy(desc(schema.invites.createdAt));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return Array.from(memoryInvites.values())
+        .filter((invite) => invite.schoolId === schoolId)
+        .sort((a, b) => {
+          const left = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const right = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return right - left;
+        });
     }
   }
 

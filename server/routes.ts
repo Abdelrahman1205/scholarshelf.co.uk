@@ -4,7 +4,16 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "./storage.js";
 import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration.js";
-import { sendInviteEmail, sendPasswordResetEmail, isResendConfigured } from "./email.js";
+import {
+  sendInviteEmail,
+  sendSchoolSetupInviteEmail,
+  sendPasswordResetEmail,
+  sendParentCodeEmail,
+  sendPaymentSubmittedEmail,
+  sendPaymentVerifiedEmail,
+  sendPaymentRejectedEmail,
+  isResendConfigured,
+} from "./email.js";
 import {
   signInSchema, signUpParentSchema, acceptInviteSchema,
   forgotPasswordSchema, resetPasswordSchema,
@@ -51,6 +60,138 @@ function routeParam(value: string | string[] | undefined): string {
   return value ?? "";
 }
 
+function splitInviteToken(token: string): { inviteId: string; rawToken: string } | null {
+  const dotIndex = token.indexOf(".");
+  if (dotIndex === -1) return null;
+  return {
+    inviteId: token.substring(0, dotIndex),
+    rawToken: token.substring(dotIndex + 1),
+  };
+}
+
+const COMPLETE_SETUP_STATUSES = new Set(["operational_setup_complete", "complete", "active"]);
+
+function normalizeSchoolSetupStatus(status: string | null | undefined, schoolStatus: string | null | undefined): string {
+  if (status && status.trim()) return status;
+  if (schoolStatus === "active") return "active";
+  return "pending_admin_invite";
+}
+
+function deriveInviteStatus(invite: { status: string; expiresAt: Date } | null | undefined): string {
+  if (!invite) return "not_invited";
+  if (invite.status === "pending" && new Date(invite.expiresAt).getTime() < Date.now()) {
+    return "expired";
+  }
+  return invite.status;
+}
+
+function setupMilestonesFromState(input: {
+  schoolStatus: string | null | undefined;
+  setupStatus: string | null | undefined;
+  firstAdminInviteStatus: string;
+  hasActiveSchoolAdmin: boolean;
+}) {
+  const schoolStatus = input.schoolStatus || "pending_setup";
+  const setupStatus = normalizeSchoolSetupStatus(input.setupStatus, schoolStatus);
+  const schoolCreated = true;
+  const firstAdminInvited = input.firstAdminInviteStatus !== "not_invited";
+  const firstAdminAccepted = input.firstAdminInviteStatus === "accepted" || input.hasActiveSchoolAdmin;
+  const operationalSetupStarted = ["admin_accepted", "operational_setup_in_progress", "operational_setup_complete", "complete", "active"].includes(setupStatus);
+  const operationalSetupCompleted = COMPLETE_SETUP_STATUSES.has(setupStatus);
+  const schoolActive = schoolStatus === "active";
+
+  return {
+    schoolCreated,
+    firstAdminInvited,
+    firstAdminAccepted,
+    schoolAdminAccountActive: input.hasActiveSchoolAdmin,
+    operationalSetupStarted,
+    operationalSetupCompleted,
+    schoolActive,
+  };
+}
+
+function nextOwnerAction(setupStatus: string, inviteStatus: string, schoolStatus: string): string {
+  if (inviteStatus === "not_invited" || setupStatus === "pending_admin_invite" || setupStatus === "school_created") {
+    return "Invite First Admin";
+  }
+  if (inviteStatus === "pending" || setupStatus === "pending_admin_acceptance") {
+    return "Resend Invite";
+  }
+  if (inviteStatus === "expired") {
+    return "Generate New Invite";
+  }
+  if (inviteStatus === "accepted" && !COMPLETE_SETUP_STATUSES.has(setupStatus)) {
+    return "View Setup Status";
+  }
+  if (COMPLETE_SETUP_STATUSES.has(setupStatus) && schoolStatus !== "active") {
+    return "Activate School";
+  }
+  return "Enter Support Mode";
+}
+
+async function resolveInviteByToken(token: string) {
+  const parts = splitInviteToken(token);
+  if (!parts) return { error: "Invalid invite link" as const };
+
+  const invite = await storage.getInviteById(parts.inviteId);
+  if (!invite) return { error: "Invalid or expired invite link" as const };
+  if (invite.status !== "pending") return { error: "This invite has already been used or revoked" as const };
+  if (new Date() > invite.expiresAt) return { error: "This invite has expired" as const };
+
+  const tokenValid = await bcrypt.compare(parts.rawToken, invite.tokenHash);
+  if (!tokenValid) return { error: "Invalid invite link" as const };
+
+  const school = invite.schoolId ? await storage.getSchoolById(invite.schoolId) : undefined;
+  return { invite, school };
+}
+
+async function acceptInviteToken(req: Request, res: Response, token: string, name: string, username: string, password: string) {
+  const resolved = await resolveInviteByToken(token);
+  if ("error" in resolved) {
+    return res.status(400).json({ message: resolved.error });
+  }
+
+  const { invite } = resolved;
+  const existingUsername = await storage.getUserByUsername(username);
+  if (existingUsername) {
+    return res.status(409).json({ message: "Username is already taken" });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  const user = await storage.createUser({
+    username,
+    passwordHash,
+    name,
+    email: invite.email,
+    role: invite.role,
+    status: "active",
+    schoolId: invite.schoolId,
+  });
+
+  if (invite.schoolId && invite.role === "school_admin") {
+    await storage.updateSchool(invite.schoolId, {
+      status: "pending_setup",
+      setupStatus: "operational_setup_in_progress",
+    } as any);
+  }
+
+  await storage.markInviteAccepted(invite.id);
+  await auditLog(req, "invite_accepted", `user:${user.id}`, { inviteId: invite.id });
+
+  req.session.regenerate((err) => {
+    if (err) {
+      return res.status(201).json(safeUser(user));
+    }
+    req.session.userId = user.id;
+    req.session.role = user.role;
+    req.session.schoolId = user.schoolId;
+    res.status(201).json(safeUser(user));
+  });
+
+  return { invite, user };
+}
+
 function isDbUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as { code?: string } | undefined)?.code;
@@ -68,8 +209,21 @@ function isDbUnavailableError(error: unknown): boolean {
 
 // Extract the session schoolId — returns string or null
 // When null, storage methods return all data (owner/demo mode)
+// When owner is in support mode, returns the support school context
 function sessionSchoolId(req: Request): string | null {
+  if (isPlatformOwnerRole(req.session.role)) {
+    // Support mode: owner is operating inside a specific school
+    if (req.session.supportSchoolId) {
+      return req.session.supportSchoolId;
+    }
+    return null;
+  }
   return req.session.schoolId ?? null;
+}
+
+// Check if the current request is in support mode
+function isInSupportMode(req: Request): boolean {
+  return isPlatformOwnerRole(req.session.role) && !!req.session.supportSchoolId;
 }
 
 // Simple in-memory rate limiter for auth endpoints
@@ -107,6 +261,19 @@ function resolveRole(role: string): string {
   return LEGACY_ROLE_MAP[role] || role;
 }
 
+const PLATFORM_OWNER_ROLES = ["owner", "platform_admin"];
+const ADMIN_UI_ROLES = ["admin", "school_admin", ...PLATFORM_OWNER_ROLES];
+
+function isPlatformOwnerRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const normalized = resolveRole(role);
+  return PLATFORM_OWNER_ROLES.includes(normalized);
+}
+
+function isPlatformOwnerRequest(req: Request): boolean {
+  return isPlatformOwnerRole(req.session.role);
+}
+
 // Safe user response — strips passwordHash
 function safeUser(user: { id: string; username: string; name: string; role: string; email: string | null; status: string; schoolId: string | null }) {
   return { id: user.id, username: user.username, name: user.name, role: user.role, email: user.email, status: user.status, schoolId: user.schoolId };
@@ -123,6 +290,136 @@ function getPublicBaseUrl(req: Request): string {
   const protocol = forwardedProto || req.protocol;
   const host = forwardedHost || req.get("host") || "localhost:5000";
   return `${protocol}://${host}`;
+}
+
+function normalizeEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  return email.trim().toLowerCase();
+}
+
+function normalizeSchoolCode(value: string): string {
+  return value.trim().toUpperCase().replace(/\s+/g, "-");
+}
+
+function roleBadge(role: string): string {
+  const normalized = resolveRole(role);
+  if (isPlatformOwnerRole(normalized)) return "platform_owner";
+  if (normalized === "school_admin") return "school_admin";
+  return normalized;
+}
+
+function formatUserForAdmin(user: any, extras?: Record<string, unknown>) {
+  const { passwordHash, ...safe } = user;
+  return {
+    ...safe,
+    role: roleBadge(user.role),
+    ...(extras || {}),
+  };
+}
+
+async function getScopedAdminUsers(req: Request): Promise<any[]> {
+  if (isPlatformOwnerRequest(req)) {
+    const schoolFilter = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
+    const users = await storage.getUsers();
+    if (!schoolFilter) return users;
+    return users.filter((u) => u.schoolId === schoolFilter);
+  }
+
+  const sid = sessionSchoolId(req);
+  const allUsers = await storage.getUsers();
+  if (!sid) {
+    return allUsers.filter((u) => !isPlatformOwnerRole(u.role) && !u.schoolId);
+  }
+
+  const scoped = allUsers.filter((u) => u.schoolId === sid);
+  const parentUsers = allUsers.filter((u) => resolveRole(u.role) === "parent" && !!u.email);
+  const linkingCodes = await storage.getLinkingCodes(sid);
+  const linkedParentEmails = new Set(
+    linkingCodes.map((c) => normalizeEmail(c.parentEmail)).filter((email): email is string => !!email)
+  );
+
+  const additionalParents: any[] = [];
+  for (const parent of parentUsers) {
+    const parentEmail = normalizeEmail(parent.email);
+    if (!parentEmail) continue;
+    if (scoped.some((u) => u.id === parent.id)) continue;
+    if (linkedParentEmails.has(parentEmail)) {
+      additionalParents.push(parent);
+      continue;
+    }
+
+    const links = await storage.getParentChildren(parent.email!);
+    const belongsToSchool = links.some((link) => link.student?.schoolId === sid);
+    if (belongsToSchool) additionalParents.push(parent);
+  }
+
+  return [...scoped, ...additionalParents];
+}
+
+async function canManageUser(req: Request, targetUser: any): Promise<boolean> {
+  if (isPlatformOwnerRequest(req)) {
+    // Owner can only manage users while explicitly in support mode for a selected school.
+    if (!isInSupportMode(req) || !req.session.supportSchoolId) return false;
+    if (isPlatformOwnerRole(targetUser.role)) return false;
+    return targetUser.schoolId === req.session.supportSchoolId;
+  }
+
+  if (isPlatformOwnerRole(targetUser.role)) return false;
+
+  const sid = sessionSchoolId(req);
+  if (!sid) {
+    return !targetUser.schoolId;
+  }
+  if (targetUser.schoolId === sid) return true;
+
+  if (resolveRole(targetUser.role) !== "parent") return false;
+  const email = normalizeEmail(targetUser.email);
+  if (!email) return false;
+
+  const linkingCodes = await storage.getLinkingCodes(sid);
+  if (linkingCodes.some((code) => normalizeEmail(code.parentEmail) === email)) {
+    return true;
+  }
+
+  const children = await storage.getParentChildren(targetUser.email);
+  return children.some((child) => child.student?.schoolId === sid);
+}
+
+function enforceRoleUpdateGuards(req: Request, targetUser: any, nextRole: string | undefined): string | null {
+  if (!nextRole || nextRole === targetUser.role) return null;
+
+  if (req.session.userId === targetUser.id) {
+    return "You cannot change your own admin role.";
+  }
+
+  const requesterIsOwner = isPlatformOwnerRequest(req);
+  const currentRole = resolveRole(targetUser.role);
+  const requestedRole = resolveRole(nextRole);
+  const protectedAdminRoles = new Set(["admin", "school_admin", "platform_admin", "owner", "platform_owner"]);
+
+  if (isPlatformOwnerRole(currentRole)) {
+    return "Platform owner role changes are blocked from the standard dashboard workflow.";
+  }
+
+  if (isPlatformOwnerRole(requestedRole)) {
+    return requesterIsOwner
+      ? "Platform owner role assignment is blocked from the standard dashboard workflow."
+      : "Only platform owners can manage platform-level roles.";
+  }
+
+  if (!requesterIsOwner) {
+    return "Role changes are restricted. Use protected owner workflows.";
+  }
+
+  if (protectedAdminRoles.has(currentRole)) {
+    return "Admin role changes are restricted. Use protected admin provisioning workflows.";
+  }
+
+  if (["parent", "teacher", "student"].includes(requestedRole)) {
+    return "Role changes to parent/teacher/student are restricted. Use onboarding or invite workflows.";
+  }
+
+  return null;
 }
 
 export async function registerRoutes(
@@ -269,60 +566,52 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid invite data", errors: parsed.error.flatten().fieldErrors });
       }
       const { token, name, username, password } = parsed.data;
-
-      const dotIndex = token.indexOf(".");
-      if (dotIndex === -1) {
-        return res.status(400).json({ message: "Invalid invite link" });
-      }
-      const inviteId = token.substring(0, dotIndex);
-      const rawToken = token.substring(dotIndex + 1);
-
-      const invite = await storage.getInviteById(inviteId);
-      if (!invite) {
-        return res.status(400).json({ message: "Invalid or expired invite link" });
-      }
-      if (invite.status !== "pending") {
-        return res.status(400).json({ message: "This invite has already been used or revoked" });
-      }
-      if (new Date() > invite.expiresAt) {
-        return res.status(400).json({ message: "This invite has expired" });
-      }
-
-      const tokenValid = await bcrypt.compare(rawToken, invite.tokenHash);
-      if (!tokenValid) {
-        return res.status(400).json({ message: "Invalid invite link" });
-      }
-
-      const existingUsername = await storage.getUserByUsername(username);
-      if (existingUsername) {
-        return res.status(409).json({ message: "Username is already taken" });
-      }
-
-      const passwordHash = await bcrypt.hash(password, 12);
-      const user = await storage.createUser({
-        username,
-        passwordHash,
-        name,
-        email: invite.email,
-        role: invite.role,
-        status: "active",
-        schoolId: invite.schoolId,
-      });
-
-      await storage.markInviteAccepted(invite.id);
-      await auditLog(req, "invite_accepted", `user:${user.id}`, { inviteId: invite.id });
-
-      req.session.regenerate((err) => {
-        if (err) {
-          return res.status(201).json(safeUser(user));
-        }
-        req.session.userId = user.id;
-        req.session.role = user.role;
-        req.session.schoolId = user.schoolId;
-        res.status(201).json(safeUser(user));
-      });
+      await acceptInviteToken(req, res, token, name, username, password);
     } catch (e: any) {
       console.error("Accept-invite error:", e);
+      res.status(500).json({ message: "Failed to accept invite" });
+    }
+  });
+
+  app.get("/api/invites/:token", async (req, res) => {
+    try {
+      const token = routeParam(req.params.token);
+      const resolved = await resolveInviteByToken(token);
+      if ("error" in resolved) {
+        return res.status(400).json({ message: resolved.error });
+      }
+
+      const { invite, school } = resolved;
+      const inviteStatus = deriveInviteStatus(invite);
+      res.json({
+        id: invite.id,
+        email: invite.email,
+        inviteeName: invite.inviteeName || null,
+        role: invite.role,
+        schoolId: invite.schoolId,
+        schoolName: school?.name || null,
+        schoolCode: school?.code || null,
+        schoolStatus: school?.status || null,
+        setupStatus: school?.setupStatus || null,
+        status: inviteStatus,
+        expiresAt: invite.expiresAt,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load invite" });
+    }
+  });
+
+  app.post("/api/invites/:token/accept", async (req, res) => {
+    try {
+      const token = routeParam(req.params.token);
+      const parsed = acceptInviteSchema.omit({ token: true }).safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid invite data", errors: parsed.error.flatten().fieldErrors });
+      }
+      const { name, username, password } = parsed.data;
+      await acceptInviteToken(req, res, token, name, username, password);
+    } catch (e: any) {
+      console.error("Invite accept error:", e);
       res.status(500).json({ message: "Failed to accept invite" });
     }
   });
@@ -440,7 +729,16 @@ export async function registerRoutes(
       req.session.destroy(() => {});
       return res.status(401).json({ message: "Account is not active" });
     }
-    res.json(safeUser(user));
+    const response: any = safeUser(user);
+    // Include support mode state for owner users
+    if (isPlatformOwnerRole(user.role)) {
+      response.supportMode = {
+        active: !!req.session.supportSchoolId,
+        schoolId: req.session.supportSchoolId || null,
+        schoolName: req.session.supportSchoolName || null,
+      };
+    }
+    res.json(response);
   });
 
   // === BOOKS (school-scoped) ===
@@ -450,7 +748,126 @@ export async function registerRoutes(
     res.json(books);
   });
 
-  app.post("/api/books", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/admin/setup-status", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) {
+        return res.status(400).json({ message: "No school is currently selected." });
+      }
+
+      const [school, users, invites, classes, books, levels, linkingCodes] = await Promise.all([
+        storage.getSchoolById(schoolId),
+        storage.getUsers(),
+        storage.getInvitesBySchool(schoolId),
+        storage.getClasses(schoolId),
+        storage.getBooks(schoolId),
+        storage.getBookLevels(schoolId),
+        storage.getLinkingCodes(schoolId),
+      ]);
+
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      const schoolUsers = users.filter((user) => user.schoolId === schoolId);
+      const activeSchoolAdmins = schoolUsers.filter((user) => resolveRole(user.role) === "school_admin" && user.status === "active");
+      const teachers = schoolUsers.filter((user) => resolveRole(user.role) === "teacher" && user.status === "active");
+      const schoolAdminInvites = invites.filter((invite) => resolveRole(invite.role) === "school_admin");
+      const latestInvite = schoolAdminInvites[0] || null;
+      const firstAdminInviteStatus = deriveInviteStatus(latestInvite);
+      const firstAdminAccepted = schoolAdminInvites.some((invite) => deriveInviteStatus(invite) === "accepted") || activeSchoolAdmins.length > 0;
+      const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
+      const schoolActive = school.status === "active";
+      const operationalSetupCompleted = COMPLETE_SETUP_STATUSES.has(setupStatus) && schoolActive;
+
+      const checklist = {
+        schoolDetailsConfirmed: !!(school.name && school.code),
+        classesYearGroupsCreated: classes.length > 0,
+        booksAddedOrSkipped: books.length > 0,
+        bookLevelsBundlesCreatedOrSkipped: levels.length > 0,
+        paymentInstructionsConfiguredOrSkipped: true,
+        parentLinkingConfigured: linkingCodes.length > 0,
+        teacherSetupCompletedOrSkipped: teachers.length > 0,
+      };
+
+      res.json({
+        school: {
+          id: school.id,
+          name: school.name,
+          code: school.code,
+          status: school.status,
+          setupStatus,
+          contactEmail: school.contactEmail,
+          contactPhone: school.contactPhone,
+          address: school.address,
+          notes: school.notes,
+        },
+        invite: latestInvite
+          ? {
+              id: latestInvite.id,
+              email: latestInvite.email,
+              inviteeName: latestInvite.inviteeName || null,
+              status: firstAdminInviteStatus,
+              expiresAt: latestInvite.expiresAt,
+            }
+          : null,
+        schoolCreated: true,
+        firstAdminInvited: schoolAdminInvites.length > 0,
+        firstAdminAccepted,
+        operationalSetupCompleted,
+        schoolActive,
+        setupStatus,
+        schoolStatus: school.status,
+        firstAdminEmail: latestInvite?.email || activeSchoolAdmins[0]?.email || null,
+        firstAdminInviteStatus,
+        checklist,
+        progress: {
+          schoolCreated: true,
+          firstAdminInvited: schoolAdminInvites.length > 0,
+          firstAdminAccepted,
+          operationalSetupComplete: operationalSetupCompleted,
+        },
+        nextStep:
+          schoolAdminInvites.length === 0
+            ? "Invite the first School Admin to start onboarding."
+            : !firstAdminAccepted
+              ? "Waiting for the first School Admin to accept the invite."
+              : !operationalSetupCompleted
+                ? "Complete the remaining operational setup tasks."
+                : "Setup complete. You can proceed to the dashboard.",
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load setup status" });
+    }
+  });
+
+  app.post("/api/admin/setup-complete", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) {
+        return res.status(400).json({ message: "No school is currently selected." });
+      }
+
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      const users = await storage.getUsers();
+      const schoolAdmins = users.filter((u) => u.schoolId === schoolId && resolveRole(u.role) === "school_admin" && u.status === "active");
+      if (schoolAdmins.length === 0) {
+        return res.status(400).json({ message: "First School Admin must accept the invite before setup can be completed." });
+      }
+
+      const updated = await storage.updateSchool(schoolId, { status: "active", setupStatus: "complete" } as any);
+      await auditLog(req, "school_setup_completed", `school:${schoolId}`, { schoolName: school.name });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to complete setup" });
+    }
+  });
+
+  app.post("/api/books", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const book = await storage.createBook({ ...req.body, schoolId: sid });
@@ -460,7 +877,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/books/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.patch("/api/books/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const book = await storage.updateBook(routeParam(req.params.id), req.body, sid);
@@ -471,13 +888,13 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/books/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.delete("/api/books/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     await storage.deleteBook(routeParam(req.params.id), sid);
     res.status(204).send();
   });
 
-  app.get("/api/books/low-stock", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/books/low-stock", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const books = await storage.getLowStockBooks(sid);
     res.json(books);
@@ -491,7 +908,7 @@ export async function registerRoutes(
   });
 
   // === INVENTORY (school-scoped) ===
-  app.post("/api/books/:id/stock", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/books/:id/stock", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { quantity, type, reason } = req.body;
@@ -502,7 +919,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/inventory-transactions", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/inventory-transactions", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const txns = await storage.getInventoryTransactions(sid);
     res.json(txns);
@@ -515,7 +932,7 @@ export async function registerRoutes(
     res.json(classes);
   });
 
-  app.post("/api/classes", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/classes", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const cls = await storage.createClass({ ...req.body, schoolId: sid });
@@ -525,27 +942,27 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/classes/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.patch("/api/classes/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const cls = await storage.updateClass(routeParam(req.params.id), req.body, sid);
     if (!cls) return res.status(404).json({ message: "Class not found" });
     res.json(cls);
   });
 
-  app.delete("/api/classes/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.delete("/api/classes/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     await storage.deleteClass(routeParam(req.params.id), sid);
     res.status(204).send();
   });
 
   // === STUDENTS (school-scoped) ===
-  app.get("/api/students", requireRole("admin", "school_admin", "teacher"), async (req, res) => {
+  app.get("/api/students", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
     const students = await storage.getStudents(sid);
     res.json(students);
   });
 
-  app.post("/api/students", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/students", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const student = await storage.createStudent({ ...req.body, schoolId: sid });
@@ -555,27 +972,27 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/students/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.patch("/api/students/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const student = await storage.updateStudent(routeParam(req.params.id), req.body, sid);
     if (!student) return res.status(404).json({ message: "Student not found" });
     res.json(student);
   });
 
-  app.delete("/api/students/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.delete("/api/students/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     await storage.deleteStudent(routeParam(req.params.id), sid);
     res.status(204).send();
   });
 
   // === BOOK LEVELS (school-scoped) ===
-  app.get("/api/book-levels", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/book-levels", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const levels = await storage.getBookLevels(sid);
     res.json(levels);
   });
 
-  app.post("/api/book-levels", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/book-levels", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const level = await storage.createBookLevel({ ...req.body, schoolId: sid });
@@ -585,25 +1002,25 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/book-levels/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.patch("/api/book-levels/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const level = await storage.updateBookLevel(routeParam(req.params.id), req.body, sid);
     if (!level) return res.status(404).json({ message: "Book level not found" });
     res.json(level);
   });
 
-  app.delete("/api/book-levels/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.delete("/api/book-levels/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     await storage.deleteBookLevel(routeParam(req.params.id), sid);
     res.status(204).send();
   });
 
-  app.get("/api/book-levels/:id/items", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/book-levels/:id/items", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const items = await storage.getBookLevelItems(routeParam(req.params.id));
     res.json(items);
   });
 
-  app.post("/api/book-levels/:id/items", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/book-levels/:id/items", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const item = await storage.addBookLevelItem({ ...req.body, bookLevelId: routeParam(req.params.id) });
       res.status(201).json(item);
@@ -612,19 +1029,19 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/book-level-items/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  app.delete("/api/book-level-items/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     await storage.removeBookLevelItem(routeParam(req.params.id));
     res.status(204).send();
   });
 
   // === CLASS BOOK LEVELS (school-scoped) ===
-  app.get("/api/class-book-levels", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/class-book-levels", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const cbls = await storage.getClassBookLevels(sid);
     res.json(cbls);
   });
 
-  app.post("/api/class-book-levels", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/class-book-levels", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const cbl = await storage.assignClassBookLevel(req.body);
       res.status(201).json(cbl);
@@ -634,19 +1051,22 @@ export async function registerRoutes(
   });
 
   // === LINKING CODES (school-scoped) ===
-  app.get("/api/linking-codes", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/linking-codes", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const codes = await storage.getLinkingCodes(sid);
     res.json(codes);
   });
 
-  app.post("/api/students/:id/linking-code", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/students/:id/linking-code", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { parentEmail } = req.body;
       const code = generateLinkingCode();
       const expiresAt = new Date();
       expiresAt.setMonth(expiresAt.getMonth() + 3);
+
+      const student = await storage.getStudentById(routeParam(req.params.id), sid);
+      const studentName = student?.name || "your child";
 
       const linkingCode = await storage.createLinkingCode({
         studentId: routeParam(req.params.id),
@@ -655,6 +1075,18 @@ export async function registerRoutes(
         expiresAt,
         schoolId: sid,
       });
+
+      // Send linking code to parent via email
+      if (parentEmail) {
+        const sent = await sendParentCodeEmail(parentEmail, studentName, code, expiresAt);
+        if (!sent) {
+          console.log(`[LINKING CODE] Code for ${parentEmail} (student: ${studentName}): ${code}`);
+          if (!isResendConfigured()) {
+            console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for linking codes.");
+          }
+        }
+      }
+
       res.status(201).json(linkingCode);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -759,6 +1191,20 @@ export async function registerRoutes(
         schoolId: paymentSchoolId,
       }, basketIds);
 
+      // Notify parent that payment submission has been received
+      const submittedSent = await sendPaymentSubmittedEmail(
+        user.email,
+        reference,
+        total.toFixed(2),
+        paymentMethod || "bank_transfer"
+      );
+      if (!submittedSent) {
+        console.log(`[PAYMENT SUBMITTED] Parent: ${user.email}, Ref: ${reference}, Amount: £${total.toFixed(2)}`);
+        if (!isResendConfigured()) {
+          console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for payment submission email.");
+        }
+      }
+
       res.status(201).json(payment);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -773,26 +1219,58 @@ export async function registerRoutes(
   });
 
   // === ADMIN PAYMENTS (school-scoped) ===
-  app.get("/api/admin/payments", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/admin/payments", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const payments = await storage.getPayments(undefined, sid);
     res.json(payments);
   });
 
-  app.post("/api/admin/payments/:id/confirm", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/admin/payments/:id/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const payment = await storage.confirmPayment(routeParam(req.params.id), sid);
+
+      // Notify parent that payment has been verified
+      if (payment?.parentIdentifier) {
+        const sent = await sendPaymentVerifiedEmail(
+          payment.parentIdentifier,
+          payment.paymentReference || payment.id,
+          payment.totalAmount || "0.00"
+        );
+        if (!sent) {
+          console.log(`[PAYMENT VERIFIED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
+          if (!isResendConfigured()) {
+            console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for payment verified email.");
+          }
+        }
+      }
+
       res.json(payment);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
   });
 
-  app.post("/api/admin/payments/:id/reject", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/admin/payments/:id/reject", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const payment = await storage.rejectPayment(routeParam(req.params.id), sid);
+
+      // Notify parent that payment has been rejected
+      if (payment?.parentIdentifier) {
+        const sent = await sendPaymentRejectedEmail(
+          payment.parentIdentifier,
+          payment.paymentReference || payment.id,
+          payment.totalAmount || "0.00"
+        );
+        if (!sent) {
+          console.log(`[PAYMENT REJECTED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
+          if (!isResendConfigured()) {
+            console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for payment rejected email.");
+          }
+        }
+      }
+
       res.json(payment);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -807,7 +1285,7 @@ export async function registerRoutes(
     res.json(allocations);
   });
 
-  app.post("/api/allocations", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/allocations", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const allocation = await storage.createAllocation({ ...req.body, schoolId: sid });
@@ -865,7 +1343,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/extra-requests/:id/approve", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/extra-requests/:id/approve", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const request = await storage.approveExtraCopyRequest(routeParam(req.params.id), req.body.adminNotes, sid);
@@ -875,7 +1353,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/extra-requests/:id/reject", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/extra-requests/:id/reject", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const request = await storage.rejectExtraCopyRequest(routeParam(req.params.id), req.body.adminNotes, sid);
@@ -885,19 +1363,79 @@ export async function registerRoutes(
     }
   });
 
-  // === USERS (admin-scoped, filtered by schoolId for school admins) ===
-  app.get("/api/users", requireRole("admin", "school_admin"), async (req, res) => {
-    const allUsers = await storage.getUsers();
-    const sid = sessionSchoolId(req);
-    // If admin has a schoolId, only show users from their school (or with no school)
-    const filtered = sid
-      ? allUsers.filter(u => u.schoolId === sid || u.schoolId === null)
-      : allUsers;
-    const safeUsers = filtered.map(({ passwordHash, ...u }) => u);
-    res.json(safeUsers);
+  // === USERS (admin-scoped; includes school-linked parents) ===
+  const listAdminUsers = async (req: Request, res: Response) => {
+    try {
+      const users = await getScopedAdminUsers(req);
+      const parentChildrenCount = new Map<string, number>();
+
+      await Promise.all(users.map(async (user) => {
+        if (resolveRole(user.role) !== "parent" || !user.email) return;
+        const sid = sessionSchoolId(req);
+        const children = await storage.getParentChildren(user.email);
+        const scopedChildren = sid ? children.filter((child) => child.student?.schoolId === sid) : children;
+        parentChildrenCount.set(user.id, scopedChildren.length);
+      }));
+
+      const payload = users.map((u) => formatUserForAdmin(u, {
+        linkedChildrenCount: parentChildrenCount.get(u.id) ?? 0,
+      }));
+      res.json(payload);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load users" });
+    }
+  };
+
+  app.get("/api/users", requireRole(...ADMIN_UI_ROLES), listAdminUsers);
+  app.get("/api/admin/users", requireRole(...ADMIN_UI_ROLES), listAdminUsers);
+
+  app.get("/api/admin/parents", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const requestedSchoolId = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
+      const sid = isPlatformOwnerRequest(req) ? requestedSchoolId : sessionSchoolId(req);
+      const users = await getScopedAdminUsers(req);
+      const parents = users.filter((u) => resolveRole(u.role) === "parent" && !!u.email);
+      const linkingCodes = sid ? await storage.getLinkingCodes(sid) : await storage.getLinkingCodes();
+
+      const payload = await Promise.all(parents.map(async (parent) => {
+        const links = await storage.getParentChildren(parent.email);
+        const scopedLinks = sid ? links.filter((link) => link.student?.schoolId === sid) : links;
+        const baskets = await storage.getBaskets(parent.email, sid);
+        const payments = await storage.getPayments(parent.email, sid);
+        const parentCodes = linkingCodes.filter((code) => normalizeEmail(code.parentEmail) === normalizeEmail(parent.email));
+
+        const linkedStudents = scopedLinks.map((link) => ({
+          id: link.student?.id,
+          name: link.student?.name,
+          className: link.student?.class?.name || null,
+        })).filter((s) => !!s.id);
+
+        return formatUserForAdmin(parent, {
+          schoolId: parent.schoolId || scopedLinks[0]?.student?.schoolId || "Not available",
+          linkedChildrenCount: scopedLinks.length,
+          linkedStudents,
+          linkingCodesIssued: parentCodes.length,
+          linkingCodesUsed: parentCodes.filter((c) => c.isUsed).length,
+          basketsCount: baskets.length,
+          activeBasketsCount: baskets.filter((b) => b.status === "pending").length,
+          unpaidBasketsCount: baskets.filter((b) => b.status === "pending").length,
+          paidAwaitingCollectionCount: baskets.filter((b) => b.status === "allocated").length,
+          paymentsCount: payments.length,
+          completedPaymentsCount: payments.filter((p) => p.status === "completed").length,
+          lastPaymentAt: payments[0]?.paidAt || null,
+          parentStatus: parent.status || "unknown",
+          signupStatus: parent.status === "invited" ? "Invite pending" : parent.status === "active" ? "Completed" : "Not available",
+          collectionStatus: "Not available",
+        });
+      }));
+
+      res.json(payload);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load parents" });
+    }
   });
 
-  app.post("/api/users", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/users", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { username, password, name, role, email } = req.body;
@@ -908,8 +1446,18 @@ export async function registerRoutes(
       if (existing) {
         return res.status(400).json({ message: "Username already taken" });
       }
+
+      const normalizedRole = resolveRole(role);
+      if (isPlatformOwnerRole(normalizedRole)) {
+        return res.status(403).json({ message: "Platform owner accounts cannot be created from this endpoint." });
+      }
+
+      if (!isPlatformOwnerRequest(req) && !["school_admin", "teacher", "finance", "it_personnel", "student", "parent"].includes(normalizedRole)) {
+        return res.status(403).json({ message: "Role is not allowed for school-level administrators." });
+      }
+
       const hash = await bcrypt.hash(password, 12);
-      const user = await storage.createUser({ username, passwordHash: hash, name, role, email, status: "active", schoolId: sid });
+      const user = await storage.createUser({ username, passwordHash: hash, name, role: normalizedRole, email, status: "active", schoolId: sid });
       const { passwordHash: _ph, ...safeUserData } = user;
       res.status(201).json(safeUserData);
     } catch (e: any) {
@@ -917,50 +1465,90 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/users/:id", requireRole("admin", "school_admin"), async (req, res) => {
+  const updateAdminUser = async (req: Request, res: Response) => {
     try {
-      const sid = sessionSchoolId(req);
-      // Verify the target user belongs to this school
       const targetUser = await storage.getUserById(routeParam(req.params.id));
       if (!targetUser) return res.status(404).json({ message: "User not found" });
-      if (sid && targetUser.schoolId !== sid && targetUser.schoolId !== null) {
+
+      if (!(await canManageUser(req, targetUser))) {
         return res.status(403).json({ message: "Access denied" });
       }
+
+      const guardMessage = enforceRoleUpdateGuards(req, targetUser, req.body?.role);
+      if (guardMessage) {
+        return res.status(403).json({ message: guardMessage });
+      }
+
       const { password, ...rest } = req.body;
       const updates: any = { ...rest };
       if (password) {
         updates.passwordHash = await bcrypt.hash(password, 12);
       }
+
+      if (updates.role) {
+        updates.role = resolveRole(updates.role);
+      }
+
       const user = await storage.updateUser(routeParam(req.params.id), updates);
       if (!user) return res.status(404).json({ message: "User not found" });
-      const { passwordHash: _ph, ...safeUserData } = user;
-      res.json(safeUserData);
+      res.json(formatUserForAdmin(user));
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
-  });
+  };
 
-  app.delete("/api/users/:id", requireRole("admin", "school_admin"), async (req, res) => {
-    const sid = sessionSchoolId(req);
+  app.patch("/api/users/:id", requireRole(...ADMIN_UI_ROLES), updateAdminUser);
+  app.patch("/api/admin/users/:id", requireRole(...ADMIN_UI_ROLES), updateAdminUser);
+
+  const deleteAdminUser = async (req: Request, res: Response) => {
     const targetUser = await storage.getUserById(routeParam(req.params.id));
     if (!targetUser) return res.status(404).json({ message: "User not found" });
-    if (sid && targetUser.schoolId !== sid && targetUser.schoolId !== null) {
+
+    if (isPlatformOwnerRequest(req) && !isInSupportMode(req)) {
+      return res.status(403).json({
+        message: "Owner user management is only allowed inside Support Mode for a selected school.",
+      });
+    }
+
+    if (!(await canManageUser(req, targetUser))) {
       return res.status(403).json({ message: "Access denied" });
     }
+
+    if (req.session.userId === targetUser.id) {
+      return res.status(403).json({ message: "You cannot delete your own account." });
+    }
+
+    if (isPlatformOwnerRole(targetUser.role)) {
+      return res.status(403).json({ message: "Platform owner accounts cannot be deleted from the standard dashboard workflow." });
+    }
+
+    const targetRole = resolveRole(targetUser.role);
+    if (["admin", "school_admin", "platform_admin", "owner"].includes(targetRole) && !isPlatformOwnerRequest(req)) {
+      return res.status(403).json({ message: "Deleting admin-level users is restricted." });
+    }
+
     await storage.deleteUser(routeParam(req.params.id));
     res.status(204).send();
-  });
+  };
+
+  app.delete("/api/users/:id", requireRole(...ADMIN_UI_ROLES), deleteAdminUser);
+  app.delete("/api/admin/users/:id", requireRole(...ADMIN_UI_ROLES), deleteAdminUser);
 
   // === INVITE MANAGEMENT (admin only, school-scoped) ===
-  app.post("/api/invites", requireRole("admin", "school_admin"), async (req, res) => {
+  app.post("/api/invites", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { email, role } = req.body;
       if (!email || !role) {
         return res.status(400).json({ message: "Email and role are required" });
       }
-      if (!USER_ROLES.includes(role) || role === "parent") {
+      const normalizedRole = resolveRole(role);
+      if (!USER_ROLES.includes(normalizedRole as any) || normalizedRole === "parent") {
         return res.status(400).json({ message: "Invalid role for invite. Parents self-register." });
+      }
+
+      if (isPlatformOwnerRole(normalizedRole)) {
+        return res.status(403).json({ message: "Platform owner invites are blocked from this workflow." });
       }
 
       const existingUser = await storage.getUserByEmail(email);
@@ -978,7 +1566,7 @@ export async function registerRoutes(
 
       const invite = await storage.createInvite({
         email,
-        role,
+        role: normalizedRole,
         schoolId: sid,
         tokenHash,
         invitedBy: req.session.userId!,
@@ -986,8 +1574,8 @@ export async function registerRoutes(
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
 
-      const inviteLink = `${getPublicBaseUrl(req)}/accept-invite?token=${invite.id}.${rawToken}`;
-      const sent = await sendInviteEmail(email, role, inviteLink);
+      const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${invite.id}.${rawToken}`;
+      const sent = await sendInviteEmail(email, normalizedRole, inviteLink);
       if (!sent) {
         console.log(`[INVITE] Link for ${email} (${role}): ${inviteLink}`);
         if (!isResendConfigured()) {
@@ -995,7 +1583,7 @@ export async function registerRoutes(
         }
       }
 
-      await auditLog(req, "invite_created", `invite:${invite.id}`, { email, role });
+      await auditLog(req, "invite_created", `invite:${invite.id}`, { email, role: normalizedRole });
 
       res.status(201).json({
         id: invite.id,
@@ -1049,10 +1637,30 @@ export async function registerRoutes(
   // === SEED DATA ===
   app.post("/api/seed-users", async (_req, res) => {
     try {
+      // ── 1. Create demo school ──────────────────────────────────
+      let demoSchool = (await storage.getSchools()).find((s) => s.code === "DEMO-001");
+      if (!demoSchool) {
+        demoSchool = await storage.createSchool({
+          name: "Al-Noor International School",
+          code: "DEMO-001",
+          status: "active",
+          setupStatus: "complete",
+          contactEmail: "admin@alnoor.edu.ly",
+          contactPhone: "+218-21-555-0100",
+          address: "Tripoli, Libya",
+          notes: "Demo school for EduCore platform demonstration",
+        });
+      }
+      const schoolId = demoSchool.id;
+
+      // ── 2. Create demo users ───────────────────────────────────
       const defaults = [
-        { username: "admin", password: "admin123", name: "School Administrator", role: "admin", email: "admin@school.edu", status: "active" as const, schoolId: null },
-        { username: "teacher", password: "teacher123", name: "Ms. Johnson", role: "teacher", email: "teacher@school.edu", status: "active" as const, schoolId: null },
-        { username: "parent", password: "parent123", name: "John Smith", role: "parent", email: "parent@example.com", status: "active" as const, schoolId: null },
+        { username: "bythub", password: "bythub123", name: "BytHub Platform Owner", role: "owner", email: "owner@bythub.co", status: "active" as const, schoolId: null as string | null },
+        { username: "admin", password: "admin123", name: "School Administrator", role: "school_admin", email: "admin@alnoor.edu.ly", status: "active" as const, schoolId },
+        { username: "teacher", password: "teacher123", name: "Ms. Fatima Johnson", role: "teacher", email: "teacher@alnoor.edu.ly", status: "active" as const, schoolId },
+        { username: "teacher2", password: "teacher123", name: "Mr. Ali Hassan", role: "teacher", email: "ali.hassan@alnoor.edu.ly", status: "active" as const, schoolId },
+        { username: "parent", password: "parent123", name: "Ahmed Al-Mansouri", role: "parent", email: "parent@example.com", status: "active" as const, schoolId },
+        { username: "it_admin", password: "it123", name: "IT Support", role: "it_personnel", email: "it@alnoor.edu.ly", status: "active" as const, schoolId },
       ];
       const created: Array<{ username: string; role: string }> = [];
       for (const d of defaults) {
@@ -1064,53 +1672,60 @@ export async function registerRoutes(
         }
       }
 
+      // ── 3. Look up users for linking ───────────────────────────
       const allUsers = await storage.getUsers();
-      const teacherUser = allUsers.find((u) => u.role === "teacher");
+      const teacherUser = allUsers.find((u) => u.role === "teacher" && u.schoolId === schoolId);
 
-      let classItem = (await storage.getClasses())[0];
+      // ── 4. Create classes (scoped to school) ───────────────────
+      let existingClasses = await storage.getClasses(schoolId);
+      let classItem = existingClasses[0];
       if (!classItem && teacherUser) {
         classItem = await storage.createClass({
           name: "Year 7 - A",
           academicYear: "2025/2026",
           teacherId: teacherUser.id,
+          schoolId,
         });
+        // Create a second class for teacher2
+        const teacher2 = allUsers.find((u) => u.username === "teacher2");
+        if (teacher2) {
+          await storage.createClass({
+            name: "Year 8 - B",
+            academicYear: "2025/2026",
+            teacherId: teacher2.id,
+            schoolId,
+          });
+        }
       }
 
-      let books = await storage.getBooks();
+      // ── 5. Create books (scoped to school) ─────────────────────
+      let books = await storage.getBooks(schoolId);
       if (books.length === 0) {
-        await storage.createBook({
-          title: "Mathematics Essentials",
-          author: "School Board",
-          isbn: "9780000000001",
-          price: "12.50",
-          description: "Core maths textbook",
-          isActive: true,
-          stockQuantity: 100,
-          lowStockThreshold: 10,
-          reorderQuantity: 50,
-        });
-        await storage.createBook({
-          title: "Science Fundamentals",
-          author: "School Board",
-          isbn: "9780000000002",
-          price: "14.00",
-          description: "Core science textbook",
-          isActive: true,
-          stockQuantity: 80,
-          lowStockThreshold: 10,
-          reorderQuantity: 50,
-        });
-        books = await storage.getBooks();
+        const bookData = [
+          { title: "Mathematics Essentials", author: "School Board", isbn: "9780000000001", price: "12.50", description: "Core maths textbook for Year 7-8", isActive: true, stockQuantity: 100, lowStockThreshold: 10, reorderQuantity: 50, schoolId },
+          { title: "Science Fundamentals", author: "School Board", isbn: "9780000000002", price: "14.00", description: "Core science textbook", isActive: true, stockQuantity: 80, lowStockThreshold: 10, reorderQuantity: 50, schoolId },
+          { title: "English Language Arts", author: "National Curriculum", isbn: "9780000000003", price: "11.00", description: "English language and comprehension", isActive: true, stockQuantity: 90, lowStockThreshold: 10, reorderQuantity: 50, schoolId },
+          { title: "Arabic Language", author: "Ministry of Education", isbn: "9780000000004", price: "10.00", description: "Arabic reading and writing", isActive: true, stockQuantity: 120, lowStockThreshold: 15, reorderQuantity: 60, schoolId },
+          { title: "Islamic Studies", author: "Ministry of Education", isbn: "9780000000005", price: "8.50", description: "Religious education", isActive: true, stockQuantity: 5, lowStockThreshold: 10, reorderQuantity: 40, schoolId },
+        ];
+        for (const b of bookData) {
+          await storage.createBook(b);
+        }
+        books = await storage.getBooks(schoolId);
       }
 
-      let students = await storage.getStudents();
+      // ── 6. Create students (scoped to school) ──────────────────
+      let students = await storage.getStudents(schoolId);
       if (students.length === 0 && classItem) {
-        await storage.createStudent({ name: "Amelia Carter", classId: classItem.id });
-        await storage.createStudent({ name: "Noah Khan", classId: classItem.id });
-        students = await storage.getStudents();
+        const studentNames = ["Amelia Carter", "Noah Khan", "Sara Al-Farsi", "Omar Benali", "Layla Hassan"];
+        for (const name of studentNames) {
+          await storage.createStudent({ name, classId: classItem.id, schoolId });
+        }
+        students = await storage.getStudents(schoolId);
       }
 
-      const allocations = await storage.getAllocations(classItem?.id);
+      // ── 7. Create allocations (with absent demo) ───────────────
+      const allocations = await storage.getAllocations(classItem?.id, schoolId);
       const hasAbsent = allocations.some((a: any) => a.status === "absent");
       if (!hasAbsent && students.length > 0 && books.length > 0) {
         const createdAllocation = await storage.createAllocation({
@@ -1118,12 +1733,14 @@ export async function registerRoutes(
           bookId: books[0].id,
           basketId: null,
           status: "allocated",
+          schoolId,
         });
         await storage.markAllocationAbsent(createdAllocation.id);
       }
 
+      // ── 8. Create extra copy requests ──────────────────────────
       const teacherRequests = teacherUser
-        ? await storage.getExtraCopyRequests({ teacherId: teacherUser.id })
+        ? await storage.getExtraCopyRequests({ teacherId: teacherUser.id, schoolId })
         : [];
       const hasPendingRequest = teacherRequests.some((r: any) => r.status === "pending");
       const hasResolvedRequest = teacherRequests.some((r: any) => r.status !== "pending");
@@ -1136,8 +1753,9 @@ export async function registerRoutes(
             bookId: books[0].id,
             quantity: 2,
             reason: "NEW_STUDENT",
-            notes: "Demo pending request",
+            notes: "Two new students enrolled mid-term",
             status: "pending",
+            schoolId,
           });
         }
 
@@ -1148,25 +1766,29 @@ export async function registerRoutes(
             bookId: books[0].id,
             quantity: 1,
             reason: "DAMAGED_IN_CLASS",
-            notes: "Demo request to resolve",
+            notes: "Book damaged during lab session",
             status: "pending",
+            schoolId,
           });
-          await storage.approveExtraCopyRequest(resolved.id, "Approved for demo data");
+          await storage.approveExtraCopyRequest(resolved.id, "Approved — replacement copy dispatched");
         }
       }
 
       const refreshedRequests = teacherUser
-        ? await storage.getExtraCopyRequests({ teacherId: teacherUser.id })
+        ? await storage.getExtraCopyRequests({ teacherId: teacherUser.id, schoolId })
         : [];
-      const refreshedAllocations = await storage.getAllocations(classItem?.id);
+      const refreshedAllocations = await storage.getAllocations(classItem?.id, schoolId);
 
       res.json({
         message: "Seed completed",
         createdUsers: created,
+        demoSchool: { id: demoSchool.id, name: demoSchool.name, code: demoSchool.code },
         summary: {
           hasAbsentAllocation: refreshedAllocations.some((a: any) => a.status === "absent"),
           pendingExtraRequests: refreshedRequests.filter((r: any) => r.status === "pending").length,
           resolvedExtraRequests: refreshedRequests.filter((r: any) => r.status !== "pending").length,
+          totalStudents: students.length,
+          totalBooks: books.length,
         },
       });
     } catch (e: any) {
@@ -1174,9 +1796,764 @@ export async function registerRoutes(
     }
   });
 
-  // === ADMIN DASHBOARD SUMMARY (school-scoped) ===
-  app.get("/api/admin/dashboard-summary", requireRole("admin", "school_admin"), async (req, res) => {
+  // ═══ SUPPORT MODE ═════════════════════════════════════════════
+  // Enter support mode — owner selects a school to support
+  app.post("/api/owner/enter-support/:schoolId", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
     try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      req.session.supportSchoolId = school.id;
+      req.session.supportSchoolName = school.name;
+
+      await auditLog(req, "support_mode_enter", `school:${school.id}`, {
+        actorRole: req.session.role,
+        supportSchoolId: school.id,
+        supportSchoolName: school.name,
+      });
+
+      res.json({
+        message: `Entered support mode for ${school.name}`,
+        supportSchoolId: school.id,
+        supportSchoolName: school.name,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/owner/support-mode/enter", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = String(req.body?.schoolId || "").trim();
+      if (!schoolId) {
+        return res.status(400).json({ message: "schoolId is required." });
+      }
+
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      req.session.supportSchoolId = school.id;
+      req.session.supportSchoolName = school.name;
+
+      await auditLog(req, "support_mode_enter", `school:${school.id}`, {
+        actorRole: req.session.role,
+        supportSchoolId: school.id,
+        supportSchoolName: school.name,
+      });
+
+      res.json({
+        message: `Entered support mode for ${school.name}`,
+        supportSchoolId: school.id,
+        supportSchoolName: school.name,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // Exit support mode — return to owner dashboard
+  app.post("/api/owner/exit-support", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const previousSchool = req.session.supportSchoolName || "unknown";
+      const previousSchoolId = req.session.supportSchoolId || null;
+
+      req.session.supportSchoolId = null;
+      req.session.supportSchoolName = null;
+
+      await auditLog(req, "support_mode_exit", previousSchoolId ? `school:${previousSchoolId}` : undefined, {
+        actorRole: req.session.role,
+        previousSupportSchoolId: previousSchoolId,
+        previousSupportSchoolName: previousSchool,
+      });
+
+      res.json({ message: "Exited support mode" });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/owner/support-mode/exit", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const previousSchool = req.session.supportSchoolName || "unknown";
+      const previousSchoolId = req.session.supportSchoolId || null;
+
+      req.session.supportSchoolId = null;
+      req.session.supportSchoolName = null;
+
+      await auditLog(req, "support_mode_exit", previousSchoolId ? `school:${previousSchoolId}` : undefined, {
+        actorRole: req.session.role,
+        previousSupportSchoolId: previousSchoolId,
+        previousSupportSchoolName: previousSchool,
+      });
+
+      res.json({ message: "Exited support mode" });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // Get current support mode status
+  app.get("/api/owner/support-status", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    res.json({
+      inSupportMode: !!req.session.supportSchoolId,
+      supportSchoolId: req.session.supportSchoolId || null,
+      supportSchoolName: req.session.supportSchoolName || null,
+    });
+  });
+
+  // ═══ OWNER SCHOOL MANAGEMENT ════════════════════════════════
+  app.get("/api/owner/schools", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
+    try {
+      const [schools, users, books, classes, students] = await Promise.all([
+        storage.getSchools(),
+        storage.getUsers(),
+        storage.getBooks(),
+        storage.getClasses(),
+        storage.getStudents(),
+      ]);
+
+      const invitesBySchool: Record<string, any[]> = {};
+      await Promise.all(
+        schools.map(async (school) => {
+          invitesBySchool[school.id] = await storage.getInvitesBySchool(school.id);
+        }),
+      );
+
+      const payload = schools
+        .map((school) => {
+          const userScope = users.filter((u) => u.schoolId === school.id);
+          const schoolInvites = (invitesBySchool[school.id] || []).filter((invite) => resolveRole(invite.role) === "school_admin");
+          const latestSchoolAdminInvite = schoolInvites[0] || null;
+          return {
+            ...school,
+            setupStatus: normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status),
+            latestInviteId: latestSchoolAdminInvite?.id || null,
+            firstAdminEmail: latestSchoolAdminInvite?.email || null,
+            firstAdminName: latestSchoolAdminInvite?.inviteeName || null,
+            firstAdminInviteStatus: deriveInviteStatus(latestSchoolAdminInvite),
+            counts: {
+              admins: userScope.filter((u) => resolveRole(u.role) === "school_admin").length,
+              teachers: userScope.filter((u) => resolveRole(u.role) === "teacher").length,
+              parents: userScope.filter((u) => resolveRole(u.role) === "parent").length,
+              students: students.filter((s) => s.schoolId === school.id).length,
+              classes: classes.filter((c) => c.schoolId === school.id).length,
+              books: books.filter((b) => b.schoolId === school.id).length,
+            },
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      res.json(payload);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load schools" });
+    }
+  });
+
+  app.post("/api/owner/schools", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const name = String(req.body?.name || "").trim();
+      const codeRaw = String(req.body?.code || "").trim();
+
+      if (!name || !codeRaw) {
+        return res.status(400).json({ message: "School name and code are required." });
+      }
+
+      const code = normalizeSchoolCode(codeRaw);
+      const existing = await storage.getSchools();
+      if (existing.some((s) => normalizeSchoolCode(s.code) === code)) {
+        return res.status(409).json({ message: "A school with this code already exists." });
+      }
+
+      const school = await storage.createSchool({
+        name,
+        code,
+        status: "pending_setup",
+        setupStatus: "pending_admin_invite",
+        contactEmail: req.body?.contactEmail || null,
+        contactPhone: req.body?.contactPhone || null,
+        address: req.body?.address || null,
+        notes: req.body?.notes || null,
+      });
+
+      await auditLog(req, "school_created", `school:${school.id}`, { code: school.code, name: school.name });
+      res.status(201).json(school);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to create school" });
+    }
+  });
+
+  app.patch("/api/owner/schools/:id", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const id = routeParam(req.params.id);
+      const school = await storage.getSchoolById(id);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const updates: Record<string, unknown> = {};
+      if (typeof req.body?.name === "string" && req.body.name.trim()) {
+        updates.name = req.body.name.trim();
+      }
+      if (typeof req.body?.code === "string" && req.body.code.trim()) {
+        const nextCode = normalizeSchoolCode(req.body.code);
+        const allSchools = await storage.getSchools();
+        const duplicate = allSchools.some((s) => s.id !== id && normalizeSchoolCode(s.code) === nextCode);
+        if (duplicate) {
+          return res.status(409).json({ message: "A school with this code already exists." });
+        }
+        updates.code = nextCode;
+      }
+      if (typeof req.body?.status === "string") {
+        if (!["active", "pending_setup", "suspended"].includes(req.body.status)) {
+          return res.status(400).json({ message: "Invalid school status." });
+        }
+        updates.status = req.body.status;
+      }
+      if ("contactEmail" in req.body) updates.contactEmail = req.body.contactEmail || null;
+      if ("contactPhone" in req.body) updates.contactPhone = req.body.contactPhone || null;
+      if ("address" in req.body) updates.address = req.body.address || null;
+      if ("notes" in req.body) updates.notes = req.body.notes || null;
+
+      const updated = await storage.updateSchool(id, updates as any);
+      if (!updated) return res.status(404).json({ message: "School not found" });
+
+      await auditLog(req, "school_updated", `school:${updated.id}`, {
+        previousStatus: school.status,
+        nextStatus: updated.status,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to update school" });
+    }
+  });
+
+  app.get("/api/owner/schools/:schoolId", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      const [users, classes, books, students, invites] = await Promise.all([
+        storage.getUsers(),
+        storage.getClasses(schoolId),
+        storage.getBooks(schoolId),
+        storage.getStudents(schoolId),
+        storage.getInvitesBySchool(schoolId),
+      ]);
+
+      const schoolUsers = users.filter((u) => u.schoolId === schoolId);
+      const schoolAdminInvites = invites.filter((invite) => resolveRole(invite.role) === "school_admin");
+      const latestInvite = schoolAdminInvites[0] || null;
+      const firstAdminInviteStatus = deriveInviteStatus(latestInvite);
+      const hasActiveSchoolAdmin = schoolUsers.some((u) => resolveRole(u.role) === "school_admin" && u.status === "active");
+      const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
+
+      res.json({
+        ...school,
+        setupStatus,
+        firstAdminEmail: latestInvite?.email || null,
+        firstAdminName: latestInvite?.inviteeName || null,
+        firstAdminInviteStatus,
+        milestones: setupMilestonesFromState({
+          schoolStatus: school.status,
+          setupStatus,
+          firstAdminInviteStatus,
+          hasActiveSchoolAdmin,
+        }),
+        counts: {
+          admins: schoolUsers.filter((u) => resolveRole(u.role) === "school_admin").length,
+          teachers: schoolUsers.filter((u) => resolveRole(u.role) === "teacher").length,
+          parents: schoolUsers.filter((u) => resolveRole(u.role) === "parent").length,
+          students: students.length,
+          classes: classes.length,
+          books: books.length,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load school details" });
+    }
+  });
+
+  app.delete("/api/owner/schools/:id", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const id = routeParam(req.params.id);
+      const school = await storage.getSchoolById(id);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const [users, books, classes, students] = await Promise.all([
+        storage.getUsers(),
+        storage.getBooks(id),
+        storage.getClasses(id),
+        storage.getStudents(id),
+      ]);
+
+      const hasRelatedUsers = users.some((u) => u.schoolId === id);
+      if (hasRelatedUsers || books.length > 0 || classes.length > 0 || students.length > 0) {
+        return res.status(409).json({
+          message: "School cannot be deleted while related users or records exist. Suspend it instead.",
+        });
+      }
+
+      await storage.deleteSchool(id);
+      await auditLog(req, "school_deleted", `school:${id}`, { code: school.code, name: school.name });
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to delete school" });
+    }
+  });
+
+  app.post("/api/owner/schools/:schoolId/invite-admin", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const schoolId = routeParam(req.params.schoolId);
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      const adminName = String(req.body?.adminName || req.body?.name || "").trim();
+      const adminEmail = String(req.body?.adminEmail || req.body?.email || "").trim();
+      if (!adminName || !adminEmail) {
+        return res.status(400).json({ message: "First School Admin name and email are required." });
+      }
+
+      const existingUser = await storage.getUserByEmail(adminEmail);
+      if (existingUser && existingUser.status === "active") {
+        return res.status(409).json({ message: "A user with this email already exists." });
+      }
+
+      const updatedSchool = await storage.updateSchool(school.id, {
+        status: "pending_setup",
+        setupStatus: "pending_admin_acceptance",
+      } as any);
+
+      if (!updatedSchool) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = await bcrypt.hash(rawToken, 10);
+
+      const invite = await storage.createInvite({
+        email: adminEmail,
+        inviteeName: adminName,
+        role: "school_admin",
+        schoolId: school.id,
+        tokenHash,
+        invitedBy: req.session.userId || null,
+        status: "pending",
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+
+      const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${invite.id}.${rawToken}`;
+      const emailSent = await sendSchoolSetupInviteEmail(adminEmail, adminName, school.name, inviteLink);
+
+      if (!emailSent) {
+        console.log(`[SCHOOL SETUP INVITE] Link for ${adminEmail}: ${inviteLink}`);
+        if (!isResendConfigured()) {
+          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; using log fallback for school setup invites.");
+        }
+      }
+
+      await auditLog(req, "school_setup_invite_sent", `school:${school.id}`, {
+        adminEmail,
+        adminName,
+        inviteId: invite.id,
+        emailSent,
+      });
+
+      res.status(201).json({
+        inviteId: invite.id,
+        inviteLink,
+        emailSent,
+        manualInviteLinkAllowed: !emailSent || process.env.NODE_ENV !== "production",
+        school: {
+          id: updatedSchool.id,
+          name: updatedSchool.name,
+          code: updatedSchool.code,
+          status: updatedSchool.status,
+          setupStatus: normalizeSchoolSetupStatus(updatedSchool.setupStatus as string | null | undefined, updatedSchool.status),
+        },
+      });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to send school admin invite" });
+    }
+  });
+
+  app.post("/api/owner/invites/:inviteId/resend", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const inviteId = routeParam(req.params.inviteId);
+      const invite = await storage.getInviteById(inviteId);
+      if (!invite || !invite.schoolId || resolveRole(invite.role) !== "school_admin") {
+        return res.status(404).json({ message: "Invite not found" });
+      }
+
+      const school = await storage.getSchoolById(invite.schoolId);
+      if (!school) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      if (invite.status === "accepted") {
+        return res.status(400).json({ message: "Accepted invites cannot be resent." });
+      }
+
+      if (invite.status === "pending") {
+        await storage.revokeInvite(invite.id);
+      }
+
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = await bcrypt.hash(rawToken, 10);
+
+      const replacement = await storage.createInvite({
+        email: invite.email,
+        inviteeName: invite.inviteeName || "School Admin",
+        role: "school_admin",
+        schoolId: school.id,
+        tokenHash,
+        invitedBy: req.session.userId || null,
+        status: "pending",
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+
+      await storage.updateSchool(school.id, {
+        status: "pending_setup",
+        setupStatus: "pending_admin_acceptance",
+      } as any);
+
+      const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${replacement.id}.${rawToken}`;
+      const emailSent = await sendSchoolSetupInviteEmail(invite.email, invite.inviteeName || "School Admin", school.name, inviteLink);
+
+      await auditLog(req, "school_setup_invite_resent", `school:${school.id}`, {
+        originalInviteId: invite.id,
+        newInviteId: replacement.id,
+        adminEmail: invite.email,
+        emailSent,
+      });
+
+      res.json({
+        inviteId: replacement.id,
+        inviteLink,
+        emailSent,
+        manualInviteLinkAllowed: !emailSent || process.env.NODE_ENV !== "production",
+      });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to resend invite" });
+    }
+  });
+
+  app.post("/api/owner/invites/:inviteId/revoke", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const inviteId = routeParam(req.params.inviteId);
+      const invite = await storage.getInviteById(inviteId);
+      if (!invite || !invite.schoolId || resolveRole(invite.role) !== "school_admin") {
+        return res.status(404).json({ message: "Invite not found" });
+      }
+
+      if (invite.status === "accepted") {
+        return res.status(400).json({ message: "Accepted invites cannot be revoked." });
+      }
+
+      await storage.revokeInvite(inviteId);
+      await storage.updateSchool(invite.schoolId, {
+        status: "pending_setup",
+        setupStatus: "pending_admin_invite",
+      } as any);
+
+      await auditLog(req, "school_setup_invite_revoked", `school:${invite.schoolId}`, {
+        inviteId,
+        adminEmail: invite.email,
+      });
+
+      res.json({ message: "Invite revoked" });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to revoke invite" });
+    }
+  });
+
+  app.get("/api/owner/pending-setups", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
+    try {
+      const [schools, users] = await Promise.all([
+        storage.getSchools(),
+        storage.getUsers(),
+      ]);
+
+      const invitesBySchool: Record<string, any[]> = {};
+      await Promise.all(
+        schools.map(async (school) => {
+          invitesBySchool[school.id] = await storage.getInvitesBySchool(school.id);
+        }),
+      );
+
+      const rows = schools.map((school) => {
+        const schoolInvites = (invitesBySchool[school.id] || []).filter((invite) => resolveRole(invite.role) === "school_admin");
+        const latestInvite = schoolInvites[0] || null;
+        const firstAdminInviteStatus = deriveInviteStatus(latestInvite);
+        const hasActiveSchoolAdmin = users.some((u) => u.schoolId === school.id && resolveRole(u.role) === "school_admin" && u.status === "active");
+        const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
+
+        return {
+          schoolId: school.id,
+          schoolName: school.name,
+          schoolCode: school.code,
+          schoolStatus: school.status,
+          setupStatus,
+          firstAdminEmail: latestInvite?.email || null,
+          firstAdminInviteStatus,
+          updatedAt: school.updatedAt,
+          category:
+            firstAdminInviteStatus === "not_invited"
+              ? "school_created_no_admin_invite"
+              : firstAdminInviteStatus !== "accepted"
+                ? "admin_invited_not_accepted"
+                : !COMPLETE_SETUP_STATUSES.has(setupStatus)
+                  ? "admin_accepted_setup_not_complete"
+                  : school.status !== "active"
+                    ? "setup_complete_not_active"
+                    : "complete",
+          recommendedNextAction: nextOwnerAction(setupStatus, firstAdminInviteStatus, school.status || "pending_setup"),
+          milestones: setupMilestonesFromState({
+            schoolStatus: school.status,
+            setupStatus,
+            firstAdminInviteStatus,
+            hasActiveSchoolAdmin,
+          }),
+        };
+      });
+
+      const pending = rows.filter((row) => row.category !== "complete");
+      res.json({
+        totalPending: pending.length,
+        groups: {
+          schoolCreatedNoAdminInvite: pending.filter((r) => r.category === "school_created_no_admin_invite"),
+          adminInvitedNotAccepted: pending.filter((r) => r.category === "admin_invited_not_accepted"),
+          adminAcceptedSetupNotComplete: pending.filter((r) => r.category === "admin_accepted_setup_not_complete"),
+          setupCompleteNotActive: pending.filter((r) => r.category === "setup_complete_not_active"),
+        },
+        items: pending,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load pending setups" });
+    }
+  });
+
+  app.get("/api/owner/email-status", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
+    try {
+      const emailConfigured = isResendConfigured();
+      const schools = await storage.getSchools();
+
+      const recentInvites: Array<{
+        schoolId: string;
+        schoolName: string;
+        inviteId: string;
+        email: string;
+        status: string;
+        createdAt: Date;
+      }> = [];
+
+      for (const school of schools) {
+        const invites = await storage.getInvitesBySchool(school.id);
+        for (const invite of invites.filter((i) => resolveRole(i.role) === "school_admin").slice(0, 2)) {
+          recentInvites.push({
+            schoolId: school.id,
+            schoolName: school.name,
+            inviteId: invite.id,
+            email: invite.email,
+            status: deriveInviteStatus(invite),
+            createdAt: invite.createdAt || new Date(0),
+          });
+        }
+      }
+
+      recentInvites.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      res.json({
+        emailConfigured,
+        message: emailConfigured
+          ? "Email sending is configured."
+          : "Email sending is not configured. Copy this setup link and send it manually.",
+        manualInviteLinkAllowed: !emailConfigured || process.env.NODE_ENV !== "production",
+        recentInvites: recentInvites.slice(0, 20),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load email status" });
+    }
+  });
+
+  app.get("/api/owner/activity", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
+    try {
+      const logs = await storage.getAuditLogs(200);
+      const ownerActions = new Set([
+        "school_created",
+        "school_updated",
+        "school_deleted",
+        "school_setup_invite_sent",
+        "school_setup_invite_resent",
+        "school_setup_invite_revoked",
+        "invite_accepted",
+        "school_setup_completed",
+        "support_mode_enter",
+        "support_mode_exit",
+      ]);
+
+      const items = logs
+        .filter((log) => ownerActions.has(log.action))
+        .slice(0, 100)
+        .map((log) => ({
+          id: log.id,
+          action: log.action,
+          target: log.target,
+          actorUserId: log.userId,
+          timestamp: log.createdAt,
+          metadata: log.metadata ? JSON.parse(log.metadata) : null,
+        }));
+
+      res.json({ items });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load activity" });
+    }
+  });
+
+  app.get("/api/admin/book-management-summary", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const requestedSchoolId = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
+      const ownerMode = isPlatformOwnerRequest(req);
+      const sid = ownerMode ? requestedSchoolId : sessionSchoolId(req);
+
+      const [books, levels, classes, students, payments, allocations] = await Promise.all([
+        storage.getBooks(sid),
+        storage.getBookLevels(sid),
+        storage.getClasses(sid),
+        storage.getStudents(sid),
+        storage.getPayments(undefined, sid),
+        storage.getAllocations(undefined, sid),
+      ]);
+
+      const lowStock = books.filter((b) => b.isActive && (b.stockQuantity ?? 0) <= (b.lowStockThreshold ?? 10)).length;
+      const pendingPayments = payments.filter((p) => p.status === "pending").length;
+      const paidOrders = payments.filter((p) => p.status === "completed").length;
+      const awaitingCollection = allocations.filter((a: any) => a.status === "allocated").length;
+      const completedHandovers = allocations.filter((a: any) => a.status === "received").length;
+
+      res.json({
+        schoolId: sid || null,
+        books: books.length,
+        lowStockBooks: lowStock,
+        bookLevels: levels.length,
+        classes: classes.length,
+        students: students.length,
+        orders: payments.length,
+        pendingPayments,
+        paidOrders,
+        awaitingCollection,
+        completedHandovers,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load book management summary" });
+    }
+  });
+
+  app.get("/api/owner/dashboard", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const requestedSchoolId = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
+
+      const [schools, users] = await Promise.all([
+        storage.getSchools(),
+        storage.getUsers(),
+      ]);
+
+      const scopedSchools = requestedSchoolId ? schools.filter((s) => s.id === requestedSchoolId) : schools;
+      const scopedSchoolIds = new Set(scopedSchools.map((s) => s.id));
+      const scopedUsers = users.filter((u) => u.schoolId && scopedSchoolIds.has(u.schoolId));
+
+      const invitesBySchool: Record<string, any[]> = {};
+      await Promise.all(
+        scopedSchools.map(async (school) => {
+          invitesBySchool[school.id] = await storage.getInvitesBySchool(school.id);
+        }),
+      );
+
+      const recentActivityLogs = await storage.getAuditLogs(60);
+
+      let pendingAdminInviteSchools = 0;
+      let pendingAdminAcceptanceSchools = 0;
+      let setupInProgressSchools = 0;
+      let activeSchools = 0;
+      let suspendedSchools = 0;
+      let pendingInvites = 0;
+      let expiredInvites = 0;
+      let schoolsNeedingAttention = 0;
+
+      for (const school of scopedSchools) {
+        const schoolInvites = (invitesBySchool[school.id] || []).filter((invite) => resolveRole(invite.role) === "school_admin");
+        const latestInvite = schoolInvites[0] || null;
+        const inviteStatus = deriveInviteStatus(latestInvite);
+        const setupStatus = normalizeSchoolSetupStatus(school.setupStatus as string | null | undefined, school.status);
+        const hasActiveSchoolAdmin = scopedUsers.some((u) => u.schoolId === school.id && resolveRole(u.role) === "school_admin" && u.status === "active");
+        const milestones = setupMilestonesFromState({
+          schoolStatus: school.status,
+          setupStatus,
+          firstAdminInviteStatus: inviteStatus,
+          hasActiveSchoolAdmin,
+        });
+
+        if (school.status === "active") activeSchools += 1;
+        if (school.status === "suspended") suspendedSchools += 1;
+
+        if (setupStatus === "pending_admin_invite" || setupStatus === "school_created" || inviteStatus === "not_invited") {
+          pendingAdminInviteSchools += 1;
+        }
+        if (setupStatus === "pending_admin_acceptance" || inviteStatus === "pending" || inviteStatus === "expired") {
+          pendingAdminAcceptanceSchools += 1;
+        }
+        if (setupStatus === "admin_accepted" || setupStatus === "operational_setup_in_progress") {
+          setupInProgressSchools += 1;
+        }
+
+        if (inviteStatus === "pending") pendingInvites += 1;
+        if (inviteStatus === "expired") expiredInvites += 1;
+
+        if (!milestones.operationalSetupCompleted || school.status !== "active" || inviteStatus === "expired") {
+          schoolsNeedingAttention += 1;
+        }
+      }
+
+      const pendingSetupSchools = scopedSchools.filter((s) => s.status !== "active").length;
+
+      res.json({
+        totalSchools: scopedSchools.length,
+        pendingSetupSchools,
+        pendingAdminInviteSchools,
+        pendingAdminAcceptanceSchools,
+        setupInProgressSchools,
+        activeSchools,
+        suspendedSchools,
+        pendingInvites,
+        expiredInvites,
+        schoolsNeedingAttention,
+        recentActivity: recentActivityLogs
+          .filter((log) => ["school_created", "school_updated", "school_setup_invite_sent", "school_setup_invite_resent", "support_mode_enter", "support_mode_exit", "invite_accepted", "school_setup_completed"].includes(log.action))
+          .slice(0, 12)
+          .map((log) => ({
+            id: log.id,
+            action: log.action,
+            target: log.target,
+            createdAt: log.createdAt,
+            metadata: log.metadata ? JSON.parse(log.metadata) : null,
+          })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load owner dashboard" });
+    }
+  });
+
+  // === ADMIN DASHBOARD SUMMARY (school-scoped) ===
+  app.get("/api/admin/dashboard-summary", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const ownerMode = isPlatformOwnerRequest(req);
       const sid = sessionSchoolId(req);
 
       const [
@@ -1201,42 +2578,52 @@ export async function registerRoutes(
         storage.getExtraCopyRequests({ schoolId: sid }),
       ]);
 
-      const lowStockBooks = books.filter(
+      const scopedBooks = !ownerMode && !sid ? books.filter((b) => !b.schoolId) : books;
+      const scopedStudents = !ownerMode && !sid ? students.filter((s) => !s.schoolId) : students;
+      const scopedClasses = !ownerMode && !sid ? classes.filter((c) => !c.schoolId) : classes;
+      const scopedBookLevels = !ownerMode && !sid ? bookLevels.filter((b) => !b.schoolId) : bookLevels;
+      const scopedClassBookLevels = !ownerMode && !sid ? classBookLevels.filter((c: any) => !c.class?.schoolId) : classBookLevels;
+      const scopedLinkingCodes = !ownerMode && !sid ? linkingCodes.filter((c) => !c.schoolId) : linkingCodes;
+      const scopedPayments = !ownerMode && !sid ? payments.filter((p) => !p.schoolId) : payments;
+      const scopedAllocations = !ownerMode && !sid ? allocations.filter((a: any) => !a.schoolId) : allocations;
+      const scopedExtraRequests = !ownerMode && !sid ? extraRequests.filter((r: any) => !r.schoolId) : extraRequests;
+
+      const lowStockBooks = scopedBooks.filter(
         (b) => b.isActive && (b.stockQuantity ?? 0) < (b.lowStockThreshold ?? 10)
       ).length;
 
-      const parentCodesGenerated = linkingCodes.length;
-      const parentCodesUsed = linkingCodes.filter((c) => c.isUsed).length;
-      const parentCodesNotSent = linkingCodes.filter((c) => !c.isUsed).length;
+      const parentCodesGenerated = scopedLinkingCodes.length;
+      const parentCodesUsed = scopedLinkingCodes.filter((c) => c.isUsed).length;
+      const parentCodesNotSent = scopedLinkingCodes.filter((c) => !c.isUsed).length;
       // Approximate parents linked via used linking codes
       const parentsLinked = parentCodesUsed;
 
-      const pendingPayments = payments.filter((p) => p.status === "pending").length;
-      const paymentsSubmitted = payments.length;
-      const paymentsVerified = payments.filter((p) => p.status === "completed").length;
+      const pendingPayments = scopedPayments.filter((p) => p.status === "pending").length;
+      const paymentsSubmitted = scopedPayments.length;
+      const paymentsVerified = scopedPayments.filter((p) => p.status === "completed").length;
 
-      const allocatedItems = allocations.filter((a: any) => a.status === "allocated");
+      const allocatedItems = scopedAllocations.filter((a: any) => a.status === "allocated");
       const readyForDistribution = allocatedItems.length;
       const teacherConfirmationsPending = allocatedItems.length;
 
-      const extraCopyRequestsPending = extraRequests.filter((r: any) => r.status === "pending").length;
+      const extraCopyRequestsPending = scopedExtraRequests.filter((r: any) => r.status === "pending").length;
 
       const setupChecklist = {
         schoolProfileCompleted: true, // Admin is authenticated — account exists
-        classesCreated: classes.length > 0,
-        booksAdded: books.length > 0,
-        bookBundlesCreated: bookLevels.length > 0,
-        bundlesAssignedToClasses: classBookLevels.length > 0,
-        studentsAdded: students.length > 0,
+        classesCreated: scopedClasses.length > 0,
+        booksAdded: scopedBooks.length > 0,
+        bookBundlesCreated: scopedBookLevels.length > 0,
+        bundlesAssignedToClasses: scopedClassBookLevels.length > 0,
+        studentsAdded: scopedStudents.length > 0,
         parentCodesGenerated: parentCodesGenerated > 0,
         parentsLinked: parentCodesUsed > 0,
         paymentSetupReviewed: paymentsVerified > 0 || paymentsSubmitted > 0,
       };
 
       res.json({
-        totalBooks: books.length,
+        totalBooks: scopedBooks.length,
         lowStockBooks,
-        totalStudents: students.length,
+        totalStudents: scopedStudents.length,
         parentsLinked,
         parentCodesNotSent,
         pendingPayments,
@@ -1245,8 +2632,8 @@ export async function registerRoutes(
         readyForDistribution,
         teacherConfirmationsPending,
         extraCopyRequestsPending,
-        totalClasses: classes.length,
-        totalBookLevels: bookLevels.length,
+        totalClasses: scopedClasses.length,
+        totalBookLevels: scopedBookLevels.length,
         totalLinkingCodes: parentCodesGenerated,
         setupChecklist,
       });
@@ -1286,13 +2673,18 @@ export async function registerRoutes(
   });
 
   // === RECENT ACTIVITY (school-scoped audit log) ===
-  app.get("/api/admin/recent-activity", requireRole("admin", "school_admin"), async (req, res) => {
+  app.get("/api/admin/recent-activity", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const logs = await storage.getAuditLogs(100);
 
-      if (!sid) {
+      if (isPlatformOwnerRequest(req)) {
         return res.json(logs.slice(0, 20));
+      }
+
+      if (!sid) {
+        const own = logs.filter((log) => log.userId === req.session.userId);
+        return res.json(own.slice(0, 20));
       }
 
       const users = await storage.getUsers();
@@ -1319,3 +2711,4 @@ export async function registerRoutes(
 
   return httpServer;
 }
+

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useLocation, useSearch, useRoute } from "wouter";
 import { BookOpen, Eye, EyeOff, UserCheck, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useAuth } from "@/hooks/use-auth";
 
 function getRoleRoute(role: string): string {
-  if (role === "admin" || role === "school_admin") return "/admin";
+  if (role === "school_admin") return "/admin/setup";
+  if (role === "admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
   return "/login";
@@ -16,8 +17,9 @@ function getRoleRoute(role: string): string {
 
 export default function AcceptInvitePage() {
   const search = useSearch();
+  const [pathMatch, pathParams] = useRoute<{ token: string }>("/accept-invite/:token");
   const params = new URLSearchParams(search);
-  const token = params.get("token") || "";
+  const token = (pathMatch ? pathParams?.token : params.get("token")) || "";
 
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -25,14 +27,43 @@ export default function AcceptInvitePage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [validationError, setValidationError] = useState("");
+  const [inviteInfo, setInviteInfo] = useState<any>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
   const { acceptInvite, isAcceptingInvite, acceptInviteError, isAuthenticated, user } = useAuth();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+
+    async function loadInvite() {
+      setInviteLoading(true);
+      try {
+        const res = await fetch(`/api/invites/${encodeURIComponent(token)}`, { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setInviteInfo(data);
+        if (data.inviteeName) setName(data.inviteeName);
+      } catch {
+        // Ignore invite lookup errors here; submission will surface them.
+      } finally {
+        if (!cancelled) setInviteLoading(false);
+      }
+    }
+
+    loadInvite();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (token) return;
     if (isAuthenticated && user) {
       setLocation(getRoleRoute(user.role));
     }
-  }, [isAuthenticated, user, setLocation]);
+  }, [token, isAuthenticated, user, setLocation]);
 
   if (!token) {
     return (
@@ -89,10 +120,21 @@ export default function AcceptInvitePage() {
         <Card>
           <CardHeader className="text-center pb-4">
             <CardTitle className="text-lg">Set Up Your Account</CardTitle>
-            <CardDescription>You've been invited to join EduBook. Complete your profile below.</CardDescription>
+            <CardDescription>
+              {inviteLoading
+                ? "Checking your secure invite..."
+                : inviteInfo?.schoolName
+                  ? `You've been invited to join ${inviteInfo.schoolName}. Complete your profile below.`
+                  : "You've been invited to join EduBook. Complete your profile below."}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {inviteInfo?.email && (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                  Invitation email: <span className="font-medium text-foreground">{inviteInfo.email}</span>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="name">Full Name</Label>
                 <Input id="name" type="text" placeholder="Your full name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />

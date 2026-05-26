@@ -40,6 +40,7 @@ function DashboardSection() {
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
+
   const { data: activity = [], isLoading: activityLoading, error: activityError } = useQuery<any[]>({
     queryKey: ["/api/admin/recent-activity"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -600,6 +601,7 @@ function DashboardSection() {
             { label: "Book Bundles", href: "/admin/levels" },
             { label: "Classes", href: "/admin/classes" },
             { label: "Students", href: "/admin/students" },
+            { label: "Parents", href: "/admin/parents" },
             { label: "Parent Codes", href: "/admin/codes" },
             { label: "Payments", href: "/admin/payments" },
             { label: "Allocations", href: "/admin/allocations" },
@@ -635,17 +637,1057 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge variant="outline" className={`${c.class} text-xs font-medium`}>{c.label}</Badge>;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not available";
+  return date.toLocaleString();
+}
+
+function normalizeRole(role: string | null | undefined) {
+  if (!role) return "unknown";
+  if (role === "admin") return "school_admin";
+  if (role === "owner" || role === "platform_admin" || role === "platform_owner") return "platform_owner";
+  return role;
+}
+
+function roleLabel(role: string | null | undefined) {
+  const normalized = normalizeRole(role);
+  if (normalized === "platform_owner") return "Platform Owner";
+  if (normalized === "school_admin") return "School Admin";
+  if (normalized === "teacher") return "Teacher";
+  if (normalized === "parent") return "Parent";
+  return normalized.replace(/_/g, " ");
+}
+
+function isProtectedPlatformOwner(role: string | null | undefined) {
+  return normalizeRole(role) === "platform_owner";
+}
+
+function SetupSection() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+
+  const { data: setup, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/setup-status"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const completeMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/admin/setup-complete", {});
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({ title: "Setup completed" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const inviteStatusLabel: Record<string, string> = {
+    not_invited: "Not invited",
+    pending: "Invite pending",
+    accepted: "Accepted",
+    expired: "Expired",
+    revoked: "Revoked",
+  };
+
+  const setupStatusLabel: Record<string, string> = {
+    school_created: "School created",
+    pending_admin_invite: "Pending admin invite",
+    pending_admin_acceptance: "Pending admin acceptance",
+    admin_accepted: "Admin accepted",
+    operational_setup_in_progress: "Setup in progress",
+    operational_setup_complete: "Operational setup complete",
+    complete: "Complete",
+    active: "Active",
+  };
+
+  const canGoDashboard = !!setup?.firstAdminAccepted && (setup?.setupStatus === "operational_setup_in_progress" || setup?.setupStatus === "operational_setup_complete" || setup?.setupStatus === "complete" || setup?.setupStatus === "active");
+  const setupComplete = !!setup?.operationalSetupCompleted && !!setup?.schoolActive;
+  const firstInvitePending = setup?.firstAdminInviteStatus === "pending";
+
+  const steps = setup
+    ? [
+        { label: "School created", done: setup.schoolCreated },
+        { label: "First School Admin invited", done: setup.firstAdminInvited },
+        { label: "First School Admin accepted", done: setup.firstAdminAccepted },
+        { label: "Operational setup completed", done: setup.operationalSetupCompleted },
+        { label: "School active", done: setup.schoolActive },
+      ]
+    : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">Continue School Setup</h1>
+          <p className="text-muted-foreground text-sm mt-1">Finish the remaining onboarding steps for your school tenant.</p>
+        </div>
+        {canGoDashboard && (
+          <Button onClick={() => navigateTo("/admin")} variant="outline">Go to Dashboard</Button>
+        )}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card className="border-border/50 shadow-sm">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">School</p>
+            <p className="text-lg font-semibold mt-1">{setup?.school?.name || user?.schoolId || "School setup"}</p>
+            <p className="text-sm text-muted-foreground mt-1">{setup?.school?.code || "Awaiting school details"}</p>
+            <p className="text-sm text-muted-foreground mt-1 capitalize">Status: {(setup?.schoolStatus || setup?.school?.status || "pending_setup").replace(/_/g, " ")}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50 shadow-sm">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">Setup status</p>
+            <p className="text-lg font-semibold mt-1">{setupStatusLabel[setup?.setupStatus || ""] || "Pending"}</p>
+            <p className="text-sm text-muted-foreground mt-1 capitalize">{(setup?.setupStatus || "pending_admin_invite").replace(/_/g, " ")}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50 shadow-sm">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">First admin invite</p>
+            <p className="text-lg font-semibold mt-1">{setup?.firstAdminEmail || setup?.invite?.email || "Not invited"}</p>
+            <p className="text-sm text-muted-foreground mt-1">{inviteStatusLabel[setup?.firstAdminInviteStatus || "not_invited"] || "Not invited"}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {setup && (
+        <Alert className={setupComplete ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}>
+          {setupComplete ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Clock className="h-4 w-4 text-amber-600" />}
+          <AlertTitle>{setupComplete ? "Setup complete" : firstInvitePending ? "Waiting for invite acceptance" : "Setup in progress"}</AlertTitle>
+          <AlertDescription>{setup.nextStep}</AlertDescription>
+        </Alert>
+      )}
+
+      {firstInvitePending && (
+        <Alert className="border-amber-200 bg-amber-50">
+          <Clock className="h-4 w-4 text-amber-600" />
+          <AlertTitle>Waiting for admin to accept invite</AlertTitle>
+          <AlertDescription>
+            The first School Admin invitation is still pending. Ask the owner to resend the invite from the Schools page if needed.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader>
+          <CardTitle>Setup checklist</CardTitle>
+          <CardDescription>Track the handoff from school creation to full operational readiness.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {isLoading && <p className="text-sm text-muted-foreground">Loading setup progress...</p>}
+          {steps.map((step) => (
+            <div key={step.label} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+              <span className="text-sm font-medium">{step.label}</span>
+              <Badge variant="outline" className={step.done ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-amber-100 text-amber-700 border-amber-200"}>
+                {step.done ? "Done" : "Pending"}
+              </Badge>
+            </div>
+          ))}
+
+          {!setupComplete && (
+            <div className="pt-2 flex flex-wrap gap-2">
+              <Button onClick={() => completeMutation.mutate()} disabled={completeMutation.isPending || !setup?.firstAdminAccepted}>
+                {completeMutation.isPending ? "Completing..." : "Mark Setup Complete"}
+              </Button>
+              <Button variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/setup-status"] })}>
+                Refresh Status
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerDashboardSection() {
+  const { data, isLoading, isError, error } = useQuery<any>({
+    queryKey: ["/api/owner/dashboard"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  if (isLoading) {
+    return <Card className="border-border/50 shadow-sm"><CardContent className="py-10 text-center text-muted-foreground">Loading owner dashboard...</CardContent></Card>;
+  }
+
+  if (isError) {
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Owner dashboard unavailable</AlertTitle>
+        <AlertDescription>{(error as Error)?.message || "Please try again."}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  const cards = [
+    { label: "Total schools", value: data?.totalSchools },
+    { label: "Pending setup schools", value: data?.pendingSetupSchools },
+    { label: "Pending admin invite", value: data?.pendingAdminInviteSchools },
+    { label: "Pending admin acceptance", value: data?.pendingAdminAcceptanceSchools },
+    { label: "Setup in progress", value: data?.setupInProgressSchools },
+    { label: "Active schools", value: data?.activeSchools },
+    { label: "Suspended schools", value: data?.suspendedSchools },
+    { label: "Pending first admin invites", value: data?.pendingInvites },
+    { label: "Expired first admin invites", value: data?.expiredInvites },
+    { label: "Schools needing attention", value: data?.schoolsNeedingAttention },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">BytHub Platform Owner</h1>
+          <p className="text-muted-foreground text-sm mt-1">Platform onboarding and school lifecycle control center outside Support Mode.</p>
+        </div>
+        <Button variant="outline" onClick={() => navigateTo("/admin/schools")}>Manage Schools</Button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {cards.map((card) => (
+          <Card key={card.label} className="border-border/50 shadow-sm">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">{card.label}</p>
+              <p className="text-2xl font-bold mt-1">{card.value ?? "Not available"}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader>
+          <CardTitle>Recent setup and support activity</CardTitle>
+          <CardDescription>Latest owner-level onboarding and support actions.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {(data?.recentActivity || []).length === 0 && (
+            <p className="text-sm text-muted-foreground">No recent setup/support activity available.</p>
+          )}
+          {(data?.recentActivity || []).map((item: any) => (
+            <div key={item.id} className="rounded-lg border p-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium capitalize">{String(item.action || "activity").replace(/_/g, " ")}</p>
+                <p className="text-xs text-muted-foreground mt-1">{item.target || "Platform"}</p>
+              </div>
+              <span className="text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerPendingSetupsSection() {
+  const { data, isLoading, isError } = useQuery<any>({
+    queryKey: ["/api/owner/pending-setups"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  if (isLoading) return <Card><CardContent className="py-10 text-center text-muted-foreground">Loading pending setups...</CardContent></Card>;
+  if (isError) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>Failed to load pending setups</AlertTitle></Alert>;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Pending Setups</h1>
+        <p className="text-muted-foreground text-sm mt-1">Schools that are not fully onboarded yet.</p>
+      </div>
+
+      <Card className="border-border/50 shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/30">
+            <TableRow>
+              <TableHead>School</TableHead>
+              <TableHead>Code</TableHead>
+              <TableHead>Setup Status</TableHead>
+              <TableHead>Invite Status</TableHead>
+              <TableHead>First Admin Email</TableHead>
+              <TableHead>Recommended Action</TableHead>
+              <TableHead>Updated</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(data?.items || []).map((item: any) => (
+              <TableRow key={item.schoolId}>
+                <TableCell className="font-medium">{item.schoolName}</TableCell>
+                <TableCell>{item.schoolCode}</TableCell>
+                <TableCell className="capitalize">{String(item.setupStatus || "").replace(/_/g, " ")}</TableCell>
+                <TableCell className="capitalize">{String(item.firstAdminInviteStatus || "").replace(/_/g, " ")}</TableCell>
+                <TableCell>{item.firstAdminEmail || "Not invited"}</TableCell>
+                <TableCell>{item.recommendedNextAction}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.updatedAt)}</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="outline" size="sm" onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(item.schoolId)}`)}>View</Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {(data?.items || []).length === 0 && (
+              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No pending setups.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerAdminInvitesSection() {
+  const { toast } = useToast();
+  const { data: schools = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/owner/schools"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: (inviteId: string) => apiRequest("POST", `/api/owner/invites/${inviteId}/resend`),
+    onSuccess: async (response) => {
+      const payload = await response.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      if (payload.inviteLink && (payload.manualInviteLinkAllowed || import.meta.env.DEV || !payload.emailSent)) {
+        navigator.clipboard.writeText(payload.inviteLink).catch(() => {});
+      }
+      toast({
+        title: "Invite resent",
+        description: payload.emailSent
+          ? "Invite email sent."
+          : "Email sending is not configured. Copy the invite link and send manually.",
+      });
+    },
+    onError: (err: any) => toast({ title: "Resend failed", description: err.message, variant: "destructive" }),
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (inviteId: string) => apiRequest("POST", `/api/owner/invites/${inviteId}/revoke`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      toast({ title: "Invite revoked" });
+    },
+    onError: (err: any) => toast({ title: "Revoke failed", description: err.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return <Card><CardContent className="py-10 text-center text-muted-foreground">Loading invites...</CardContent></Card>;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Admin Invites</h1>
+        <p className="text-muted-foreground text-sm mt-1">Monitor and manage first School Admin invites.</p>
+      </div>
+
+      <Card className="border-border/50 shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/30">
+            <TableRow>
+              <TableHead>School</TableHead>
+              <TableHead>First Admin Email</TableHead>
+              <TableHead>Invite Status</TableHead>
+              <TableHead>Setup Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {schools.map((school: any) => (
+              <TableRow key={school.id}>
+                <TableCell className="font-medium">{school.name}</TableCell>
+                <TableCell>{school.firstAdminEmail || "Not invited"}</TableCell>
+                <TableCell className="capitalize">{String(school.firstAdminInviteStatus || "not_invited").replace(/_/g, " ")}</TableCell>
+                <TableCell className="capitalize">{String(school.setupStatus || "pending_admin_invite").replace(/_/g, " ")}</TableCell>
+                <TableCell className="text-right space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!school.latestInviteId || resendMutation.isPending}
+                    onClick={() => school.latestInviteId && resendMutation.mutate(school.latestInviteId)}
+                  >
+                    Resend
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!school.latestInviteId || revokeMutation.isPending || school.firstAdminInviteStatus === "accepted"}
+                    onClick={() => school.latestInviteId && revokeMutation.mutate(school.latestInviteId)}
+                  >
+                    Revoke
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}>View</Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {schools.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No schools available.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerEmailStatusSection() {
+  const { data, isLoading, isError } = useQuery<any>({
+    queryKey: ["/api/owner/email-status"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  if (isLoading) return <Card><CardContent className="py-10 text-center text-muted-foreground">Loading email status...</CardContent></Card>;
+  if (isError) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>Failed to load email status</AlertTitle></Alert>;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Email Status</h1>
+        <p className="text-muted-foreground text-sm mt-1">Invite delivery and manual fallback monitoring.</p>
+      </div>
+
+      <Alert className={data?.emailConfigured ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}>
+        {data?.emailConfigured ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+        <AlertTitle>Email configured: {data?.emailConfigured ? "Yes" : "No"}</AlertTitle>
+        <AlertDescription>{data?.message}</AlertDescription>
+      </Alert>
+
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader>
+          <CardTitle>Recent first-admin invites</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {(data?.recentInvites || []).length === 0 && <p className="text-sm text-muted-foreground">No invite activity available.</p>}
+          {(data?.recentInvites || []).map((invite: any) => (
+            <div key={invite.inviteId} className="rounded-lg border p-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">{invite.schoolName}</p>
+                <p className="text-xs text-muted-foreground mt-1">{invite.email} · {String(invite.status || "pending").replace(/_/g, " ")}</p>
+              </div>
+              <span className="text-xs text-muted-foreground">{formatDateTime(invite.createdAt)}</span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerActivitySection() {
+  const { data, isLoading, isError } = useQuery<any>({
+    queryKey: ["/api/owner/activity"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  if (isLoading) return <Card><CardContent className="py-10 text-center text-muted-foreground">Loading activity logs...</CardContent></Card>;
+  if (isError) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>Failed to load activity logs</AlertTitle></Alert>;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Activity Logs</h1>
+        <p className="text-muted-foreground text-sm mt-1">Owner-level audit events for onboarding and support actions.</p>
+      </div>
+
+      <Card className="border-border/50 shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/30">
+            <TableRow>
+              <TableHead>Action</TableHead>
+              <TableHead>Target</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>Timestamp</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(data?.items || []).map((item: any) => (
+              <TableRow key={item.id}>
+                <TableCell className="capitalize">{String(item.action || "").replace(/_/g, " ")}</TableCell>
+                <TableCell>{item.target || "Platform"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{item.actorUserId || "System"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.timestamp)}</TableCell>
+              </TableRow>
+            ))}
+            {(data?.items || []).length === 0 && (
+              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No activity available.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerSettingsSection() {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/owner/email-status"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Owner Settings</h1>
+        <p className="text-muted-foreground text-sm mt-1">Platform-level owner controls and protected account state.</p>
+      </div>
+
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader>
+          <CardTitle>Platform profile</CardTitle>
+          <CardDescription>Read-only owner-level settings in this build.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p><span className="font-medium">Organisation:</span> BytHub</p>
+          <p><span className="font-medium">Support email configured:</span> {data?.emailConfigured ? "Yes" : "No"}</p>
+          <p><span className="font-medium">Invite expiry:</span> 7 days</p>
+          <p><span className="font-medium">Owner account:</span> Protected from standard role-change and delete flows</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OwnerSchoolDetailsSection() {
+  const params = new URLSearchParams(window.location.search);
+  const schoolId = params.get("schoolId") || "";
+
+  const { data, isLoading, isError } = useQuery<any>({
+    queryKey: ["/api/owner/schools/detail", schoolId],
+    queryFn: async () => {
+      const res = await fetch(`/api/owner/schools/${encodeURIComponent(schoolId)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load school details");
+      return res.json();
+    },
+    enabled: !!schoolId,
+  });
+
+  if (!schoolId) {
+    return <Alert><AlertTitle>No school selected</AlertTitle><AlertDescription>Select a school from the Schools page.</AlertDescription></Alert>;
+  }
+
+  if (isLoading) return <Card><CardContent className="py-10 text-center text-muted-foreground">Loading school details...</CardContent></Card>;
+  if (isError) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>Failed to load school details</AlertTitle></Alert>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">{data.name}</h1>
+          <p className="text-muted-foreground text-sm mt-1">School details, setup lifecycle, and first admin status.</p>
+        </div>
+        <Button variant="outline" onClick={() => navigateTo("/admin/schools")}>Back to Schools</Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">School code</p><p className="text-lg font-semibold mt-1">{data.code}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">School status</p><p className="text-lg font-semibold mt-1 capitalize">{String(data.status || "pending_setup").replace(/_/g, " ")}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Setup status</p><p className="text-lg font-semibold mt-1 capitalize">{String(data.setupStatus || "pending_admin_invite").replace(/_/g, " ")}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">First admin email</p><p className="text-sm font-medium mt-1">{data.firstAdminEmail || "Not invited"}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Invite status</p><p className="text-sm font-medium mt-1 capitalize">{String(data.firstAdminInviteStatus || "not_invited").replace(/_/g, " ")}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Updated</p><p className="text-sm font-medium mt-1">{formatDateTime(data.updatedAt)}</p></CardContent></Card>
+      </div>
+    </div>
+  );
+}
+
+function SchoolsSection() {
+  const { toast } = useToast();
+  const { enterSupportMode, isEnteringSupport } = useAuth();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [selectedSchool, setSelectedSchool] = useState<any>(null);
+  const [inviteSummary, setInviteSummary] = useState<{ schoolName: string; inviteLink: string; emailSent: boolean; manualInviteLinkAllowed?: boolean } | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    code: "",
+    status: "pending_setup",
+    firstAdminName: "",
+    firstAdminEmail: "",
+    contactEmail: "",
+    contactPhone: "",
+    address: "",
+    notes: "",
+  });
+
+  async function handleEnterSupport(schoolId: string) {
+    try {
+      await enterSupportMode(schoolId);
+      toast({ title: "Support mode activated" });
+      navigateTo("/admin");
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  const { data: schools = [] } = useQuery<any[]>({
+    queryKey: ["/api/owner/schools"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const schoolResponse = await apiRequest("POST", "/api/owner/schools", data.school);
+      const school = await schoolResponse.json();
+      let invite: any = null;
+      if (data.firstAdminName && data.firstAdminEmail) {
+        const inviteResponse = await apiRequest("POST", `/api/owner/schools/${school.id}/invite-admin`, {
+          adminName: data.firstAdminName,
+          adminEmail: data.firstAdminEmail,
+        });
+        invite = await inviteResponse.json();
+      }
+      return { school, invite };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/dashboard"] });
+      setAddOpen(false);
+      if (result.invite) {
+        setInviteSummary({
+          schoolName: result.school.name,
+          inviteLink: result.invite.inviteLink,
+          emailSent: result.invite.emailSent,
+          manualInviteLinkAllowed: result.invite.manualInviteLinkAllowed,
+        });
+      }
+      if (result.invite?.inviteLink && (result.invite.manualInviteLinkAllowed || import.meta.env.DEV || !result.invite.emailSent)) {
+        navigator.clipboard.writeText(result.invite.inviteLink).catch(() => {});
+      }
+      toast({
+        title: "School created",
+        description: result.invite
+          ? result.invite.emailSent
+            ? "The first School Admin invitation has been sent."
+            : "Invitation email was not sent; the setup link was copied for manual sharing."
+          : "School created in pending setup. Send the first admin invite when ready.",
+      });
+      resetForm();
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", `/api/owner/schools/${selectedSchool?.id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/dashboard"] });
+      setEditOpen(false);
+      toast({ title: "School updated" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/owner/schools/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/dashboard"] });
+      toast({ title: "School deleted" });
+    },
+    onError: (err: any) => toast({ title: "Delete blocked", description: err.message, variant: "destructive" }),
+  });
+
+  const inviteAdminMutation = useMutation({
+    mutationFn: ({ schoolId, adminName, adminEmail }: { schoolId: string; adminName: string; adminEmail: string }) =>
+      apiRequest("POST", `/api/owner/schools/${schoolId}/invite-admin`, { adminName, adminEmail }),
+    onSuccess: async (response) => {
+      const payload = await response.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/dashboard"] });
+      setInviteSummary({
+        schoolName: payload.school?.name || "School",
+        inviteLink: payload.inviteLink,
+        emailSent: payload.emailSent,
+        manualInviteLinkAllowed: payload.manualInviteLinkAllowed,
+      });
+      toast({
+        title: "Invite sent",
+        description: payload.emailSent
+          ? "First School Admin invite was sent."
+          : "Email is not configured; copy and share the secure invite link.",
+      });
+    },
+    onError: (err: any) => toast({ title: "Invite failed", description: err.message, variant: "destructive" }),
+  });
+
+  function resetForm() {
+    setForm({
+      name: "",
+      code: "",
+      status: "pending_setup",
+      firstAdminName: "",
+      firstAdminEmail: "",
+      contactEmail: "",
+      contactPhone: "",
+      address: "",
+      notes: "",
+    });
+  }
+
+  function badgeClass(status: string) {
+    if (status === "active") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+    if (status === "pending_setup") return "bg-amber-100 text-amber-700 border-amber-200";
+    if (status === "suspended") return "bg-red-100 text-red-700 border-red-200";
+    return "";
+  }
+
+  function setupBadge(status: string) {
+    if (status === "complete" || status === "active" || status === "operational_setup_complete") {
+      return { label: "Complete", cls: badgeClass("active") };
+    }
+    if (status === "operational_setup_in_progress" || status === "admin_accepted") {
+      return { label: "Setup in progress", cls: badgeClass("pending_setup") };
+    }
+    if (status === "pending_admin_acceptance") {
+      return { label: "Pending admin acceptance", cls: badgeClass("pending_setup") };
+    }
+    if (status === "pending_admin_invite" || status === "school_created") {
+      return { label: "Pending admin invite", cls: badgeClass("pending_setup") };
+    }
+    return { label: status || "Unknown", cls: badgeClass("pending_setup") };
+  }
+
+  function inviteStatusLabel(status: string | null | undefined) {
+    if (!status || status === "not_invited") return "Not invited";
+    if (status === "pending") return "Invite pending";
+    if (status === "accepted") return "Accepted";
+    if (status === "expired") return "Expired";
+    if (status === "revoked") return "Revoked";
+    return status;
+  }
+
+  const filtered = schools.filter((school: any) => {
+    const q = search.toLowerCase();
+    const matchesSearch = (
+      school.name?.toLowerCase().includes(q) ||
+      school.code?.toLowerCase().includes(q) ||
+      school.contactEmail?.toLowerCase().includes(q)
+    );
+
+    const setup = String(school.setupStatus || "");
+    const invite = String(school.firstAdminInviteStatus || "");
+    const schoolStatus = String(school.status || "");
+    const matchesFilter = statusFilter === "all"
+      ? true
+      : statusFilter === "pending_setup"
+        ? schoolStatus === "pending_setup"
+        : statusFilter === "pending_admin_invite"
+          ? setup === "pending_admin_invite" || setup === "school_created" || invite === "not_invited"
+          : statusFilter === "pending_admin_acceptance"
+            ? setup === "pending_admin_acceptance" || invite === "pending" || invite === "expired"
+            : statusFilter === "setup_in_progress"
+              ? setup === "admin_accepted" || setup === "operational_setup_in_progress"
+              : statusFilter === "active"
+                ? schoolStatus === "active"
+                : statusFilter === "suspended"
+                  ? schoolStatus === "suspended"
+                  : true;
+
+    return matchesSearch && matchesFilter;
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">Schools</h1>
+          <p className="text-muted-foreground text-sm mt-1">Create and manage school tenants, lifecycle status, and contact details.</p>
+        </div>
+        <Button onClick={() => { resetForm(); setAddOpen(true); }}>
+          <Plus className="w-4 h-4 mr-2" /> Add School
+        </Button>
+      </div>
+
+      {inviteSummary && (
+        <Alert className="border-emerald-200 bg-emerald-50">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          <AlertTitle>First School Admin invite prepared for {inviteSummary.schoolName}</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>
+              {inviteSummary.emailSent
+                ? "The invite email was sent successfully."
+                : "The invite email was not sent, so the secure setup link is ready for manual delivery."}
+            </p>
+            {(inviteSummary.manualInviteLinkAllowed || import.meta.env.DEV || !inviteSummary.emailSent) && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard.writeText(inviteSummary.inviteLink).then(() => {
+                      toast({ title: "Invite link copied" });
+                    }).catch(() => {
+                      toast({ title: "Copy failed", description: inviteSummary.inviteLink, variant: "destructive" });
+                    });
+                  }}
+                >
+                  Copy setup link
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setInviteSummary(null)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative max-w-sm w-full">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input type="search" placeholder="Search schools..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-[260px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="pending_setup">Pending setup</SelectItem>
+            <SelectItem value="pending_admin_invite">Pending admin invite</SelectItem>
+            <SelectItem value="pending_admin_acceptance">Pending admin acceptance</SelectItem>
+            <SelectItem value="setup_in_progress">Setup in progress</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="suspended">Suspended</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <Card className="border-border/50 shadow-sm">
+        <Table>
+          <TableHeader className="bg-muted/30">
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Code</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Setup</TableHead>
+              <TableHead>First Admin</TableHead>
+              <TableHead>Invite Status</TableHead>
+              <TableHead>Contact Email</TableHead>
+              <TableHead>Admins</TableHead>
+              <TableHead>Teachers</TableHead>
+              <TableHead>Parents</TableHead>
+              <TableHead>Students</TableHead>
+              <TableHead>Books</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map((school: any) => (
+              <TableRow key={school.id}>
+                <TableCell className="font-medium">{school.name}</TableCell>
+                <TableCell className="text-muted-foreground">{school.code}</TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={badgeClass(school.status)}>{school.status || "unknown"}</Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={setupBadge(school.setupStatus).cls}>
+                    {setupBadge(school.setupStatus).label}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-xs">{school.firstAdminEmail || "Not invited"}</TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={badgeClass(school.firstAdminInviteStatus === "accepted" ? "active" : school.firstAdminInviteStatus === "pending" ? "pending_setup" : "suspended")}>
+                    {inviteStatusLabel(school.firstAdminInviteStatus)}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs">{school.contactEmail || "Not available"}</TableCell>
+                <TableCell>{school.counts?.admins ?? 0}</TableCell>
+                <TableCell>{school.counts?.teachers ?? 0}</TableCell>
+                <TableCell>{school.counts?.parents ?? 0}</TableCell>
+                <TableCell>{school.counts?.students ?? 0}</TableCell>
+                <TableCell>{school.counts?.books ?? 0}</TableCell>
+                <TableCell className="text-right space-x-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}
+                  >
+                    View
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                    disabled={inviteAdminMutation.isPending}
+                    onClick={() => {
+                      const adminName = school.firstAdminName || window.prompt("First School Admin full name:") || "";
+                      const adminEmail = school.firstAdminEmail || window.prompt("First School Admin email:") || "";
+                      if (!adminName || !adminEmail) return;
+                      inviteAdminMutation.mutate({ schoolId: school.id, adminName, adminEmail });
+                    }}
+                  >
+                    {school.firstAdminInviteStatus === "pending" ? "Resend" : "Invite Admin"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}
+                  >
+                    Setup Status
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                    disabled={isEnteringSupport}
+                    onClick={() => handleEnterSupport(school.id)}
+                  >
+                    {isEnteringSupport ? "Entering..." : "Support"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedSchool(school);
+                      setForm({
+                        name: school.name || "",
+                        code: school.code || "",
+                        status: school.status || "pending_setup",
+                        firstAdminName: "",
+                        firstAdminEmail: "",
+                        contactEmail: school.contactEmail || "",
+                        contactPhone: school.contactPhone || "",
+                        address: school.address || "",
+                        notes: school.notes || "",
+                      });
+                      setEditOpen(true);
+                    }}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedSchool(school);
+                      updateMutation.mutate({ status: school.status === "suspended" ? "active" : "suspended" });
+                    }}
+                  >
+                    {school.status === "suspended" ? "Activate" : "Suspend"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    onClick={() => {
+                      if (window.confirm(`Delete school ${school.name}? This only works if no related data exists.`)) {
+                        deleteMutation.mutate(school.id);
+                      }
+                    }}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {filtered.length === 0 && (
+              <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-8">{search ? "No matching schools" : "No schools found"}</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Add School</DialogTitle>
+            <DialogDescription>Create a new tenant, then invite the first School Admin to continue setup.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="grid gap-2"><Label>School Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="grid gap-2"><Label>School Code</Label><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="e.g. HILLTOP-PRIMARY" /></div>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">Status will be created as Pending Setup by default.</div>
+            <div className="grid gap-2">
+              <Label>First School Admin Name (optional)</Label>
+              <Input value={form.firstAdminName} onChange={(e) => setForm({ ...form, firstAdminName: e.target.value })} placeholder="Full name of the first School Admin" />
+            </div>
+            <div className="grid gap-2">
+              <Label>First School Admin Email (optional)</Label>
+              <Input type="email" value={form.firstAdminEmail} onChange={(e) => setForm({ ...form, firstAdminEmail: e.target.value })} placeholder="admin@school.edu" />
+            </div>
+            <div className="grid gap-2"><Label>Contact Email</Label><Input type="email" value={form.contactEmail} onChange={(e) => setForm({ ...form, contactEmail: e.target.value })} /></div>
+            <div className="grid gap-2"><Label>Contact Phone</Label><Input value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} /></div>
+            <div className="grid gap-2"><Label>Address</Label><Textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={2} /></div>
+            <div className="grid gap-2"><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} /></div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => createMutation.mutate({
+              school: {
+                name: form.name,
+                code: form.code,
+                contactEmail: form.contactEmail || null,
+                contactPhone: form.contactPhone || null,
+                address: form.address || null,
+                notes: form.notes || null,
+              },
+              firstAdminName: form.firstAdminName,
+              firstAdminEmail: form.firstAdminEmail,
+            })} disabled={createMutation.isPending || !form.name || !form.code}>
+              {createMutation.isPending ? "Creating..." : "Create School"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Edit School</DialogTitle>
+            <DialogDescription>Update school identity, lifecycle status, and owner notes.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="grid gap-2"><Label>School Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="grid gap-2"><Label>School Code</Label><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
+            <div className="grid gap-2">
+              <Label>Status</Label>
+              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending_setup">Pending setup</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="suspended">Suspended</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2"><Label>Contact Email</Label><Input type="email" value={form.contactEmail} onChange={(e) => setForm({ ...form, contactEmail: e.target.value })} /></div>
+            <div className="grid gap-2"><Label>Contact Phone</Label><Input value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} /></div>
+            <div className="grid gap-2"><Label>Address</Label><Textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={2} /></div>
+            <div className="grid gap-2"><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} /></div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => updateMutation.mutate(form)}
+              disabled={updateMutation.isPending || !form.name || !form.code}
+            >
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 // ─── USERS ─────────────────────────────────────────────────────
 function UsersSection() {
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [search, setSearch] = useState("");
-  const [form, setForm] = useState({ username: "", password: "", name: "", role: "teacher", email: "" });
+  const [schoolFilter, setSchoolFilter] = useState("all");
+  const [form, setForm] = useState({ username: "", password: "", name: "", email: "" });
+  const [inviteRole, setInviteRole] = useState("teacher");
 
-  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/admin/users"], queryFn: getQueryFn({ on401: "throw" }) });
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/invites", { email: data.email, role: data.role }),
@@ -659,24 +1701,29 @@ function UsersSection() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("PATCH", `/api/users/${selectedUser?.id}`, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/users"] }); setEditOpen(false); toast({ title: "User updated successfully" }); },
+    mutationFn: (data: any) => apiRequest("PATCH", `/api/admin/users/${selectedUser?.id}`, data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] }); setEditOpen(false); toast({ title: "User updated successfully" }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", `/api/users/${selectedUser?.id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/users"] }); setDeleteOpen(false); toast({ title: "User deleted successfully" }); },
+    mutationFn: () => apiRequest("DELETE", `/api/admin/users/${selectedUser?.id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] }); setDeleteOpen(false); toast({ title: "User deleted successfully" }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
-  function resetForm() { setForm({ username: "", password: "", name: "", role: "teacher", email: "" }); }
+  function resetForm() {
+    setForm({ username: "", password: "", name: "", email: "" });
+    setInviteRole("teacher");
+  }
 
   const filtered = users.filter((u: any) =>
     u.name?.toLowerCase().includes(search.toLowerCase()) ||
     u.username?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  ).filter((u: any) => schoolFilter === "all" ? true : (u.schoolId || "Not available") === schoolFilter);
+
+  const schoolOptions = Array.from(new Set(users.map((u: any) => u.schoolId || "Not available")));
 
   return (
     <div className="space-y-4">
@@ -690,9 +1737,22 @@ function UsersSection() {
         </Button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input type="search" placeholder="Search users..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative max-w-sm w-full">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input type="search" placeholder="Search users..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        {(normalizeRole(currentUser?.role) === "platform_owner") && (
+          <Select value={schoolFilter} onValueChange={setSchoolFilter}>
+            <SelectTrigger className="w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All schools</SelectItem>
+              {schoolOptions.map((sid) => (
+                <SelectItem key={sid} value={sid}>{sid}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <Card className="border-border/50 shadow-sm">
@@ -703,6 +1763,11 @@ function UsersSection() {
               <TableHead>Username</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>School</TableHead>
+              <TableHead>Linked Children</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Last Login</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -713,22 +1778,35 @@ function UsersSection() {
                 <TableCell className="text-muted-foreground">{u.username}</TableCell>
                 <TableCell className="text-muted-foreground">{u.email || "—"}</TableCell>
                 <TableCell>
-                  <Badge variant={u.role === "admin" ? "default" : u.role === "teacher" ? "secondary" : "outline"}>
-                    {u.role}
+                  <Badge variant={isProtectedPlatformOwner(u.role) ? "default" : normalizeRole(u.role) === "teacher" ? "secondary" : "outline"}>
+                    {roleLabel(u.role)}
                   </Badge>
                 </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={u.status === "active" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : ""}>
+                    {u.status || "unknown"}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs">{u.schoolId || "Not available"}</TableCell>
+                <TableCell>{u.linkedChildrenCount ?? 0}</TableCell>
+                <TableCell className="text-muted-foreground text-xs">{formatDateTime(u.createdAt)}</TableCell>
+                <TableCell className="text-muted-foreground text-xs">{formatDateTime(u.lastLoginAt)}</TableCell>
                 <TableCell className="text-right space-x-1">
-                  <Button variant="ghost" size="sm" onClick={() => { setSelectedUser(u); setForm({ username: u.username || "", password: "", name: u.name || "", role: u.role || "teacher", email: u.email || "" }); setEditOpen(true); }}>
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedUser(u); setDeleteOpen(true); }}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {!isProtectedPlatformOwner(u.role) && (
+                    <Button variant="ghost" size="sm" onClick={() => { setSelectedUser(u); setForm({ username: u.username || "", password: "", name: u.name || "", email: u.email || "" }); setEditOpen(true); }}>
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                  )}
+                  {currentUser?.id !== u.id && !isProtectedPlatformOwner(u.role) && (
+                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedUser(u); setDeleteOpen(true); }}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
             {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">{search ? "No matching users" : "No users found"}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">{search ? "No matching users" : "No users found"}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -744,7 +1822,7 @@ function UsersSection() {
             <div className="grid gap-2"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="e.g. sarah@school.edu" /></div>
             <div className="grid gap-2">
               <Label>Role</Label>
-              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+              <Select value={inviteRole} onValueChange={setInviteRole}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="teacher">Teacher</SelectItem>
@@ -754,7 +1832,7 @@ function UsersSection() {
             </div>
           </div>
           <DialogFooter>
-            <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending || !form.email}>
+            <Button onClick={() => createMutation.mutate({ email: form.email, role: inviteRole })} disabled={createMutation.isPending || !form.email}>
               {createMutation.isPending ? "Sending..." : "Send Invite"}
             </Button>
           </DialogFooter>
@@ -765,28 +1843,30 @@ function UsersSection() {
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Edit User</DialogTitle>
-            <DialogDescription>Update user details. Leave password blank to keep unchanged.</DialogDescription>
+            <DialogDescription>Update user details. Role changes are restricted to secure onboarding workflows.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2"><Label>Full Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="grid gap-2"><Label>Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
             <div className="grid gap-2"><Label>New Password</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Leave blank to keep current" /></div>
             <div className="grid gap-2"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-            <div className="grid gap-2">
-              <Label>Role</Label>
-              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="teacher">Teacher</SelectItem>
-                  <SelectItem value="parent">Parent</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {currentUser?.id === selectedUser?.id ? (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Role locked</AlertTitle>
+                <AlertDescription>You cannot change your own admin role.</AlertDescription>
+              </Alert>
+            ) : (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Role changes disabled</AlertTitle>
+                <AlertDescription>Use invite and onboarding workflows to assign parent, teacher, or admin roles safely.</AlertDescription>
+              </Alert>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={() => {
-              const payload: any = { name: form.name, username: form.username, email: form.email, role: form.role };
+              const payload: any = { name: form.name, username: form.username, email: form.email };
               if (form.password) payload.password = form.password;
               updateMutation.mutate(payload);
             }} disabled={updateMutation.isPending}>
@@ -808,6 +1888,171 @@ function UsersSection() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function ParentsSection() {
+  const { user: currentUser } = useAuth();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [schoolFilter, setSchoolFilter] = useState<string>("all");
+
+  const endpoint = (() => {
+    const params = new URLSearchParams();
+    if (schoolFilter !== "all") params.set("schoolId", schoolFilter);
+    const query = params.toString();
+    return query ? `/api/admin/parents?${query}` : "/api/admin/parents";
+  })();
+
+  const {
+    data: parents = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery<any[]>({
+    queryKey: ["/api/admin/parents", schoolFilter],
+    queryFn: async () => {
+      const res = await fetch(endpoint, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load parents");
+      return res.json();
+    },
+  });
+
+  const filtered = parents.filter((p: any) => {
+    const q = search.toLowerCase();
+    const matchesSearch =
+      p.name?.toLowerCase().includes(q) ||
+      p.email?.toLowerCase().includes(q) ||
+      p.username?.toLowerCase().includes(q);
+    const matchesStatus =
+      statusFilter === "all" ? true
+      : statusFilter === "linked" ? (p.linkedChildrenCount ?? 0) > 0
+      : statusFilter === "unlinked" ? (p.linkedChildrenCount ?? 0) === 0
+      : statusFilter === "pending-signup" ? p.parentStatus === "invited"
+      : statusFilter === "invite-pending" ? p.signupStatus === "Invite pending"
+      : statusFilter === "unpaid" ? (p.unpaidBasketsCount ?? 0) > 0
+      : statusFilter === "awaiting-collection" ? (p.paidAwaitingCollectionCount ?? 0) > 0
+      : statusFilter === "completed-handover" ? p.collectionStatus === "completed"
+      : p.parentStatus === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const schools = Array.from(new Set(parents.map((p: any) => p.schoolId).filter(Boolean))).sort();
+
+  const totalLinkedChildren = parents.reduce((acc, p: any) => acc + (p.linkedChildrenCount || 0), 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div>
+          <h1 className="text-2xl font-heading font-bold tracking-tight">Parents</h1>
+          <p className="text-muted-foreground text-sm mt-1">Monitor parent accounts, child links, and payment readiness.</p>
+        </div>
+        <div className="flex gap-2">
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">Parents: {parents.length}</Badge>
+          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Linked Children: {totalLinkedChildren}</Badge>
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative max-w-sm w-full">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input type="search" placeholder="Search parents..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        {normalizeRole(currentUser?.role) === "platform_owner" && (
+          <Select value={schoolFilter} onValueChange={setSchoolFilter}>
+            <SelectTrigger className="w-full sm:w-[200px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Schools</SelectItem>
+              {schools.map((sid) => (
+                <SelectItem key={sid} value={sid}>{sid}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="linked">Linked parents</SelectItem>
+            <SelectItem value="unlinked">Unlinked parents</SelectItem>
+            <SelectItem value="pending-signup">Pending signup</SelectItem>
+            <SelectItem value="invite-pending">Invite pending</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="invited">Invited</SelectItem>
+            <SelectItem value="unpaid">Unpaid baskets/orders</SelectItem>
+            <SelectItem value="awaiting-collection">Paid awaiting collection</SelectItem>
+            <SelectItem value="completed-handover">Completed handover</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {isLoading && (
+        <Card className="border-border/50 shadow-sm">
+          <CardContent className="py-10 text-center text-muted-foreground">Loading parent accounts...</CardContent>
+        </Card>
+      )}
+
+      {isError && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Could not load parents</AlertTitle>
+          <AlertDescription>{(error as Error)?.message || "Please try again."}</AlertDescription>
+        </Alert>
+      )}
+
+      {!isLoading && !isError && (
+        <Card className="border-border/50 shadow-sm">
+          <Table>
+            <TableHeader className="bg-muted/30">
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>School</TableHead>
+                <TableHead>Linked Children</TableHead>
+                <TableHead>Linked Student Names</TableHead>
+                <TableHead>Payments</TableHead>
+                <TableHead>Last Payment</TableHead>
+                <TableHead>Signup/Invite</TableHead>
+                <TableHead>Collection</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Last Login</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((parent: any) => (
+                <TableRow key={parent.id}>
+                  <TableCell className="font-medium">{parent.name || "Not available"}</TableCell>
+                  <TableCell className="text-muted-foreground">{parent.email || "Not available"}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={parent.parentStatus === "active" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : ""}>
+                      {parent.parentStatus || "unknown"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{parent.schoolId || "Not available"}</TableCell>
+                  <TableCell>{parent.linkedChildrenCount ?? 0}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {(parent.linkedStudents || []).length > 0
+                      ? parent.linkedStudents.map((s: any) => s.name).filter(Boolean).join(", ")
+                      : "Not available"}
+                  </TableCell>
+                  <TableCell>{parent.completedPaymentsCount ?? 0}/{parent.paymentsCount ?? 0}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{formatDateTime(parent.lastPaymentAt)}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{parent.signupStatus || "Not available"}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{parent.collectionStatus || "Not available"}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{formatDateTime(parent.createdAt)}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{formatDateTime(parent.lastLoginAt)}</TableCell>
+                </TableRow>
+              ))}
+              {filtered.length === 0 && (
+                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-8">{search || statusFilter !== "all" ? "No matching parents found" : "No parent accounts found"}</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
     </div>
   );
 }
@@ -1819,12 +3064,26 @@ function ExtraRequestsSection() {
 
 // ─── MAIN ADMIN PAGE ───────────────────────────────────────────
 export default function AdminPage({ section }: { section: string }) {
+  const { user } = useAuth();
+  const requesterIsOwner = normalizeRole(user?.role) === "platform_owner";
+  const inSupportMode = requesterIsOwner && user?.supportMode?.active;
+
   const sections: Record<string, React.ReactNode> = {
+    owner: <OwnerDashboardSection />,
+    schools: <SchoolsSection />,
+    "school-details": <OwnerSchoolDetailsSection />,
+    "pending-setups": <OwnerPendingSetupsSection />,
+    "admin-invites": <OwnerAdminInvitesSection />,
+    "email-status": <OwnerEmailStatusSection />,
+    activity: <OwnerActivitySection />,
+    "owner-settings": <OwnerSettingsSection />,
+    setup: <SetupSection />,
     dashboard: <DashboardSection />,
     books: <BooksSection />,
     levels: <BookLevelsSection />,
     classes: <ClassesSection />,
     students: <StudentsSection />,
+    parents: <ParentsSection />,
     codes: <LinkingCodesSection />,
     payments: <PaymentsSection />,
     allocations: <AllocationsSection />,
@@ -1832,9 +3091,28 @@ export default function AdminPage({ section }: { section: string }) {
     users: <UsersSection />,
   };
 
+  let resolvedSection = section;
+  const ownerOnlySections = new Set(["owner", "schools", "school-details", "pending-setups", "admin-invites", "email-status", "activity", "owner-settings"]);
+
+  // Non-owners cannot access owner sections
+  if (ownerOnlySections.has(section) && !requesterIsOwner) {
+    resolvedSection = "dashboard";
+  }
+
+  // Outside support mode, owner account stays in owner-control pages only
+  if (requesterIsOwner && !inSupportMode && !ownerOnlySections.has(section)) {
+    resolvedSection = "owner";
+  }
+
+  // In support mode: redirect owner-only sections to school dashboard
+  // Owner sees school admin pages, not the platform dashboard
+  if (inSupportMode && ownerOnlySections.has(section)) {
+    resolvedSection = "dashboard";
+  }
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-      {sections[section] || <DashboardSection />}
+      {sections[resolvedSection] || <DashboardSection />}
     </div>
   );
 }

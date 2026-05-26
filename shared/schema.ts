@@ -17,6 +17,39 @@ export const LEGACY_ROLE_MAP: Record<string, UserRole> = {
   parent: "parent",
 };
 
+export const SCHOOL_STATUSES = ["active", "pending_setup", "suspended"] as const;
+export type SchoolStatus = (typeof SCHOOL_STATUSES)[number];
+
+export const SCHOOL_SETUP_STATUSES = [
+  "school_created",
+  "pending_admin_invite",
+  "pending_admin_acceptance",
+  "admin_accepted",
+  "operational_setup_in_progress",
+  "operational_setup_complete",
+  "complete",
+  "active",
+] as const;
+export type SchoolSetupStatus = (typeof SCHOOL_SETUP_STATUSES)[number];
+
+export const schools = pgTable("schools", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  name: text("name").notNull(),
+  code: text("code").unique().notNull(),
+  status: text("status").default("active").notNull(),
+  setupStatus: text("setup_status").default("pending_admin_invite").notNull(),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  address: text("address"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSchoolSchema = createInsertSchema(schools).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertSchool = z.infer<typeof insertSchoolSchema>;
+export type School = typeof schools.$inferSelect;
+
 export const users = pgTable("users", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   username: text("username").unique().notNull(),
@@ -40,6 +73,7 @@ export type User = typeof users.$inferSelect;
 export const invites = pgTable("invites", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   email: text("email").notNull(),
+  inviteeName: text("invitee_name"),
   role: text("role").notNull(),
   schoolId: varchar("school_id", { length: 36 }),
   tokenHash: text("token_hash").notNull(),

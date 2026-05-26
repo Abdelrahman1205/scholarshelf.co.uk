@@ -8,7 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useAuth } from "@/hooks/use-auth";
 
 function getRoleRoute(role: string): string {
-  if (role === "admin" || role === "school_admin") return "/admin";
+  if (role === "owner" || role === "platform_admin") return "/admin/owner";
+  if (role === "school_admin") return "/admin";
+  if (role === "admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
   return "/login";
@@ -137,8 +139,9 @@ export default function LoginPage() {
 
             <div className="mt-6 pt-4 border-t border-border">
               <p className="text-xs text-muted-foreground text-center mb-3">Demo Accounts</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
+                  { label: "BytHub", username: "bythub", password: "bythub123" },
                   { label: "Admin", username: "admin", password: "admin123" },
                   { label: "Teacher", username: "teacher", password: "teacher123" },
                   { label: "Parent", username: "parent", password: "parent123" },

@@ -13,6 +13,9 @@ declare module "express-session" {
     userId: string;
     role: string;
     schoolId: string | null;
+    /** Support mode: owner enters a school context for troubleshooting */
+    supportSchoolId: string | null;
+    supportSchoolName: string | null;
   }
 }
 
@@ -25,6 +28,25 @@ declare module "http" {
 type CreateAppOptions = {
   serverless?: boolean;
 };
+
+async function ensureBootstrapSchema() {
+  if (!process.env.DATABASE_URL) return;
+
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+
+  try {
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS setup_status text NOT NULL DEFAULT 'pending_admin_invite'`);
+    await pool.query(`UPDATE schools SET setup_status = CASE WHEN status = 'active' THEN 'active' ELSE 'pending_admin_invite' END WHERE setup_status IS NULL OR setup_status = ''`);
+    await pool.query(`ALTER TABLE invites ADD COLUMN IF NOT EXISTS invitee_name text`);
+  } catch (error) {
+    console.warn("Schema bootstrap warning:", error);
+  } finally {
+    await pool.end().catch(() => {});
+  }
+}
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -110,6 +132,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       },
     }),
   );
+
+  await ensureBootstrapSchema();
 
   await registerRoutes(httpServer, app);
 

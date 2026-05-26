@@ -2,6 +2,12 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 
+export interface SupportMode {
+  active: boolean;
+  schoolId: string | null;
+  schoolName: string | null;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
@@ -10,6 +16,7 @@ export interface AuthUser {
   email: string | null;
   status: string;
   schoolId: string | null;
+  supportMode?: SupportMode;
 }
 
 export function useAuth() {
@@ -50,7 +57,11 @@ export function useAuth() {
 
   const acceptInviteMutation = useMutation({
     mutationFn: async (data: { token: string; name: string; username: string; password: string }) => {
-      const res = await apiRequest("POST", "/api/auth/accept-invite", data);
+      const res = await apiRequest("POST", `/api/invites/${encodeURIComponent(data.token)}/accept`, {
+        name: data.name,
+        username: data.username,
+        password: data.password,
+      });
       return res.json();
     },
     onSuccess: () => {
@@ -69,6 +80,27 @@ export function useAuth() {
     mutationFn: async (data: { token: string; password: string }) => {
       const res = await apiRequest("POST", "/api/auth/reset-password", data);
       return res.json();
+    },
+  });
+
+  const enterSupportMutation = useMutation({
+    mutationFn: async (schoolId: string) => {
+      const res = await apiRequest("POST", "/api/owner/support-mode/enter", { schoolId });
+      return res.json();
+    },
+    onSuccess: () => {
+      // Refresh user data (includes supportMode) + all school-scoped queries
+      queryClient.invalidateQueries();
+    },
+  });
+
+  const exitSupportMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/owner/support-mode/exit");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries();
     },
   });
 
@@ -102,5 +134,9 @@ export function useAuth() {
     resetPassword: resetPasswordMutation.mutateAsync,
     isResettingPassword: resetPasswordMutation.isPending,
     resetPasswordError: resetPasswordMutation.error,
+    enterSupportMode: enterSupportMutation.mutateAsync,
+    exitSupportMode: exitSupportMutation.mutateAsync,
+    isEnteringSupport: enterSupportMutation.isPending,
+    isExitingSupport: exitSupportMutation.isPending,
   };
 }
