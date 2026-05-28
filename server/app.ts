@@ -9,6 +9,13 @@ import path from "path";
 import { registerRoutes } from "./routes.js";
 import { serveStatic } from "./static.js";
 
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const FORCE_MEMORY_STORAGE =
+  !IS_PRODUCTION && process.env.FORCE_MEMORY_STORAGE === "true";
+const RESOLVED_DATABASE_URL = FORCE_MEMORY_STORAGE
+  ? ""
+  : (process.env.DATABASE_URL?.trim() ?? "");
+
 declare module "express-session" {
   interface SessionData {
     userId: string;
@@ -32,10 +39,10 @@ type CreateAppOptions = {
 };
 
 async function ensureBootstrapSchema() {
-  if (!process.env.DATABASE_URL) return;
+  if (!RESOLVED_DATABASE_URL) return;
 
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: RESOLVED_DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
 
@@ -147,10 +154,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const MemoryStore = createMemoryStore(session);
   const PgSession = connectPgSimple(session);
 
-  const sessionStore: session.Store = process.env.DATABASE_URL
+  const sessionStore: session.Store = RESOLVED_DATABASE_URL
     ? new PgSession({
         pool: new Pool({
-          connectionString: process.env.DATABASE_URL,
+          connectionString: RESOLVED_DATABASE_URL,
           ssl: { rejectUnauthorized: false },
         }),
         tableName: "user_sessions",

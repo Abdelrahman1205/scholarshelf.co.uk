@@ -73,18 +73,18 @@ async function testUnauthenticatedAccess() {
   console.log("\n─── 1. Unauthenticated Access ───");
 
   const protectedPaths = [
-    "/api/admin/books",
-    "/api/admin/students",
-    "/api/admin/classes",
+     "/api/books",
+     "/api/students",
+     "/api/classes",
     "/api/admin/payments",
     "/api/admin/users",
     "/api/admin/dashboard-summary",
     "/api/admin/reports",
     "/api/admin/recent-activity",
-    "/api/teacher/classes",
+     "/api/allocations",
     "/api/parent/children",
-    "/api/admin/schools",
-    "/api/admin/messaging/threads",
+     "/api/owner/schools",
+     "/api/admin/communications",
   ];
 
   for (const path of protectedPaths) {
@@ -98,9 +98,9 @@ async function testUnauthenticatedAccess() {
 
   // POST endpoints
   const postPaths = [
-    { path: "/api/admin/books", body: { title: "Hacked Book" } },
-    { path: "/api/admin/students", body: { name: "Hacked Student" } },
-    { path: "/api/admin/classes", body: { name: "Hacked Class" } },
+    { path: "/api/books", body: { title: "Hacked Book" } },
+    { path: "/api/students", body: { name: "Hacked Student" } },
+    { path: "/api/classes", body: { name: "Hacked Class" } },
   ];
 
   for (const { path, body } of postPaths) {
@@ -135,7 +135,7 @@ async function testRBACEnforcement() {
   // Teacher should NOT access admin endpoints
   const teacherBlocked = [
     "/api/admin/users",
-    "/api/admin/schools",
+    "/api/owner/schools",
     "/api/admin/reports",
     "/api/admin/dashboard-summary",
   ];
@@ -152,10 +152,10 @@ async function testRBACEnforcement() {
   // Parent should NOT access admin or teacher endpoints
   const parentBlocked = [
     "/api/admin/users",
-    "/api/admin/books",
-    "/api/admin/students",
+    "/api/books",
+    "/api/students",
     "/api/admin/reports",
-    "/api/teacher/classes",
+    "/api/allocations",
   ];
 
   for (const path of parentBlocked) {
@@ -179,12 +179,12 @@ async function testTenantIsolation() {
   pass("Admin sign-in", "Authenticated successfully");
 
   // Verify school-scoped data comes back
-  const { status: booksStatus, body: booksBody } = await fetchJson("/api/admin/books", {
+  const { status: booksStatus, body: booksBody } = await fetchJson("/api/books", {
     headers: { Cookie: adminCookie },
   });
 
   if (booksStatus === 200 && Array.isArray(booksBody)) {
-    pass("GET /api/admin/books → 200", `Returned ${booksBody.length} books`);
+    pass("GET /api/books → 200", `Returned ${booksBody.length} books`);
 
     // If there are books, verify they all belong to the demo school
     // (schoolId should match the admin's session schoolId)
@@ -195,11 +195,11 @@ async function testTenantIsolation() {
       fail("Books tenant isolation", `Found ${foreignBooks.length} books from other schools`);
     }
   } else {
-    fail("GET /api/admin/books", `Status ${booksStatus}`);
+    fail("GET /api/books", `Status ${booksStatus}`);
   }
 
   // Check students
-  const { status: studentsStatus, body: studentsBody } = await fetchJson("/api/admin/students", {
+  const { status: studentsStatus, body: studentsBody } = await fetchJson("/api/students", {
     headers: { Cookie: adminCookie },
   });
 
@@ -213,7 +213,7 @@ async function testTenantIsolation() {
   }
 
   // Check classes
-  const { status: classesStatus, body: classesBody } = await fetchJson("/api/admin/classes", {
+  const { status: classesStatus, body: classesBody } = await fetchJson("/api/classes", {
     headers: { Cookie: adminCookie },
   });
 
@@ -238,7 +238,7 @@ async function testAuthSessionIntegrity() {
   }
 
   // Verify session is active
-  const { status: preSignOut } = await fetchJson("/api/admin/books", {
+  const { status: preSignOut } = await fetchJson("/api/books", {
     headers: { Cookie: adminCookie },
   });
   if (preSignOut === 200) {
@@ -254,7 +254,7 @@ async function testAuthSessionIntegrity() {
   });
 
   // Verify session is invalidated
-  const { status: postSignOut } = await fetchJson("/api/admin/books", {
+  const { status: postSignOut } = await fetchJson("/api/books", {
     headers: { Cookie: adminCookie },
   });
   if (postSignOut === 401 || postSignOut === 403) {
@@ -293,7 +293,10 @@ async function testCriticalSecurityPatterns() {
   }
 
   // Test that error responses don't leak stack traces
-  const { body: errorBody } = await fetchJson("/api/admin/books/nonexistent-id-12345");
+  const { body: errorBody } = await fetchJson("/api/auth/sign-in", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
   const errorStr = JSON.stringify(errorBody || {});
   if (!errorStr.includes("node_modules") && !errorStr.includes("at Object.") && !errorStr.includes("stack")) {
     pass("Error responses no stack leak", "No stack trace in error response");

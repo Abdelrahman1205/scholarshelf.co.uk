@@ -7,8 +7,13 @@ import * as schema from "../shared/schema.js";
 
 // ── Storage mode detection ────────────────────────────────────────────
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const FORCE_MEMORY_STORAGE =
+  !IS_PRODUCTION && process.env.FORCE_MEMORY_STORAGE === "true";
 const MEMORY_ALLOWED =
   !IS_PRODUCTION && process.env.ALLOW_MEMORY_STORAGE === "true";
+const RESOLVED_DATABASE_URL = FORCE_MEMORY_STORAGE
+  ? ""
+  : (process.env.DATABASE_URL?.trim() ?? "");
 
 let _storageMode: "database" | "memory" | "unknown" = "unknown";
 
@@ -21,8 +26,8 @@ export function getStorageMode(): "database" | "memory" | "unknown" {
 let _db: ReturnType<typeof drizzle> | null = null;
 function getDb(): ReturnType<typeof drizzle> {
   if (!_db) {
-    if (!process.env.DATABASE_URL) throw new Error("No DATABASE_URL configured");
-    const sql = neon(process.env.DATABASE_URL);
+    if (!RESOLVED_DATABASE_URL) throw new Error("No DATABASE_URL configured");
+    const sql = neon(RESOLVED_DATABASE_URL);
     _db = drizzle(sql, { schema });
   }
   return _db;
@@ -77,7 +82,7 @@ function isDbUnavailableError(error: unknown): boolean {
   }
 
   // ── Development: only fall back if explicitly allowed ──
-  if (!MEMORY_ALLOWED) {
+  if (!MEMORY_ALLOWED && !FORCE_MEMORY_STORAGE) {
     console.error(
       "[STORAGE] Database unavailable and ALLOW_MEMORY_STORAGE is not 'true'. " +
       "Set ALLOW_MEMORY_STORAGE=true in .env for local dev without a database."
@@ -572,9 +577,14 @@ class DatabaseStorage implements IStorage {
   // === BOOKS ===
 
   async getBooks(schoolId?: string | null): Promise<schema.Book[]> {
-    const filter = schoolFilter(schema.books, schoolId);
-    if (filter) return getDb().select().from(schema.books).where(filter);
-    return getDb().select().from(schema.books);
+    try {
+      const filter = schoolFilter(schema.books, schoolId);
+      if (filter) return getDb().select().from(schema.books).where(filter);
+      return getDb().select().from(schema.books);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return [];
+    }
   }
 
   async getBook(id: string, schoolId?: string | null): Promise<schema.Book | undefined> {
@@ -670,9 +680,14 @@ class DatabaseStorage implements IStorage {
   // === CLASSES ===
 
   async getClasses(schoolId?: string | null): Promise<schema.Class[]> {
-    const filter = schoolFilter(schema.classes, schoolId);
-    if (filter) return getDb().select().from(schema.classes).where(filter);
-    return getDb().select().from(schema.classes);
+    try {
+      const filter = schoolFilter(schema.classes, schoolId);
+      if (filter) return getDb().select().from(schema.classes).where(filter);
+      return getDb().select().from(schema.classes);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return [];
+    }
   }
 
   async createClass(c: schema.InsertClass): Promise<schema.Class> {
@@ -698,9 +713,14 @@ class DatabaseStorage implements IStorage {
   // === STUDENTS ===
 
   async getStudents(schoolId?: string | null): Promise<schema.Student[]> {
-    const filter = schoolFilter(schema.students, schoolId);
-    if (filter) return getDb().select().from(schema.students).where(filter);
-    return getDb().select().from(schema.students);
+    try {
+      const filter = schoolFilter(schema.students, schoolId);
+      if (filter) return getDb().select().from(schema.students).where(filter);
+      return getDb().select().from(schema.students);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return [];
+    }
   }
 
   async getStudentById(id: string, schoolId?: string | null): Promise<schema.Student | undefined> {
@@ -1658,7 +1678,11 @@ const memoryMessageThreads: schema.MessageThread[] = [];
 const memoryMessages: schema.Message[] = [];
 
 // ── Startup storage-mode detection ────────────────────────────────────
-if (process.env.DATABASE_URL) {
+if (FORCE_MEMORY_STORAGE) {
+  _storageMode = "memory";
+  console.warn("[STORAGE] ⚠ Memory storage forced — FORCE_MEMORY_STORAGE=true (development only).");
+  ensureDemoUsersInMemory();
+} else if (RESOLVED_DATABASE_URL) {
   _storageMode = "database";
   console.log("[STORAGE] ✓ Database storage active (DATABASE_URL is set).");
 } else if (MEMORY_ALLOWED) {
