@@ -24,6 +24,8 @@ export interface AuthUser {
   email: string | null;
   status: string;
   schoolId: string | null;
+  schoolName?: string | null;
+  schoolCode?: string | null;
   availableContexts?: AvailableContext[];
   contextMetadata?: {
     assignedClassIds?: string[];

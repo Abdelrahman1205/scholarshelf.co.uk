@@ -11,6 +11,13 @@ const resendFrom =
 
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
+type EmailBranding = {
+  schoolName?: string | null;
+  logoUrl?: string | null;
+  primaryColour?: string | null;
+  secondaryColour?: string | null;
+};
+
 export function isResendConfigured(): boolean {
   return !!resend;
 }
@@ -45,7 +52,12 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
 // ---------------------------------------------------------------------------
 // Shared HTML wrapper — consistent Scholar Shelf styling
 // ---------------------------------------------------------------------------
-function wrapEmail(title: string, body: string): string {
+function wrapEmail(title: string, body: string, branding?: EmailBranding): string {
+  const brandPrimary = branding?.primaryColour || "#1e3a5f";
+  const brandSecondary = branding?.secondaryColour || "#0f172a";
+  const heading = branding?.schoolName || "Scholar Shelf";
+  const logoUrl = branding?.logoUrl || null;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -61,10 +73,17 @@ function wrapEmail(title: string, body: string): string {
                style="background:#ffffff;border-radius:8px;overflow:hidden;max-width:600px;">
           <!-- Header -->
           <tr>
-            <td style="background:#1e3a5f;padding:24px 32px;">
-              <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:0.5px;">
-                Scholar Shelf
-              </span>
+            <td style="background:${brandPrimary};padding:20px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="vertical-align:middle;">
+                    <span style="color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:0.5px;">
+                      ${heading}
+                    </span>
+                  </td>
+                  ${logoUrl ? `<td align="right" style="vertical-align:middle;"><img src="${logoUrl}" alt="${heading} logo" style="max-height:42px;max-width:150px;display:block;background:#ffffff;border-radius:6px;padding:4px;" /></td>` : ""}
+                </tr>
+              </table>
             </td>
           </tr>
           <!-- Body -->
@@ -85,6 +104,7 @@ function wrapEmail(title: string, body: string): string {
       </td>
     </tr>
   </table>
+  <div style="height:4px;background:${brandSecondary};"></div>
 </body>
 </html>`;
 }
@@ -94,7 +114,8 @@ function wrapEmail(title: string, body: string): string {
 // ---------------------------------------------------------------------------
 export async function sendPasswordResetEmail(
   to: string,
-  resetLink: string
+  resetLink: string,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const body = `
     <h2 style="margin-top:0;color:#1e3a5f;">Reset your password</h2>
@@ -114,7 +135,7 @@ export async function sendPasswordResetEmail(
     </p>
   `;
 
-  return sendEmail(to, "Reset your Scholar Shelf password", wrapEmail("Reset your password", body));
+  return sendEmail(to, "Reset your Scholar Shelf password", wrapEmail("Reset your password", body, branding));
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +144,8 @@ export async function sendPasswordResetEmail(
 export async function sendInviteEmail(
   to: string,
   role: string,
-  inviteLink: string
+  inviteLink: string,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const roleLabel = role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -145,7 +167,7 @@ export async function sendInviteEmail(
     </p>
   `;
 
-  return sendEmail(to, "Your Scholar Shelf invitation", wrapEmail("You've been invited", body));
+  return sendEmail(to, "Your Scholar Shelf invitation", wrapEmail("You've been invited", body, branding));
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +177,8 @@ export async function sendSchoolSetupInviteEmail(
   to: string,
   adminName: string,
   schoolName: string,
-  inviteLink: string
+  inviteLink: string,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const body = `
     <h2 style="margin-top:0;color:#1e3a5f;">Complete your EduBook school setup</h2>
@@ -179,7 +202,12 @@ export async function sendSchoolSetupInviteEmail(
   return sendEmail(
     to,
     `Complete your EduBook school setup for ${schoolName}`,
-    wrapEmail("Complete your school setup", body)
+    wrapEmail("Complete your school setup", body, {
+      schoolName,
+      logoUrl: branding?.logoUrl || null,
+      primaryColour: branding?.primaryColour || null,
+      secondaryColour: branding?.secondaryColour || null,
+    })
   );
 }
 
@@ -190,7 +218,8 @@ export async function sendParentCodeEmail(
   to: string,
   studentName: string,
   linkingCode: string,
-  expiresAt: Date
+  expiresAt: Date,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const expiryStr = expiresAt.toLocaleDateString("en-GB", {
     day: "numeric",
@@ -224,7 +253,7 @@ export async function sendParentCodeEmail(
   return sendEmail(
     to,
     `Scholar Shelf: Linking code for ${studentName}`,
-    wrapEmail("Your child's linking code", body)
+    wrapEmail("Your child's linking code", body, branding)
   );
 }
 
@@ -235,7 +264,8 @@ export async function sendPaymentSubmittedEmail(
   to: string,
   paymentReference: string,
   totalAmount: string,
-  paymentMethod: string
+  paymentMethod: string,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const methodLabel = paymentMethod.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -266,7 +296,7 @@ export async function sendPaymentSubmittedEmail(
   return sendEmail(
     to,
     `Scholar Shelf: Payment submitted (Ref: ${paymentReference})`,
-    wrapEmail("Payment submitted", body)
+    wrapEmail("Payment submitted", body, branding)
   );
 }
 
@@ -276,7 +306,8 @@ export async function sendPaymentSubmittedEmail(
 export async function sendPaymentVerifiedEmail(
   to: string,
   paymentReference: string,
-  totalAmount: string
+  totalAmount: string,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const body = `
     <h2 style="margin-top:0;color:#1e3a5f;">Your payment has been verified ✓</h2>
@@ -304,7 +335,7 @@ export async function sendPaymentVerifiedEmail(
   return sendEmail(
     to,
     `Scholar Shelf: Payment verified (Ref: ${paymentReference})`,
-    wrapEmail("Payment verified", body)
+    wrapEmail("Payment verified", body, branding)
   );
 }
 
@@ -314,7 +345,8 @@ export async function sendPaymentVerifiedEmail(
 export async function sendPaymentRejectedEmail(
   to: string,
   paymentReference: string,
-  totalAmount: string
+  totalAmount: string,
+  branding?: EmailBranding
 ): Promise<boolean> {
   const body = `
     <h2 style="margin-top:0;color:#1e3a5f;">Payment could not be verified</h2>
@@ -343,6 +375,6 @@ export async function sendPaymentRejectedEmail(
   return sendEmail(
     to,
     `Scholar Shelf: Payment could not be verified (Ref: ${paymentReference})`,
-    wrapEmail("Payment rejected", body)
+    wrapEmail("Payment rejected", body, branding)
   );
 }

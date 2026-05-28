@@ -5,6 +5,7 @@ import createMemoryStore from "memorystore";
 import connectPgSimple from "connect-pg-simple";
 import { Pool } from "pg";
 import { createServer, type Server } from "http";
+import path from "path";
 import { registerRoutes } from "./routes.js";
 import { serveStatic } from "./static.js";
 
@@ -42,6 +43,43 @@ async function ensureBootstrapSchema() {
     await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS setup_status text NOT NULL DEFAULT 'pending_admin_invite'`);
     await pool.query(`UPDATE schools SET setup_status = CASE WHEN status = 'active' THEN 'active' ELSE 'pending_admin_invite' END WHERE setup_status IS NULL OR setup_status = ''`);
     await pool.query(`ALTER TABLE invites ADD COLUMN IF NOT EXISTS invitee_name text`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_permissions (
+        id varchar(36) PRIMARY KEY,
+        user_id varchar(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission text NOT NULL,
+        created_at timestamp DEFAULT now(),
+        UNIQUE (user_id, permission)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS user_permissions_user_id_idx ON user_permissions(user_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS school_branding (
+        id varchar(36) PRIMARY KEY,
+        school_id varchar(36) NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+        logo_url text,
+        logo_file_id text,
+        favicon_url text,
+        favicon_file_id text,
+        banner_image_url text,
+        banner_file_id text,
+        email_header_logo_url text,
+        email_header_logo_file_id text,
+        pdf_logo_url text,
+        pdf_logo_file_id text,
+        primary_colour text DEFAULT '#2563EB',
+        secondary_colour text DEFAULT '#1E3A8A',
+        accent_colour text DEFAULT '#0EA5E9',
+        theme_name text DEFAULT 'default',
+        font_preference text DEFAULT 'Inter',
+        setup_status text DEFAULT 'pending',
+        created_at timestamp DEFAULT now(),
+        updated_at timestamp DEFAULT now(),
+        updated_by varchar(36) REFERENCES users(id),
+        UNIQUE (school_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS school_branding_school_id_idx ON school_branding(school_id)`);
   } catch (error) {
     console.warn("Schema bootstrap warning:", error);
   } finally {
@@ -78,6 +116,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   );
 
   app.use(express.urlencoded({ extended: false }));
+  app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads"), { maxAge: "1d" }));
 
   app.use((req, res, next) => {
     const start = Date.now();

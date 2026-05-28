@@ -5,6 +5,18 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import * as schema from "../shared/schema.js";
 
+// ── Storage mode detection ────────────────────────────────────────────
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const MEMORY_ALLOWED =
+  !IS_PRODUCTION && process.env.ALLOW_MEMORY_STORAGE === "true";
+
+let _storageMode: "database" | "memory" | "unknown" = "unknown";
+
+/** Expose current storage mode for health checks (no secrets leaked). */
+export function getStorageMode(): "database" | "memory" | "unknown" {
+  return _storageMode;
+}
+
 // Lazy DB initialisation — safe when DATABASE_URL is absent (falls back to memory)
 let _db: ReturnType<typeof drizzle> | null = null;
 function getDb(): ReturnType<typeof drizzle> {
@@ -28,33 +40,67 @@ async function updateAndFetchFirst<TTable extends { id: any }>(table: TTable, wh
   return updated as any;
 }
 
+/**
+ * Determines whether an error indicates a database connectivity problem.
+ *
+ * **Production behaviour**: always re-throws — the app must never silently
+ * degrade to in-memory storage when NODE_ENV=production.
+ *
+ * **Development behaviour**: returns `true` for connection-class errors so the
+ * caller can fall back to the in-memory Map store, but only when
+ * ALLOW_MEMORY_STORAGE=true.
+ */
 function isDbUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as { code?: string } | undefined)?.code;
 
-  // No DATABASE_URL configured at all
-  if (message.includes("No DATABASE_URL")) return true;
-
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND") return true;
-
-  return (
+  const isConnectionError =
+    message.includes("No DATABASE_URL") ||
+    code === "ECONNREFUSED" ||
+    code === "ENOTFOUND" ||
     message.includes("ECONNREFUSED") ||
     message.includes("ENOTFOUND") ||
-    message.includes("fetch failed") ||          // Neon HTTP fetch failure
-    message.includes("NeonDbError") ||           // Neon driver error class
+    message.includes("fetch failed") ||
+    message.includes("NeonDbError") ||
     message.includes("Connection terminated") ||
     message.includes("SASL") ||
     message.includes("password authentication") ||
-    message.includes("does not exist") ||
     message.includes("SSL") ||
-    message.includes("certificate")
-  );
+    message.includes("certificate");
+
+  if (!isConnectionError) return false;
+
+  // ── Production: fail fast — never fall back silently ──
+  if (IS_PRODUCTION) {
+    console.error("[STORAGE] Database unavailable in production — refusing to fall back to memory.", message);
+    throw error instanceof Error ? error : new Error(message);
+  }
+
+  // ── Development: only fall back if explicitly allowed ──
+  if (!MEMORY_ALLOWED) {
+    console.error(
+      "[STORAGE] Database unavailable and ALLOW_MEMORY_STORAGE is not 'true'. " +
+      "Set ALLOW_MEMORY_STORAGE=true in .env for local dev without a database."
+    );
+    throw error instanceof Error ? error : new Error(message);
+  }
+
+  // Switch mode on first fallback
+  if (_storageMode !== "memory") {
+    _storageMode = "memory";
+    console.warn("[STORAGE] ⚠ Falling back to in-memory storage (development only).");
+    ensureDemoUsersInMemory();
+  }
+
+  return true;
 }
 
 const memoryUsers = new Map<string, schema.User>();
 const memorySchools = new Map<string, schema.School>();
 const memoryInvites = new Map<string, schema.Invite>();
 const memoryAuditLogs: schema.AuditLog[] = [];
+const memorySchoolBranding = new Map<string, schema.SchoolBranding>();
+const memoryUserPermissions = new Map<string, Set<string>>();
 
 function now() {
   return new Date();
@@ -253,6 +299,24 @@ export interface IStorage {
   // Audit logs
   createAuditLog(log: schema.InsertAuditLog): Promise<schema.AuditLog>;
   getAuditLogs(limit?: number): Promise<schema.AuditLog[]>;
+
+  // Branding and permissions
+  getSchoolBranding(schoolId: string): Promise<schema.SchoolBranding | undefined>;
+  upsertSchoolBranding(schoolId: string, payload: Partial<schema.InsertSchoolBranding>, updatedBy?: string | null): Promise<schema.SchoolBranding>;
+  resetSchoolBranding(schoolId: string, updatedBy?: string | null): Promise<schema.SchoolBranding>;
+  getUserPermissions(userId: string): Promise<string[]>;
+  setUserPermissions(userId: string, permissions: string[]): Promise<void>;
+
+  // === Messaging ===
+  getMessageThreads(filters: { schoolId: string; parentUserId?: string; teacherUserId?: string; status?: string }): Promise<any[]>;
+  getMessageThread(id: string, schoolId: string): Promise<any | undefined>;
+  createMessageThread(thread: schema.InsertMessageThread): Promise<schema.MessageThread>;
+  updateThreadStatus(id: string, status: string, closedBy?: string, schoolId?: string): Promise<schema.MessageThread | undefined>;
+  getMessages(threadId: string, schoolId: string): Promise<schema.Message[]>;
+  createMessage(msg: schema.InsertMessage): Promise<schema.Message>;
+  markMessagesRead(threadId: string, readerUserId: string, schoolId: string): Promise<void>;
+  getUnreadCount(userId: string, schoolId: string): Promise<number>;
+  createMessageAuditLog(log: schema.InsertMessageAuditLog): Promise<schema.MessageAuditLog>;
 }
 
 class DatabaseStorage implements IStorage {
@@ -342,6 +406,7 @@ class DatabaseStorage implements IStorage {
       }
 
       await db.delete(schema.extraCopyRequests).where(eq(schema.extraCopyRequests.schoolId, id));
+      await db.delete(schema.schoolBranding).where(eq(schema.schoolBranding.schoolId, id));
       await db.delete(schema.financeBookAllocations).where(eq(schema.financeBookAllocations.schoolId, id));
       await db.delete(schema.childBookBaskets).where(eq(schema.childBookBaskets.schoolId, id));
       await db.delete(schema.bookPayments).where(eq(schema.bookPayments.schoolId, id));
@@ -375,6 +440,132 @@ class DatabaseStorage implements IStorage {
       });
 
       memorySchools.delete(id);
+      memorySchoolBranding.delete(id);
+    }
+  }
+
+  // === BRANDING & PERMISSIONS ===
+
+  async getSchoolBranding(schoolId: string): Promise<schema.SchoolBranding | undefined> {
+    try {
+      const [branding] = await getDb().select().from(schema.schoolBranding).where(eq(schema.schoolBranding.schoolId, schoolId));
+      return branding;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memorySchoolBranding.get(schoolId);
+    }
+  }
+
+  async upsertSchoolBranding(schoolId: string, payload: Partial<schema.InsertSchoolBranding>, updatedBy?: string | null): Promise<schema.SchoolBranding> {
+    const updates = {
+      ...payload,
+      updatedAt: new Date(),
+      updatedBy: updatedBy ?? null,
+    } as any;
+
+    try {
+      const existing = await this.getSchoolBranding(schoolId);
+      if (existing) {
+        const [updated] = await getDb().update(schema.schoolBranding).set(updates).where(eq(schema.schoolBranding.schoolId, schoolId)).returning();
+        return updated;
+      }
+
+      const [created] = await getDb().insert(schema.schoolBranding).values({
+        schoolId,
+        primaryColour: "#2563EB",
+        secondaryColour: "#1E3A8A",
+        accentColour: "#0EA5E9",
+        themeName: "default",
+        fontPreference: "Inter",
+        setupStatus: "pending",
+        updatedBy: updatedBy ?? null,
+        ...payload,
+      } as any).returning();
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const current = memorySchoolBranding.get(schoolId);
+      if (current) {
+        const updated: schema.SchoolBranding = {
+          ...current,
+          ...(payload as any),
+          updatedBy: updatedBy ?? null,
+          updatedAt: now(),
+        };
+        memorySchoolBranding.set(schoolId, updated);
+        return updated;
+      }
+
+      const created: schema.SchoolBranding = {
+        id: randomUUID(),
+        schoolId,
+        logoUrl: (payload as any).logoUrl ?? null,
+        logoFileId: (payload as any).logoFileId ?? null,
+        faviconUrl: (payload as any).faviconUrl ?? null,
+        faviconFileId: (payload as any).faviconFileId ?? null,
+        bannerImageUrl: (payload as any).bannerImageUrl ?? null,
+        bannerFileId: (payload as any).bannerFileId ?? null,
+        emailHeaderLogoUrl: (payload as any).emailHeaderLogoUrl ?? null,
+        emailHeaderLogoFileId: (payload as any).emailHeaderLogoFileId ?? null,
+        pdfLogoUrl: (payload as any).pdfLogoUrl ?? null,
+        pdfLogoFileId: (payload as any).pdfLogoFileId ?? null,
+        primaryColour: (payload as any).primaryColour ?? "#2563EB",
+        secondaryColour: (payload as any).secondaryColour ?? "#1E3A8A",
+        accentColour: (payload as any).accentColour ?? "#0EA5E9",
+        themeName: (payload as any).themeName ?? "default",
+        fontPreference: (payload as any).fontPreference ?? "Inter",
+        setupStatus: (payload as any).setupStatus ?? "pending",
+        createdAt: now(),
+        updatedAt: now(),
+        updatedBy: updatedBy ?? null,
+      };
+      memorySchoolBranding.set(schoolId, created);
+      return created;
+    }
+  }
+
+  async resetSchoolBranding(schoolId: string, updatedBy?: string | null): Promise<schema.SchoolBranding> {
+    return this.upsertSchoolBranding(schoolId, {
+      logoUrl: null,
+      logoFileId: null,
+      faviconUrl: null,
+      faviconFileId: null,
+      bannerImageUrl: null,
+      bannerFileId: null,
+      emailHeaderLogoUrl: null,
+      emailHeaderLogoFileId: null,
+      pdfLogoUrl: null,
+      pdfLogoFileId: null,
+      primaryColour: "#2563EB",
+      secondaryColour: "#1E3A8A",
+      accentColour: "#0EA5E9",
+      themeName: "default",
+      fontPreference: "Inter",
+      setupStatus: "pending",
+    }, updatedBy);
+  }
+
+  async getUserPermissions(userId: string): Promise<string[]> {
+    try {
+      const rows = await getDb().select().from(schema.userPermissions).where(eq(schema.userPermissions.userId, userId));
+      return rows.map((row) => row.permission);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return Array.from(memoryUserPermissions.get(userId) || []);
+    }
+  }
+
+  async setUserPermissions(userId: string, permissions: string[]): Promise<void> {
+    const deduped = Array.from(new Set(permissions));
+    try {
+      await getDb().delete(schema.userPermissions).where(eq(schema.userPermissions.userId, userId));
+      if (deduped.length > 0) {
+        await getDb().insert(schema.userPermissions).values(deduped.map((permission) => ({ userId, permission })) as any);
+      }
+      return;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      memoryUserPermissions.set(userId, new Set(deduped));
     }
   }
 
@@ -1231,6 +1422,258 @@ class DatabaseStorage implements IStorage {
       return memoryAuditLogs.slice().reverse().slice(0, limit);
     }
   }
+
+  // === MESSAGING ===
+
+  async getMessageThreads(filters: { schoolId: string; parentUserId?: string; teacherUserId?: string; status?: string }): Promise<any[]> {
+    try {
+      const db = getDb();
+      const conditions: any[] = [eq(schema.messageThreads.schoolId, filters.schoolId)];
+      if (filters.parentUserId) conditions.push(eq(schema.messageThreads.parentUserId, filters.parentUserId));
+      if (filters.teacherUserId) conditions.push(eq(schema.messageThreads.teacherUserId, filters.teacherUserId));
+      if (filters.status) conditions.push(eq(schema.messageThreads.status, filters.status));
+
+      const threads = await db
+        .select()
+        .from(schema.messageThreads)
+        .where(and(...conditions))
+        .orderBy(desc(schema.messageThreads.lastMessageAt));
+
+      // Enrich with participant names, student name, and unread counts
+      const enriched = [];
+      for (const t of threads) {
+        const [parent] = await db.select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, t.parentUserId));
+        const [teacher] = await db.select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, t.teacherUserId));
+        const [student] = await db.select({ name: schema.students.name, classId: schema.students.classId }).from(schema.students).where(eq(schema.students.id, t.studentId));
+
+        const allMsgs = await db.select().from(schema.messages).where(
+          and(eq(schema.messages.threadId, t.id), eq(schema.messages.schoolId, filters.schoolId))
+        );
+        const totalMessages = allMsgs.length;
+        const unreadByParent = allMsgs.filter((m) => m.senderRole !== "parent" && !m.isRead && !m.deletedAt).length;
+        const unreadByTeacher = allMsgs.filter((m) => m.senderRole !== "teacher" && !m.isRead && !m.deletedAt).length;
+
+        enriched.push({
+          ...t,
+          parentName: parent?.name || "Unknown",
+          teacherName: teacher?.name || "Unknown",
+          studentName: student?.name || "Unknown",
+          studentClassId: student?.classId || null,
+          totalMessages,
+          unreadByParent,
+          unreadByTeacher,
+        });
+      }
+      return enriched;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memoryMessageThreads
+        .filter((t) => t.schoolId === filters.schoolId)
+        .filter((t) => !filters.parentUserId || t.parentUserId === filters.parentUserId)
+        .filter((t) => !filters.teacherUserId || t.teacherUserId === filters.teacherUserId)
+        .filter((t) => !filters.status || t.status === filters.status);
+    }
+  }
+
+  async getMessageThread(id: string, schoolId: string): Promise<any | undefined> {
+    try {
+      const db = getDb();
+      const [thread] = await db.select().from(schema.messageThreads).where(
+        and(eq(schema.messageThreads.id, id), eq(schema.messageThreads.schoolId, schoolId))
+      );
+      if (!thread) return undefined;
+
+      const [parent] = await db.select({ name: schema.users.name, email: schema.users.email }).from(schema.users).where(eq(schema.users.id, thread.parentUserId));
+      const [teacher] = await db.select({ name: schema.users.name, email: schema.users.email }).from(schema.users).where(eq(schema.users.id, thread.teacherUserId));
+      const [student] = await db.select().from(schema.students).where(eq(schema.students.id, thread.studentId));
+
+      return {
+        ...thread,
+        parentName: parent?.name || "Unknown",
+        parentEmail: parent?.email || null,
+        teacherName: teacher?.name || "Unknown",
+        teacherEmail: teacher?.email || null,
+        studentName: student?.name || "Unknown",
+        studentClassId: student?.classId || null,
+      };
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memoryMessageThreads.find((t) => t.id === id && t.schoolId === schoolId);
+    }
+  }
+
+  async createMessageThread(thread: schema.InsertMessageThread): Promise<schema.MessageThread> {
+    try {
+      return await insertAndFetchById(schema.messageThreads, thread);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const created: schema.MessageThread = {
+        id: randomUUID(),
+        ...thread,
+        status: thread.status || "open",
+        lastMessageAt: now(),
+        closedBy: null,
+        closedAt: null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      memoryMessageThreads.push(created);
+      return created;
+    }
+  }
+
+  async updateThreadStatus(id: string, status: string, closedBy?: string, schoolId?: string): Promise<schema.MessageThread | undefined> {
+    try {
+      const updates: any = { status, updatedAt: new Date() };
+      if (status === "closed" || status === "archived") {
+        updates.closedBy = closedBy || null;
+        updates.closedAt = new Date();
+      } else if (status === "open") {
+        updates.closedBy = null;
+        updates.closedAt = null;
+      }
+      const conditions = schoolId
+        ? and(eq(schema.messageThreads.id, id), eq(schema.messageThreads.schoolId, schoolId))
+        : eq(schema.messageThreads.id, id);
+      const [updated] = await getDb().update(schema.messageThreads).set(updates).where(conditions!).returning();
+      return updated;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const t = memoryMessageThreads.find((t) => t.id === id);
+      if (t) { t.status = status; t.updatedAt = now(); }
+      return t;
+    }
+  }
+
+  async getMessages(threadId: string, schoolId: string): Promise<schema.Message[]> {
+    try {
+      return await getDb().select().from(schema.messages).where(
+        and(
+          eq(schema.messages.threadId, threadId),
+          eq(schema.messages.schoolId, schoolId),
+        )
+      ).orderBy(schema.messages.createdAt);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memoryMessages.filter((m) => m.threadId === threadId && m.schoolId === schoolId);
+    }
+  }
+
+  async createMessage(msg: schema.InsertMessage): Promise<schema.Message> {
+    try {
+      const created = await insertAndFetchById(schema.messages, msg);
+      // Update thread lastMessageAt
+      await getDb().update(schema.messageThreads).set({ lastMessageAt: new Date(), updatedAt: new Date() })
+        .where(eq(schema.messageThreads.id, msg.threadId));
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const created: schema.Message = {
+        id: randomUUID(),
+        ...msg,
+        isRead: false,
+        createdAt: now(),
+        editedAt: null,
+        deletedAt: null,
+      };
+      memoryMessages.push(created);
+      const t = memoryMessageThreads.find((t) => t.id === msg.threadId);
+      if (t) { t.lastMessageAt = now(); t.updatedAt = now(); }
+      return created;
+    }
+  }
+
+  async markMessagesRead(threadId: string, readerUserId: string, schoolId: string): Promise<void> {
+    try {
+      // Mark all messages NOT sent by the reader as read
+      await getDb().update(schema.messages)
+        .set({ isRead: true })
+        .where(
+          and(
+            eq(schema.messages.threadId, threadId),
+            eq(schema.messages.schoolId, schoolId),
+            sql`${schema.messages.senderUserId} != ${readerUserId}`,
+            eq(schema.messages.isRead, false),
+          )
+        );
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      for (const m of memoryMessages) {
+        if (m.threadId === threadId && m.schoolId === schoolId && m.senderUserId !== readerUserId) {
+          m.isRead = true;
+        }
+      }
+    }
+  }
+
+  async getUnreadCount(userId: string, schoolId: string): Promise<number> {
+    try {
+      const db = getDb();
+      // Find all threads this user is part of
+      const threads = await db.select({ id: schema.messageThreads.id }).from(schema.messageThreads).where(
+        and(
+          eq(schema.messageThreads.schoolId, schoolId),
+          sql`(${schema.messageThreads.parentUserId} = ${userId} OR ${schema.messageThreads.teacherUserId} = ${userId})`,
+        )
+      );
+      if (threads.length === 0) return 0;
+      const threadIds = threads.map((t) => t.id);
+      const unread = await db.select({ id: schema.messages.id }).from(schema.messages).where(
+        and(
+          eq(schema.messages.schoolId, schoolId),
+          sql`${schema.messages.threadId} IN (${sql.join(threadIds.map(id => sql`${id}`), sql`, `)})`,
+          sql`${schema.messages.senderUserId} != ${userId}`,
+          eq(schema.messages.isRead, false),
+          sql`${schema.messages.deletedAt} IS NULL`,
+        )
+      );
+      return unread.length;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return memoryMessages.filter(
+        (m) => m.schoolId === schoolId && m.senderUserId !== userId && !m.isRead && !m.deletedAt
+      ).length;
+    }
+  }
+
+  async createMessageAuditLog(log: schema.InsertMessageAuditLog): Promise<schema.MessageAuditLog> {
+    try {
+      return await insertAndFetchById(schema.messageAuditLogs, log);
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const created: schema.MessageAuditLog = {
+        id: randomUUID(),
+        ...log,
+        reason: log.reason ?? null,
+        threadId: log.threadId ?? null,
+        createdAt: now(),
+      };
+      return created;
+    }
+  }
+}
+
+// In-memory stores for messaging (memory fallback)
+const memoryMessageThreads: schema.MessageThread[] = [];
+const memoryMessages: schema.Message[] = [];
+
+// ── Startup storage-mode detection ────────────────────────────────────
+if (process.env.DATABASE_URL) {
+  _storageMode = "database";
+  console.log("[STORAGE] ✓ Database storage active (DATABASE_URL is set).");
+} else if (MEMORY_ALLOWED) {
+  _storageMode = "memory";
+  console.warn("[STORAGE] ⚠ Memory storage active — ALLOW_MEMORY_STORAGE=true (development only).");
+  ensureDemoUsersInMemory();
+} else if (IS_PRODUCTION) {
+  console.error("[STORAGE] ✗ FATAL: No DATABASE_URL in production. Server cannot start safely.");
+  process.exit(1);
+} else {
+  console.error(
+    "[STORAGE] ✗ No DATABASE_URL and ALLOW_MEMORY_STORAGE is not 'true'. " +
+    "Set DATABASE_URL or ALLOW_MEMORY_STORAGE=true in .env to continue."
+  );
+  process.exit(1);
 }
 
 export const storage = new DatabaseStorage();

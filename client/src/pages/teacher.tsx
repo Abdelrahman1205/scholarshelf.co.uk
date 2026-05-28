@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, CheckCircle2, Circle, Users, BookOpen, Package, LayoutDashboard, ClipboardList, AlertTriangle, Plus } from "lucide-react";
+import { Search, CheckCircle2, Circle, Users, BookOpen, Package, LayoutDashboard, ClipboardList, AlertTriangle, Plus, MessageSquare, ArrowLeft, Send, Clock, Mail } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -580,6 +580,316 @@ function ExtraRequestsSection({ classes }: { classes: ClassItem[] }) {
   );
 }
 
+interface MessageThread {
+  id: string;
+  subject: string;
+  status: "open" | "closed" | "archived";
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string;
+  parentUserId: string;
+  teacherUserId: string;
+  studentId: string;
+  parentName: string;
+  teacherName: string;
+  studentName: string;
+  studentClassId: string | null;
+  totalMessages: number;
+  unreadByParent: number;
+  unreadByTeacher: number;
+  lastMessage?: {
+    senderRole: "parent" | "teacher" | "admin";
+    body: string;
+    createdAt: string;
+  } | null;
+}
+
+interface ThreadDetail {
+  thread: MessageThread & { parentEmail?: string; teacherEmail?: string };
+  messages: ThreadMessage[];
+}
+
+interface ThreadMessage {
+  id: string;
+  threadId: string;
+  senderUserId: string;
+  senderRole: "parent" | "teacher" | "admin";
+  body: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+function TeacherMessagesSection() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  };
+
+  const { data: threads, isLoading: threadsLoading } = useQuery<MessageThread[]>({
+    queryKey: ["/api/teacher/message-threads"],
+    queryFn: getQueryFn({ on401: "throw" }),
+    refetchInterval: 15000,
+  });
+
+  const { data: threadDetail, isLoading: detailLoading } = useQuery<ThreadDetail>({
+    queryKey: ["/api/teacher/message-threads", selectedThreadId],
+    queryFn: async () => {
+      const r = await fetch(`/api/teacher/message-threads/${selectedThreadId}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`${r.status}`);
+      return r.json();
+    },
+    enabled: !!selectedThreadId,
+    refetchInterval: selectedThreadId ? 8000 : false,
+  });
+
+  // Auto-scroll when messages change
+  const messageCount = threadDetail?.messages?.length ?? 0;
+  useEffect(() => {
+    if (messageCount > 0) scrollToBottom();
+  }, [messageCount, selectedThreadId]);
+
+  const replyMut = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/teacher/message-threads/${selectedThreadId}/messages`, { body: replyBody });
+    },
+    onSuccess: () => {
+      setReplyBody("");
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/message-threads", selectedThreadId] }).then(scrollToBottom);
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/message-threads"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Failed to send", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const filteredThreads = useMemo(() => {
+    if (!threads) return [];
+    if (!searchQuery.trim()) return threads;
+    const q = searchQuery.toLowerCase();
+    return threads.filter(
+      (t) =>
+        t.parentName.toLowerCase().includes(q) ||
+        t.studentName.toLowerCase().includes(q) ||
+        t.subject.toLowerCase().includes(q)
+    );
+  }, [threads, searchQuery]);
+
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    return d.toLocaleDateString();
+  };
+
+  // Thread detail view
+  if (selectedThreadId) {
+    const thread = threadDetail?.thread;
+    const messages = threadDetail?.messages || [];
+    const isClosed = thread?.status === "closed";
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => { setSelectedThreadId(null); setReplyBody(""); }} className="gap-2">
+            <ArrowLeft className="w-4 h-4" /> Back to Messages
+          </Button>
+        </div>
+
+        {detailLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <p className="text-muted-foreground">Loading conversation...</p>
+          </div>
+        ) : thread ? (
+          <>
+            <Card className="border-border">
+              <CardHeader className="pb-3 border-b border-border bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-heading">{thread.subject}</CardTitle>
+                    <CardDescription className="mt-1">
+                      Parent: {thread.parentName} &middot; Student: {thread.studentName}
+                    </CardDescription>
+                  </div>
+                  <Badge className={thread.status === "open" ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground"}>
+                    {thread.status === "open" ? "Open" : "Closed"}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent ref={messagesContainerRef} className="p-4 space-y-4 max-h-[500px] overflow-y-auto">
+                {messages.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8 text-sm">No messages in this conversation yet.</p>
+                ) : (
+                  messages.map((msg) => {
+                    const isOwn = msg.senderRole === "teacher";
+                    return (
+                      <div key={msg.id} className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
+                        <div className={`max-w-[75%] rounded-lg px-4 py-3 ${
+                          isOwn
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted border border-border"
+                        }`}>
+                          <div className={`text-xs font-medium mb-1 ${isOwn ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                            {isOwn ? "You" : thread.parentName}
+                            {msg.senderRole === "admin" && " (Admin)"}
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                          <div className={`text-xs mt-2 ${isOwn ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
+                            {formatTime(msg.createdAt)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={messagesEndRef} />
+              </CardContent>
+            </Card>
+
+            {isClosed ? (
+              <Card className="border-dashed bg-muted/20">
+                <CardContent className="flex items-center gap-3 p-4">
+                  <Clock className="w-5 h-5 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">This conversation has been closed. No further replies can be sent.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="border-border">
+                <CardContent className="p-4">
+                  <div className="space-y-3">
+                    <Textarea
+                      placeholder="Type your reply..."
+                      value={replyBody}
+                      onChange={(e) => setReplyBody(e.target.value)}
+                      rows={3}
+                      className="resize-none"
+                    />
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={() => replyMut.mutate()}
+                        disabled={!replyBody.trim() || replyMut.isPending}
+                        className="gap-2"
+                      >
+                        <Send className="w-4 h-4" />
+                        {replyMut.isPending ? "Sending..." : "Send Reply"}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        ) : (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+              <MessageSquare className="w-12 h-12 text-muted-foreground/50 mb-4" />
+              <h3 className="text-lg font-heading font-semibold text-muted-foreground">Thread Not Found</h3>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  // Thread list view
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Parent Messages</h1>
+        <p className="text-muted-foreground mt-1">Secure communication with parents regarding their children.</p>
+      </div>
+
+      <div className="relative max-w-md">
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder="Search by parent or student name..."
+          className="pl-9 bg-card"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
+      {threadsLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <p className="text-muted-foreground">Loading messages...</p>
+        </div>
+      ) : filteredThreads.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <Mail className="w-12 h-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-heading font-semibold text-muted-foreground">
+              {searchQuery ? "No Matching Conversations" : "No Messages Yet"}
+            </h3>
+            <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+              {searchQuery
+                ? "No conversations match your search criteria."
+                : "When parents send messages about their children, they will appear here."}
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="border-border">
+          <CardContent className="p-0 divide-y divide-border">
+            {filteredThreads.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedThreadId(t.id)}
+                className="w-full text-left px-5 py-4 hover:bg-muted/30 transition-colors flex items-start gap-4"
+              >
+                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-sm font-medium truncate ${t.unreadByTeacher > 0 ? "text-foreground font-semibold" : "text-foreground"}`}>
+                      {t.subject}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge className={t.status === "open" ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground"}>
+                        {t.status === "open" ? "Open" : "Closed"}
+                      </Badge>
+                      {t.unreadByTeacher > 0 && (
+                        <Badge className="bg-primary text-primary-foreground">{t.unreadByTeacher}</Badge>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Parent: {t.parentName} &middot; Student: {t.studentName}
+                  </div>
+                  {t.lastMessage && (
+                    <p className="text-sm text-muted-foreground mt-1 truncate">
+                      {t.lastMessage.senderRole === "teacher" ? "You: " : ""}{t.lastMessage.body}
+                    </p>
+                  )}
+                  <div className="text-xs text-muted-foreground/70 mt-1">
+                    {t.lastMessage ? formatTime(t.lastMessage.createdAt) : formatTime(t.createdAt)}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function TeacherPage({ section = "dashboard" }: { section?: string }) {
   const { data: classes, isLoading: classesLoading } = useQuery<ClassItem[]>({
     queryKey: ["/api/classes"],
@@ -605,6 +915,8 @@ export default function TeacherPage({ section = "dashboard" }: { section?: strin
       return <DistributionSection classes={c} classesLoading={classesLoading} />;
     case "requests":
       return <ExtraRequestsSection classes={c} />;
+    case "messages":
+      return <TeacherMessagesSection />;
     default:
       return <DashboardSection classes={c} allocations={a} extraRequests={r} isLoading={classesLoading} />;
   }

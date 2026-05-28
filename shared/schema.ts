@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { pgTable, text, varchar, integer, numeric, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, numeric, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -9,6 +9,28 @@ export type UserRole = (typeof USER_ROLES)[number];
 
 export const USER_STATUSES = ["active", "invited", "disabled", "locked"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
+
+export const BRANDING_PERMISSIONS = [
+  "BRANDING_VIEW",
+  "BRANDING_MANAGE",
+  "BRANDING_UPLOAD_LOGO",
+  "BRANDING_UPDATE_THEME",
+  "BRANDING_RESET_DEFAULT",
+] as const;
+export type BrandingPermission = (typeof BRANDING_PERMISSIONS)[number];
+
+export const BRANDING_AUDIT_ACTIONS = [
+  "BRANDING_VIEWED_BY_OWNER",
+  "BRANDING_UPDATED",
+  "BRANDING_LOGO_UPLOADED",
+  "BRANDING_BANNER_UPLOADED",
+  "BRANDING_FAVICON_UPLOADED",
+  "BRANDING_THEME_CHANGED",
+  "BRANDING_RESET_TO_DEFAULT",
+  "BRANDING_EMAIL_LOGO_UPDATED",
+  "BRANDING_PDF_LOGO_UPDATED",
+] as const;
+export type BrandingAuditAction = (typeof BRANDING_AUDIT_ACTIONS)[number];
 
 // Legacy role mapping for backward compatibility with demo accounts
 export const LEGACY_ROLE_MAP: Record<string, UserRole> = {
@@ -49,6 +71,68 @@ export const schools = pgTable("schools", {
 export const insertSchoolSchema = createInsertSchema(schools).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertSchool = z.infer<typeof insertSchoolSchema>;
 export type School = typeof schools.$inferSelect;
+
+export const schoolBranding = pgTable(
+  "school_branding",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
+    logoUrl: text("logo_url"),
+    logoFileId: text("logo_file_id"),
+    faviconUrl: text("favicon_url"),
+    faviconFileId: text("favicon_file_id"),
+    bannerImageUrl: text("banner_image_url"),
+    bannerFileId: text("banner_file_id"),
+    emailHeaderLogoUrl: text("email_header_logo_url"),
+    emailHeaderLogoFileId: text("email_header_logo_file_id"),
+    pdfLogoUrl: text("pdf_logo_url"),
+    pdfLogoFileId: text("pdf_logo_file_id"),
+    primaryColour: text("primary_colour").default("#2563EB"),
+    secondaryColour: text("secondary_colour").default("#1E3A8A"),
+    accentColour: text("accent_colour").default("#0EA5E9"),
+    themeName: text("theme_name").default("default"),
+    fontPreference: text("font_preference").default("Inter"),
+    setupStatus: text("setup_status").default("pending"), // pending | skipped | completed
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+    updatedBy: varchar("updated_by", { length: 36 }).references(() => users.id),
+  },
+  (table) => ({
+    schoolUnique: uniqueIndex("school_branding_school_id_unique").on(table.schoolId),
+    schoolIndex: index("school_branding_school_id_idx").on(table.schoolId),
+  }),
+);
+
+export const insertSchoolBrandingSchema = createInsertSchema(schoolBranding).omit({ id: true, createdAt: true, updatedAt: true });
+export const updateSchoolBrandingSchema = insertSchoolBrandingSchema.partial().omit({ schoolId: true });
+export type InsertSchoolBranding = z.infer<typeof insertSchoolBrandingSchema>;
+export type UpdateSchoolBrandingInput = z.infer<typeof updateSchoolBrandingSchema>;
+export type SchoolBranding = typeof schoolBranding.$inferSelect;
+
+export const userPermissions = pgTable(
+  "user_permissions",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+    permission: text("permission").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    userPermissionUnique: uniqueIndex("user_permissions_user_id_permission_unique").on(table.userId, table.permission),
+    userPermissionUserIdx: index("user_permissions_user_id_idx").on(table.userId),
+  }),
+);
+
+export const insertUserPermissionSchema = createInsertSchema(userPermissions).omit({ id: true, createdAt: true });
+export type InsertUserPermission = z.infer<typeof insertUserPermissionSchema>;
+export type UserPermission = typeof userPermissions.$inferSelect;
+
+export const brandingUploadResponseSchema = z.object({
+  url: z.string().url(),
+  fileId: z.string(),
+  field: z.enum(["logo", "banner", "favicon", "emailLogo", "pdfLogo"]),
+});
+export type BrandingUploadResponse = z.infer<typeof brandingUploadResponseSchema>;
 
 export const users = pgTable("users", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -304,6 +388,65 @@ export const extraCopyRequests = pgTable("extra_copy_requests", {
 export const insertExtraCopyRequestSchema = createInsertSchema(extraCopyRequests).omit({ id: true, createdAt: true, resolvedAt: true });
 export type InsertExtraCopyRequest = z.infer<typeof insertExtraCopyRequestSchema>;
 export type ExtraCopyRequest = typeof extraCopyRequests.$inferSelect;
+
+// === PARENT–TEACHER MESSAGING ===
+
+export const THREAD_STATUSES = ["open", "closed", "archived"] as const;
+export type ThreadStatus = (typeof THREAD_STATUSES)[number];
+
+export const messageThreads = pgTable("message_threads", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }).notNull(),
+  studentId: varchar("student_id", { length: 36 }).references(() => students.id).notNull(),
+  parentUserId: varchar("parent_user_id", { length: 36 }).references(() => users.id).notNull(),
+  teacherUserId: varchar("teacher_user_id", { length: 36 }).references(() => users.id).notNull(),
+  subject: text("subject").notNull(),
+  status: text("status").default("open").notNull(),
+  lastMessageAt: timestamp("last_message_at").defaultNow(),
+  closedBy: varchar("closed_by", { length: 36 }),
+  closedAt: timestamp("closed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertMessageThreadSchema = createInsertSchema(messageThreads).omit({
+  id: true, lastMessageAt: true, closedBy: true, closedAt: true, createdAt: true, updatedAt: true,
+});
+export type InsertMessageThread = z.infer<typeof insertMessageThreadSchema>;
+export type MessageThread = typeof messageThreads.$inferSelect;
+
+export const messages = pgTable("messages", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  threadId: varchar("thread_id", { length: 36 }).references(() => messageThreads.id, { onDelete: "cascade" }).notNull(),
+  schoolId: varchar("school_id", { length: 36 }).notNull(),
+  senderUserId: varchar("sender_user_id", { length: 36 }).references(() => users.id).notNull(),
+  senderRole: text("sender_role").notNull(),
+  body: text("body").notNull(),
+  isRead: boolean("is_read").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  editedAt: timestamp("edited_at"),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const insertMessageSchema = createInsertSchema(messages).omit({
+  id: true, isRead: true, createdAt: true, editedAt: true, deletedAt: true,
+});
+export type InsertMessage = z.infer<typeof insertMessageSchema>;
+export type Message = typeof messages.$inferSelect;
+
+export const messageAuditLogs = pgTable("message_audit_logs", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }).notNull(),
+  threadId: varchar("thread_id", { length: 36 }).references(() => messageThreads.id),
+  actorUserId: varchar("actor_user_id", { length: 36 }).references(() => users.id).notNull(),
+  action: text("action").notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMessageAuditLogSchema = createInsertSchema(messageAuditLogs).omit({ id: true, createdAt: true });
+export type InsertMessageAuditLog = z.infer<typeof insertMessageAuditLogSchema>;
+export type MessageAuditLog = typeof messageAuditLogs.$inferSelect;
 
 // === AUTH REQUEST VALIDATION SCHEMAS ===
 

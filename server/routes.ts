@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import multer from "multer";
-import { storage } from "./storage.js";
+import { storage, getStorageMode } from "./storage.js";
 import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "./paymentIntegration.js";
 import {
   BRANDING_UPLOAD_MAX_BYTES,
@@ -776,6 +776,17 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // === HEALTH ===
+
+  app.get("/api/health", (_req, res) => {
+    const mode = getStorageMode();
+    res.json({
+      status: mode === "database" ? "ok" : "degraded",
+      storageMode: mode,
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   // === AUTH ===
 
@@ -1641,13 +1652,46 @@ export async function registerRoutes(
     res.json(txns);
   });
 
+  async function getTeacherAssignedClasses(teacherUserId: string, schoolId?: string | null) {
+    if (!schoolId) return [];
+
+    const scopedClasses = await storage.getClasses(schoolId);
+    const assignedById = new Map(
+      scopedClasses
+        .filter((cls) => cls.teacherId === teacherUserId)
+        .map((cls) => [cls.id, cls]),
+    );
+
+    // Fallback for legacy data where class rows may have mismatched school IDs.
+    // We only allow classes that are actually referenced by students in this school.
+    const schoolStudents = await storage.getStudents(schoolId);
+    const schoolStudentClassIds = new Set(
+      schoolStudents
+        .map((student) => student.classId)
+        .filter((classId): classId is string => !!classId),
+    );
+
+    const missingClassIds = Array.from(schoolStudentClassIds).filter((classId) => !assignedById.has(classId));
+    if (missingClassIds.length > 0) {
+      const allClasses = await storage.getClasses();
+      for (const cls of allClasses) {
+        if (!schoolStudentClassIds.has(cls.id)) continue;
+        if (cls.teacherId !== teacherUserId) continue;
+        assignedById.set(cls.id, cls);
+      }
+    }
+
+    return Array.from(assignedById.values());
+  }
+
   // === CLASSES (school-scoped) ===
   app.get("/api/classes", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
-    const classes = await storage.getClasses(sid);
     if (getActiveRequestContext(req) === "teacher") {
-      return res.json(classes.filter((cls) => cls.teacherId === req.session.userId));
+      const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
+      return res.json(classes);
     }
+    const classes = await storage.getClasses(sid);
     res.json(classes);
   });
 
@@ -1679,7 +1723,7 @@ export async function registerRoutes(
     const sid = sessionSchoolId(req);
     const students = await storage.getStudents(sid);
     if (getActiveRequestContext(req) === "teacher") {
-      const classes = await storage.getClasses(sid);
+      const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
       const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
       return res.json(students.filter((student) => student.classId && assignedClassIds.has(student.classId)));
     }
@@ -2068,7 +2112,7 @@ export async function registerRoutes(
     const classId = req.query.classId as string | undefined;
     let allocations = await storage.getAllocations(classId, sid);
     if (getActiveRequestContext(req) === "teacher") {
-      const classes = await storage.getClasses(sid);
+      const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
       const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
       allocations = allocations.filter((allocation: any) => allocation.student?.class?.id && assignedClassIds.has(allocation.student.class.id));
     }
@@ -2114,7 +2158,7 @@ export async function registerRoutes(
       }
 
       if (getActiveRequestContext(req) === "teacher") {
-        const classes = await storage.getClasses(sid);
+        const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
         const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
         const allocations = await storage.getAllocations(undefined, sid);
         const targetAllocation = allocations.find((allocation: any) => allocation.id === routeParam(req.params.id));
@@ -2160,7 +2204,7 @@ export async function registerRoutes(
       }
 
       if (getActiveRequestContext(req) === "teacher") {
-        const classes = await storage.getClasses(sid);
+        const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
         const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
         const allocations = await storage.getAllocations(undefined, sid);
         const targetAllocation = allocations.find((allocation: any) => allocation.id === routeParam(req.params.id));
@@ -2582,19 +2626,52 @@ export async function registerRoutes(
     const classes = await storage.getClasses(schoolId);
     const users = await storage.getUsers();
 
+    const classesById = new Map(classes.map((cls) => [cls.id, cls]));
+    const schoolTeachersById = new Map(
+      users
+        .filter((u) => u.schoolId === schoolId && resolveRole(u.role) === "teacher")
+        .map((u) => [u.id, u]),
+    );
+
+    const eligibleChildren = children.filter((link) => link.student?.schoolId === schoolId);
+
+    // Fallback for legacy data: resolve class IDs not returned by school-scoped class query.
+    const missingClassIds = new Set<string>();
+    for (const link of eligibleChildren) {
+      const classId = link.student?.classId;
+      if (classId && !classesById.has(classId)) {
+        missingClassIds.add(classId);
+      }
+    }
+
+    if (missingClassIds.size > 0) {
+      const allClasses = await storage.getClasses();
+      for (const cls of allClasses) {
+        if (missingClassIds.has(cls.id)) {
+          classesById.set(cls.id, cls);
+        }
+      }
+    }
+
     const contacts: Array<{ teacherUserId: string; teacherName: string; studentId: string; studentName: string; className: string }> = [];
-    for (const link of children) {
+    const seen = new Set<string>();
+    for (const link of eligibleChildren) {
       if (!link.student?.classId) continue;
-      const cls = classes.find((c) => c.id === link.student!.classId && c.schoolId === schoolId);
+      const cls = classesById.get(link.student.classId);
       if (!cls?.teacherId) continue;
-      const teacher = users.find((u) => u.id === cls.teacherId && u.schoolId === schoolId);
+      const teacher = schoolTeachersById.get(cls.teacherId);
       if (!teacher) continue;
+
+      const dedupeKey = `${teacher.id}:${link.student.id}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
       contacts.push({
         teacherUserId: teacher.id,
         teacherName: teacher.name,
         studentId: link.student.id,
         studentName: link.student.name,
-        className: cls.name,
+        className: cls.name || link.student.class?.name || "Class",
       });
     }
     return contacts;
@@ -4068,6 +4145,168 @@ export async function registerRoutes(
         return res.json([]);
       }
       res.status(500).json({ message: "Failed to load recent activity" });
+    }
+  });
+
+  // === REPORTS (school-scoped operational reports) ===
+
+  app.get("/api/admin/reports", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+
+      const [
+        books,
+        students,
+        classes,
+        bookLevels,
+        classBookLevels,
+        linkingCodes,
+        payments,
+        allocations,
+        extraRequests,
+        users,
+        inventoryTx,
+      ] = await Promise.all([
+        storage.getBooks(sid),
+        storage.getStudents(sid),
+        storage.getClasses(sid),
+        storage.getBookLevels(sid),
+        storage.getClassBookLevels(sid),
+        storage.getLinkingCodes(sid),
+        storage.getPayments(undefined, sid),
+        storage.getAllocations(undefined, sid),
+        storage.getExtraCopyRequests({ schoolId: sid }),
+        storage.getUsers(),
+        storage.getInventoryTransactions(sid),
+      ]);
+
+      // Scope users to this school
+      const schoolUsers = sid ? users.filter((u) => u.schoolId === sid) : users;
+
+      // ── Inventory report ──
+      const activeBooks = books.filter((b) => b.isActive);
+      const totalStockValue = activeBooks.reduce((sum, b) => sum + (b.stockQuantity ?? 0) * Number(b.price ?? 0), 0);
+      const lowStockBooks = activeBooks.filter((b) => (b.stockQuantity ?? 0) < (b.lowStockThreshold ?? 10));
+      const outOfStockBooks = activeBooks.filter((b) => (b.stockQuantity ?? 0) === 0);
+
+      // ── Payment report ──
+      const paymentsByStatus = {
+        pending: payments.filter((p) => p.status === "pending"),
+        completed: payments.filter((p) => p.status === "completed"),
+        rejected: payments.filter((p) => p.status === "rejected"),
+      };
+      const totalRevenue = paymentsByStatus.completed.reduce((sum, p) => sum + Number(p.totalAmount ?? 0), 0);
+      const pendingRevenue = paymentsByStatus.pending.reduce((sum, p) => sum + Number(p.totalAmount ?? 0), 0);
+
+      // ── Allocation / distribution report ──
+      const allocationsByStatus = {
+        allocated: allocations.filter((a: any) => a.status === "allocated"),
+        confirmed: allocations.filter((a: any) => a.status === "confirmed"),
+        absent: allocations.filter((a: any) => a.status === "absent"),
+      };
+
+      // ── Extra copy request report ──
+      const requestsByStatus = {
+        pending: extraRequests.filter((r: any) => r.status === "pending"),
+        approved: extraRequests.filter((r: any) => r.status === "approved"),
+        rejected: extraRequests.filter((r: any) => r.status === "rejected"),
+      };
+      const requestsByReason: Record<string, number> = {};
+      for (const r of extraRequests) {
+        const reason = (r as any).reason || "OTHER";
+        requestsByReason[reason] = (requestsByReason[reason] || 0) + 1;
+      }
+
+      // ── Class distribution report ──
+      const classReport = classes.map((cls) => {
+        const clsStudents = students.filter((s) => s.classId === cls.id);
+        const clsAllocations = allocations.filter((a: any) => a.classId === cls.id);
+        const clsConfirmed = clsAllocations.filter((a: any) => a.status === "confirmed");
+        return {
+          id: cls.id,
+          name: cls.name,
+          grade: cls.academicYear,
+          studentCount: clsStudents.length,
+          totalAllocations: clsAllocations.length,
+          confirmedAllocations: clsConfirmed.length,
+          completionRate: clsAllocations.length > 0
+            ? Math.round((clsConfirmed.length / clsAllocations.length) * 100)
+            : 0,
+        };
+      });
+
+      // ── User report ──
+      const usersByRole: Record<string, number> = {};
+      for (const u of schoolUsers) {
+        const role = u.role || "unknown";
+        usersByRole[role] = (usersByRole[role] || 0) + 1;
+      }
+
+      // ── Parent linking report ──
+      const codesTotal = linkingCodes.length;
+      const codesUsed = linkingCodes.filter((c) => c.isUsed).length;
+      const codesUnused = codesTotal - codesUsed;
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        inventory: {
+          totalBooks: books.length,
+          activeBooks: activeBooks.length,
+          totalStockUnits: activeBooks.reduce((s, b) => s + (b.stockQuantity ?? 0), 0),
+          totalStockValue: Math.round(totalStockValue * 100) / 100,
+          lowStockBooks: lowStockBooks.map((b) => ({ id: b.id, title: b.title, stock: b.stockQuantity, threshold: b.lowStockThreshold })),
+          outOfStockCount: outOfStockBooks.length,
+          recentTransactions: inventoryTx.slice(0, 20).map((t) => ({ id: t.id, bookId: t.bookId, type: t.transactionType, quantity: t.quantity, reason: t.reason, createdAt: t.createdAt })),
+        },
+        payments: {
+          total: payments.length,
+          pending: paymentsByStatus.pending.length,
+          completed: paymentsByStatus.completed.length,
+          rejected: paymentsByStatus.rejected.length,
+          totalRevenue: Math.round(totalRevenue * 100) / 100,
+          pendingRevenue: Math.round(pendingRevenue * 100) / 100,
+        },
+        allocations: {
+          total: allocations.length,
+          allocated: allocationsByStatus.allocated.length,
+          confirmed: allocationsByStatus.confirmed.length,
+          absent: allocationsByStatus.absent.length,
+          confirmationRate: allocations.length > 0
+            ? Math.round((allocationsByStatus.confirmed.length / allocations.length) * 100)
+            : 0,
+        },
+        extraCopyRequests: {
+          total: extraRequests.length,
+          pending: requestsByStatus.pending.length,
+          approved: requestsByStatus.approved.length,
+          rejected: requestsByStatus.rejected.length,
+          byReason: requestsByReason,
+        },
+        classes: {
+          total: classes.length,
+          details: classReport,
+        },
+        students: {
+          total: students.length,
+        },
+        users: {
+          total: schoolUsers.length,
+          byRole: usersByRole,
+        },
+        parentLinking: {
+          totalCodes: codesTotal,
+          used: codesUsed,
+          unused: codesUnused,
+          linkRate: codesTotal > 0 ? Math.round((codesUsed / codesTotal) * 100) : 0,
+        },
+        bookLevels: {
+          total: bookLevels.length,
+          assignedToClasses: classBookLevels.length,
+        },
+      });
+    } catch (e: any) {
+      console.error("Reports endpoint error:", e);
+      res.status(500).json({ message: "Failed to generate reports" });
     }
   });
 

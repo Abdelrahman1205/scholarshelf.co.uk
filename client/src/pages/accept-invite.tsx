@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
+import { applyBrandingToDocument } from "@/lib/branding";
 
 function getRoleRoute(role: string): string {
   if (role === "school_admin") return "/admin/setup";
@@ -65,6 +66,10 @@ export default function AcceptInvitePage() {
     }
   }, [token, isAuthenticated, user, setLocation]);
 
+  useEffect(() => {
+    applyBrandingToDocument(inviteInfo?.schoolBranding || null);
+  }, [inviteInfo?.schoolBranding]);
+
   if (!token) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4">
@@ -111,9 +116,17 @@ export default function AcceptInvitePage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary/10 mb-4">
-            <BookOpen className="h-8 w-8 text-primary" />
+            {inviteInfo?.schoolBranding?.logoUrl ? (
+              <img
+                src={inviteInfo.schoolBranding.logoUrl}
+                alt={`${inviteInfo?.schoolName || "School"} logo`}
+                className="h-10 w-10 object-contain"
+              />
+            ) : (
+              <BookOpen className="h-8 w-8 text-primary" />
+            )}
           </div>
-          <h1 className="font-heading text-3xl font-bold tracking-tight">EduBook</h1>
+          <h1 className="font-heading text-3xl font-bold tracking-tight">{inviteInfo?.schoolName || "EduBook"}</h1>
           <p className="text-muted-foreground mt-1">Accept Your Invitation</p>
         </div>
 
@@ -147,7 +160,7 @@ export default function AcceptInvitePage() {
                 <Label htmlFor="password">Password</Label>
                 <div className="relative">
                   <Input id="password" type={showPassword ? "text" : "password"} placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
-                  <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                  <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"}>
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>

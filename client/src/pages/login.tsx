@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
+import { applyBrandingToDocument } from "@/lib/branding";
 
 function getRoleRoute(role: string): string {
   if (role === "owner" || role === "platform_admin") return "/admin/owner";
@@ -21,6 +22,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [schoolCode, setSchoolCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [branding, setBranding] = useState<any>(null);
   const { login, isAuthenticated, user, isLoggingIn, loginError } = useAuth();
   const [, setLocation] = useLocation();
 
@@ -29,6 +31,45 @@ export default function LoginPage() {
       setLocation(getRoleRoute(user.role));
     }
   }, [isAuthenticated, user, setLocation]);
+
+  useEffect(() => {
+    const code = schoolCode.trim();
+    let cancelled = false;
+
+    if (!code || code.length < 3) {
+      setBranding(null);
+      applyBrandingToDocument(null);
+      return;
+    }
+
+    async function loadBranding() {
+      try {
+        const res = await fetch(`/api/public/schools/${encodeURIComponent(code)}/branding`);
+        if (!res.ok) {
+          if (!cancelled) {
+            setBranding(null);
+            applyBrandingToDocument(null);
+          }
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled) {
+          setBranding(data);
+          applyBrandingToDocument(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setBranding(null);
+          applyBrandingToDocument(null);
+        }
+      }
+    }
+
+    loadBranding();
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolCode]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -53,9 +94,13 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary/10 mb-4">
-            <BookOpen className="h-8 w-8 text-primary" />
+            {branding?.logoUrl ? (
+              <img src={branding.logoUrl} alt={`${branding?.schoolName || "School"} logo`} className="h-10 w-10 object-contain" />
+            ) : (
+              <BookOpen className="h-8 w-8 text-primary" />
+            )}
           </div>
-          <h1 className="font-heading text-3xl font-bold tracking-tight">EduBook</h1>
+          <h1 className="font-heading text-3xl font-bold tracking-tight">{branding?.schoolName || "EduBook"}</h1>
           <p className="text-muted-foreground mt-1">School Book Management System</p>
         </div>
 
@@ -98,6 +143,7 @@ export default function LoginPage() {
                     className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
                     onClick={() => setShowPassword(!showPassword)}
                     data-testid="button-toggle-password"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>

@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ShoppingCart, Link as LinkIcon, History, CreditCard, Plus, BookOpen, Camera, X, Users } from "lucide-react";
+import { ShoppingCart, Link as LinkIcon, History, CreditCard, Plus, BookOpen, Camera, X, Users, MessageSquare, Send, ArrowLeft, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Html5Qrcode } from "html5-qrcode";
 
 interface ParentPageProps {
@@ -631,6 +633,320 @@ function ParentPaymentsSection({
 }
 
 
+function ParentMessagesSection({ children }: { children: any[] }) {
+  const { toast } = useToast();
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [newMessageOpen, setNewMessageOpen] = useState(false);
+  const [selectedChildId, setSelectedChildId] = useState<string>("");
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  };
+
+  const contactsQuery = useQuery<any[]>({
+    queryKey: ["/api/parent/message-contacts"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const threadsQuery = useQuery<any[]>({
+    queryKey: ["/api/parent/message-threads"],
+    queryFn: getQueryFn({ on401: "throw" }),
+    refetchInterval: 15000,
+  });
+
+  const threadDetailQuery = useQuery<any>({
+    queryKey: ["/api/parent/message-threads/" + selectedThreadId],
+    queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !!selectedThreadId,
+    refetchInterval: selectedThreadId ? 8000 : false,
+  });
+
+  const createThreadMutation = useMutation({
+    mutationFn: async (data: { teacherUserId: string; studentId: string; subject: string; body: string }) => {
+      const res = await apiRequest("POST", "/api/parent/message-threads", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Message Sent" });
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/message-threads"] });
+      setNewMessageOpen(false);
+      setSelectedChildId("");
+      setSelectedTeacherId("");
+      setSubject("");
+      setBody("");
+      // Auto-navigate to the new thread
+      if (data?.threadId || data?.id) {
+        setSelectedThreadId(data.threadId || data.id);
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const replyMutation = useMutation({
+    mutationFn: async ({ threadId, body }: { threadId: string; body: string }) => {
+      const res = await apiRequest("POST", `/api/parent/message-threads/${threadId}/messages`, { body });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Reply Sent" });
+      setReplyBody("");
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/message-threads/" + selectedThreadId] }).then(scrollToBottom);
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/message-threads"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const contacts = contactsQuery.data || [];
+  const threads = threadsQuery.data || [];
+  const threadDetail = threadDetailQuery.data;
+
+  // Auto-scroll to bottom when messages load/change
+  const messageCount = threadDetail?.messages?.length ?? 0;
+  useEffect(() => {
+    if (messageCount > 0) scrollToBottom();
+  }, [messageCount, selectedThreadId]);
+
+  const uniqueChildren = Array.from(new Map(
+    (children || [])
+      .map((child: any) => {
+        const studentId = String(child?.studentId || child?.student?.id || "");
+        const studentName = child?.student?.name || child?.studentName || "Child";
+        if (!studentId) return null;
+        return [studentId, { studentId, studentName }];
+      })
+      .filter(Boolean) as Array<[string, { studentId: string; studentName: string }]>,
+  ).values());
+
+  const teachersForChild = contacts.filter((c: any) => String(c.studentId) === selectedChildId);
+
+  // Thread detail view
+  if (selectedThreadId && threadDetail) {
+    const thread = threadDetail.thread;
+    const messages = threadDetail.messages || [];
+    const isClosed = thread?.status === "closed";
+
+    return (
+      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setSelectedThreadId(null)} className="gap-2">
+            <ArrowLeft className="w-4 h-4" /> Back to Messages
+          </Button>
+        </div>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="font-heading text-lg">{thread?.subject || "Message Thread"}</CardTitle>
+                <CardDescription className="mt-1">
+                  With {thread?.teacherName || "Teacher"} regarding {thread?.studentName || "Student"}
+                </CardDescription>
+              </div>
+              <Badge className={isClosed ? "bg-muted text-muted-foreground" : "bg-emerald-500/10 text-emerald-600"}>
+                {isClosed ? "Closed" : "Open"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div ref={messagesContainerRef} className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+              {messages.map((msg: any) => {
+                const isOwn = msg.senderRole === "parent";
+                return (
+                  <div key={msg.id} className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[75%] rounded-lg p-3 text-sm ${isOwn ? "bg-primary/10 text-foreground" : "bg-muted text-foreground"}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-medium text-xs">{msg.senderName || (isOwn ? "You" : "Teacher")}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ""}
+                        </span>
+                      </div>
+                      <p className="whitespace-pre-wrap">{msg.body}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {isClosed ? (
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-muted p-3 bg-muted/50 text-sm text-muted-foreground">
+                <Lock className="w-4 h-4" /> This thread has been closed. Replies are no longer allowed.
+              </div>
+            ) : (
+              <div className="mt-4 flex gap-2">
+                <Textarea
+                  placeholder="Type your reply..."
+                  value={replyBody}
+                  onChange={(e) => setReplyBody(e.target.value)}
+                  className="min-h-[60px] resize-none"
+                />
+                <Button
+                  size="sm"
+                  className="self-end gap-2"
+                  disabled={!replyBody.trim() || replyMutation.isPending}
+                  onClick={() => replyMutation.mutate({ threadId: selectedThreadId, body: replyBody.trim() })}
+                >
+                  <Send className="w-4 h-4" />
+                  {replyMutation.isPending ? "Sending..." : "Send"}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Thread list view
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-heading font-bold tracking-tight text-foreground">Secure School Messages</h1>
+          <p className="text-muted-foreground mt-2">Communicate with your children's teachers.</p>
+        </div>
+        <Button className="gap-2" onClick={() => setNewMessageOpen(true)}>
+          <Plus className="w-4 h-4" /> New Message
+        </Button>
+      </div>
+
+      {threadsQuery.isLoading ? (
+        <Card><CardContent className="p-8 text-center text-muted-foreground">Loading messages...</CardContent></Card>
+      ) : threads.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <MessageSquare className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
+            <p className="text-muted-foreground">No messages yet. Start a conversation with a teacher.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="px-6">Subject</TableHead>
+                  <TableHead>Teacher</TableHead>
+                  <TableHead>Student</TableHead>
+                  <TableHead>Last Updated</TableHead>
+                  <TableHead className="text-right px-6">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {threads.map((thread: any) => (
+                  <TableRow
+                    key={thread.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => setSelectedThreadId(thread.id)}
+                  >
+                    <TableCell className="px-6 font-medium">
+                      <div className="flex items-center gap-2">
+                        {thread.subject}
+                        {(thread.unreadByParent || 0) > 0 && (
+                          <Badge className="bg-primary text-primary-foreground text-xs px-1.5 py-0.5 min-w-[20px] text-center">
+                            {thread.unreadByParent}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{thread.teacherName || "Teacher"}</TableCell>
+                    <TableCell>{thread.studentName || "Student"}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {thread.updatedAt ? new Date(thread.updatedAt).toLocaleDateString() : "—"}
+                    </TableCell>
+                    <TableCell className="text-right px-6">
+                      <Badge className={thread.status === "closed" ? "bg-muted text-muted-foreground" : "bg-emerald-500/10 text-emerald-600"}>
+                        {thread.status === "closed" ? "Closed" : "Open"}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* New Message Dialog */}
+      <Dialog open={newMessageOpen} onOpenChange={setNewMessageOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-heading">New Message</DialogTitle>
+            <DialogDescription>Send a message to your child's teacher.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Child</label>
+              <Select value={selectedChildId} onValueChange={(v) => { setSelectedChildId(v); setSelectedTeacherId(""); }}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a child" />
+                </SelectTrigger>
+                <SelectContent>
+                  {uniqueChildren.map((c: any) => (
+                    <SelectItem key={c.studentId} value={String(c.studentId)}>{c.studentName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Teacher</label>
+              <Select value={selectedTeacherId} onValueChange={setSelectedTeacherId} disabled={!selectedChildId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={selectedChildId ? "Select a teacher" : "Select a child first"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {teachersForChild.map((c: any) => (
+                    <SelectItem key={c.teacherUserId} value={String(c.teacherUserId)}>
+                      {c.teacherName} ({c.className})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Subject</label>
+              <Input placeholder="Message subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Message</label>
+              <Textarea placeholder="Type your message..." value={body} onChange={(e) => setBody(e.target.value)} className="min-h-[100px]" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewMessageOpen(false)}>Cancel</Button>
+            <Button
+              className="gap-2"
+              disabled={!selectedTeacherId || !subject.trim() || !body.trim() || createThreadMutation.isPending}
+              onClick={() => createThreadMutation.mutate({
+                teacherUserId: selectedTeacherId,
+                studentId: selectedChildId,
+                subject: subject.trim(),
+                body: body.trim(),
+              })}
+            >
+              <Send className="w-4 h-4" />
+              {createThreadMutation.isPending ? "Sending..." : "Send Message"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+
 export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
   const { toast } = useToast();
   const [linkCode, setLinkCode] = useState("");
@@ -693,6 +1009,8 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
         return <ParentBasketsSection basketsQuery={basketsQuery} baskets={baskets} children={children} pendingBaskets={pendingBaskets} processedBaskets={processedBaskets} childrenWithoutBaskets={childrenWithoutBaskets} createBasketMutation={createBasketMutation} setSelectedBasketForPayment={setSelectedBasketForPayment} setPaymentResult={setPaymentResult} setPaymentDialogOpen={setPaymentDialogOpen} paymentDialogOpen={paymentDialogOpen} paymentResult={paymentResult} selectedBasketForPayment={selectedBasketForPayment} paymentMutation={paymentMutation} />;
       case "payments":
         return <ParentPaymentsSection paymentsQuery={paymentsQuery} payments={payments} />;
+      case "messages":
+        return <ParentMessagesSection children={children} />;
       default:
         return <ParentDashboardSection children={children} baskets={baskets} payments={payments} isChildrenLoading={childrenQuery.isLoading} isBasketsLoading={basketsQuery.isLoading} isPaymentsLoading={paymentsQuery.isLoading} />;
     }

@@ -4,13 +4,14 @@ import {
   BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, ChevronRight,
-  ShieldAlert, ArrowLeft
+  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getQueryFn } from "@/lib/queryClient";
+import { applyBrandingToDocument } from "@/lib/branding";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -52,7 +53,10 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Payments", href: "/admin/payments", icon: CreditCard },
       { label: "Allocations", href: "/admin/allocations", icon: BoxSelect },
       { label: "Extra Requests", href: "/admin/requests", icon: ClipboardList },
+      { label: "Communications", href: "/admin/communications", icon: MessageSquare },
+      { label: "Reports", href: "/admin/reports", icon: BarChart2 },
       { label: "Users", href: "/admin/users", icon: UserPlus },
+      { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },
   admin: {
@@ -69,7 +73,10 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Payments", href: "/admin/payments", icon: CreditCard },
       { label: "Allocations", href: "/admin/allocations", icon: BoxSelect },
       { label: "Extra Requests", href: "/admin/requests", icon: ClipboardList },
+      { label: "Communications", href: "/admin/communications", icon: MessageSquare },
+      { label: "Reports", href: "/admin/reports", icon: BarChart2 },
       { label: "Users", href: "/admin/users", icon: UserPlus },
+      { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },
   teacher: {
@@ -79,6 +86,7 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Dashboard", href: "/teacher", icon: LayoutDashboard },
       { label: "Book Distribution", href: "/teacher/distribution", icon: Package },
       { label: "Extra Requests", href: "/teacher/requests", icon: ClipboardList },
+      { label: "Messages", href: "/teacher/messages", icon: MessageSquare },
     ],
   },
   parent: {
@@ -89,6 +97,7 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Link Child", href: "/parent/link", icon: LinkIcon },
       { label: "Book Baskets", href: "/parent/baskets", icon: ShoppingCart },
       { label: "Payments", href: "/parent/payments", icon: CreditCard },
+      { label: "Messages", href: "/parent/messages", icon: MessageSquare },
     ],
   },
 };
@@ -135,6 +144,23 @@ export default function Layout({ children }: LayoutProps) {
   });
 
   const adminSetupComplete = !!setupStatus?.operationalSetupCompleted && !!setupStatus?.schoolActive;
+
+  // Fetch branding for any school-scoped role (admin, teacher, parent, owner_support)
+  const shouldFetchBranding = effectiveRole === "admin" || effectiveRole === "owner_support" || effectiveRole === "teacher" || effectiveRole === "parent";
+  const { data: schoolBranding } = useQuery<any>({
+    queryKey: ["/api/school/branding"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: shouldFetchBranding,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (!shouldFetchBranding) {
+      applyBrandingToDocument(null);
+      return;
+    }
+    applyBrandingToDocument(schoolBranding || null);
+  }, [shouldFetchBranding, schoolBranding]);
 
   const navItems = (() => {
     if (!config) return [] as NavItem[];
@@ -202,11 +228,17 @@ export default function Layout({ children }: LayoutProps) {
   const SidebarContent = () => (
     <>
       <div className="h-16 flex items-center px-5 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
-        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
-          <BookOpen className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <span className="font-heading font-bold text-lg tracking-tight block leading-tight">EduBook</span>
+        {schoolBranding?.logoUrl ? (
+          <img src={schoolBranding.logoUrl} alt="School logo" className="h-9 w-9 rounded-lg object-contain mr-3 flex-shrink-0" />
+        ) : (
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center mr-3 flex-shrink-0">
+            <BookOpen className="h-5 w-5 text-primary" />
+          </div>
+        )}
+        <div className="min-w-0">
+          <span className="font-heading font-bold text-lg tracking-tight block leading-tight truncate">
+            {schoolBranding?.schoolName || "EduBook"}
+          </span>
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">
             {inSupportMode ? "Support Mode" : "School Books"}
           </span>
@@ -329,7 +361,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
+          <button aria-label="Close navigation menu" className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
           <aside className="absolute left-0 top-0 bottom-0 w-72 bg-card border-r border-border flex flex-col shadow-2xl">
             <SidebarContent />
           </aside>
@@ -346,17 +378,23 @@ export default function Layout({ children }: LayoutProps) {
           inSupportMode && "border-b-amber-300"
         )}>
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)} className="h-9 w-9">
+            <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)} className="h-9 w-9" aria-label="Open navigation menu">
               <Menu className="h-5 w-5" />
             </Button>
             <div className="flex items-center gap-2">
-              <BookOpen className="h-5 w-5 text-primary" />
-              <span className="font-heading font-bold text-lg">EduBook</span>
+              {schoolBranding?.logoUrl ? (
+                <img src={schoolBranding.logoUrl} alt="Logo" className="h-6 w-6 object-contain" />
+              ) : (
+                <BookOpen className="h-5 w-5 text-primary" />
+              )}
+              <span className="font-heading font-bold text-lg truncate max-w-[140px]">
+                {schoolBranding?.schoolName || "EduBook"}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground hidden sm:inline">{user?.name}</span>
-            <Button variant="ghost" size="icon" onClick={handleLogout} data-testid="button-logout-mobile" className="h-9 w-9">
+            <Button variant="ghost" size="icon" onClick={handleLogout} data-testid="button-logout-mobile" className="h-9 w-9" aria-label="Sign out">
               <LogOut className="h-5 w-5" />
             </Button>
           </div>
