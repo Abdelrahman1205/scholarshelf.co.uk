@@ -1072,10 +1072,24 @@ export async function registerRoutes(
           }
         | undefined;
 
-      if (user.schoolId) {
+      let brandingSchoolId: string | null = user.schoolId;
+
+      if (!brandingSchoolId && user.email) {
+        const parentLinks = await storage.getParentChildren(user.email);
+        brandingSchoolId = parentLinks.find((link) => !!link.student?.schoolId)?.student?.schoolId ?? null;
+
+        if (!brandingSchoolId) {
+          const normalizedEmail = user.email.trim().toLowerCase();
+          const linkingCodes = await storage.getLinkingCodes();
+          brandingSchoolId =
+            linkingCodes.find((code) => (code.parentEmail || "").trim().toLowerCase() === normalizedEmail)?.student?.schoolId ?? null;
+        }
+      }
+
+      if (brandingSchoolId) {
         const [school, branding] = await Promise.all([
-          storage.getSchoolById(user.schoolId),
-          storage.getSchoolBranding(user.schoolId),
+          storage.getSchoolById(brandingSchoolId),
+          storage.getSchoolBranding(brandingSchoolId),
         ]);
 
         emailBranding = {
