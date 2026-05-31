@@ -4411,8 +4411,12 @@ export async function registerRoutes(
     }
   });
 
-  // ── API catch-all: return JSON 404 for unknown /api/* routes ──
-  app.all("/api/*", (_req: Request, res: Response) => {
+  // ── API catch-all: return JSON 404 for unknown /api routes ──
+  app.all("/api", (_req: Request, res: Response) => {
+    res.status(404).json({ message: "API endpoint not found" });
+  });
+
+  app.all("/api/*rest", (_req: Request, res: Response) => {
     res.status(404).json({ message: "API endpoint not found" });
   });
 

@@ -836,23 +836,29 @@ class DatabaseStorage implements IStorage {
   // === LINKING CODES ===
 
   async getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]> {
-    let codes;
-    const filter = schoolFilter(schema.childLinkingCodes, schoolId);
-    if (filter) {
-      codes = await getDb().select().from(schema.childLinkingCodes).where(filter);
-    } else {
-      codes = await getDb().select().from(schema.childLinkingCodes);
-    }
-    const result = [];
-    for (const code of codes) {
-      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, code.studentId));
-      let cls;
-      if (student?.classId) {
-        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+    try {
+      let codes;
+      const filter = schoolFilter(schema.childLinkingCodes, schoolId);
+      if (filter) {
+        codes = await getDb().select().from(schema.childLinkingCodes).where(filter);
+      } else {
+        codes = await getDb().select().from(schema.childLinkingCodes);
       }
-      result.push({ ...code, student, class: cls });
+
+      const result = [];
+      for (const code of codes) {
+        const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, code.studentId));
+        let cls;
+        if (student?.classId) {
+          [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+        }
+        result.push({ ...code, student, class: cls });
+      }
+      return result;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return [];
     }
-    return result;
   }
 
   async createLinkingCode(codeData: schema.InsertChildLinkingCode): Promise<schema.ChildLinkingCode> {
@@ -879,17 +885,22 @@ class DatabaseStorage implements IStorage {
   // === PARENT ===
 
   async getParentChildren(parentIdentifier: string): Promise<(schema.ParentChild & { student?: schema.Student & { class?: schema.Class } })[]> {
-    const links = await getDb().select().from(schema.parentChildren).where(eq(schema.parentChildren.parentIdentifier, parentIdentifier));
-    const result = [];
-    for (const link of links) {
-      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, link.studentId));
-      let cls;
-      if (student?.classId) {
-        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+    try {
+      const links = await getDb().select().from(schema.parentChildren).where(eq(schema.parentChildren.parentIdentifier, parentIdentifier));
+      const result = [];
+      for (const link of links) {
+        const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, link.studentId));
+        let cls;
+        if (student?.classId) {
+          [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+        }
+        result.push({ ...link, student: student ? { ...student, class: cls } : undefined });
       }
-      result.push({ ...link, student: student ? { ...student, class: cls } : undefined });
+      return result;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return [];
     }
-    return result;
   }
 
   // === BASKETS ===
