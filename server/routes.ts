@@ -1062,7 +1062,32 @@ export async function registerRoutes(
       });
 
       const resetLink = `${getPublicBaseUrl(req)}/reset-password?token=${invite.id}.${rawToken}`;
-      const sent = await sendPasswordResetEmail(email, resetLink);
+
+      let emailBranding:
+        | {
+            schoolName?: string | null;
+            logoUrl?: string | null;
+            primaryColour?: string | null;
+            secondaryColour?: string | null;
+          }
+        | undefined;
+
+      if (user.schoolId) {
+        const [school, branding] = await Promise.all([
+          storage.getSchoolById(user.schoolId),
+          storage.getSchoolBranding(user.schoolId),
+        ]);
+
+        emailBranding = {
+          schoolName: school?.name || null,
+          // Prefer email-specific logo, fall back to general school logo.
+          logoUrl: branding?.emailHeaderLogoUrl || branding?.logoUrl || null,
+          primaryColour: branding?.primaryColour || null,
+          secondaryColour: branding?.secondaryColour || null,
+        };
+      }
+
+      const sent = await sendPasswordResetEmail(email, resetLink, emailBranding);
       if (!sent) {
         console.log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`);
         if (!isResendConfigured()) {
@@ -4163,48 +4188,47 @@ export async function registerRoutes(
       });
     } catch (e: any) {
       console.error("Dashboard summary error:", e);
-      if (isDbUnavailableError(e)) {
-        return res.json({
-          totalBooks: 0,
-          lowStockBooks: 0,
-          totalStudents: 0,
-          parentsLinked: 0,
-          parentCodesNotSent: 0,
-          pendingPayments: 0,
-          paymentsSubmitted: 0,
-          paymentsVerified: 0,
-          readyForDistribution: 0,
-          teacherConfirmationsPending: 0,
-          extraCopyRequestsPending: 0,
-          totalClasses: 0,
-          totalBookLevels: 0,
-          totalLinkingCodes: 0,
-          school: null,
-          setupMissingSteps: [],
-          setupNextAction: null,
-          setupProgress: {
-            done: 1,
-            total: 10,
-            percent: 10,
-          },
-          setupChecklist: {
-            schoolProfileComplete: true,
-            classesCreated: false,
-            booksAdded: false,
-            bookLevelsCreated: false,
-            bookLevelsAssignedToClasses: false,
-            studentsAdded: false,
-            parentCodesGenerated: false,
-            parentsLinked: false,
-            paymentSetupReviewed: false,
-            operationalSetupComplete: false,
-            schoolProfileCompleted: true,
-            bookBundlesCreated: false,
-            bundlesAssignedToClasses: false,
-          },
-        });
-      }
-      res.status(500).json({ message: "Failed to load dashboard summary" });
+      // Return safe fallback data for any error so the dashboard still renders
+      return res.json({
+        totalBooks: 0,
+        lowStockBooks: 0,
+        totalStudents: 0,
+        parentsLinked: 0,
+        parentCodesNotSent: 0,
+        pendingPayments: 0,
+        paymentsSubmitted: 0,
+        paymentsVerified: 0,
+        readyForDistribution: 0,
+        teacherConfirmationsPending: 0,
+        extraCopyRequestsPending: 0,
+        totalClasses: 0,
+        totalBookLevels: 0,
+        totalLinkingCodes: 0,
+        school: null,
+        setupMissingSteps: [],
+        setupNextAction: null,
+        setupProgress: {
+          done: 1,
+          total: 10,
+          percent: 10,
+        },
+        setupChecklist: {
+          schoolProfileComplete: true,
+          classesCreated: false,
+          booksAdded: false,
+          bookLevelsCreated: false,
+          bookLevelsAssignedToClasses: false,
+          studentsAdded: false,
+          parentCodesGenerated: false,
+          parentsLinked: false,
+          paymentSetupReviewed: false,
+          operationalSetupComplete: false,
+          schoolProfileCompleted: true,
+          bookBundlesCreated: false,
+          bundlesAssignedToClasses: false,
+        },
+        _error: e.message || "Failed to load dashboard data",
+      });
     }
   });
 
