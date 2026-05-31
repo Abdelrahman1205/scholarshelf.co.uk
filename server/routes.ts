@@ -547,6 +547,31 @@ function parseDataUriImage(dataUri: string): { mimeType: string; buffer: Buffer 
   }
 }
 
+type EmailBrandingPayload = {
+  schoolName?: string | null;
+  logoUrl?: string | null;
+  primaryColour?: string | null;
+  secondaryColour?: string | null;
+};
+
+async function getEmailBrandingForSchool(req: Request, schoolId: string | null | undefined): Promise<EmailBrandingPayload | undefined> {
+  if (!schoolId) return undefined;
+
+  const [school, branding] = await Promise.all([
+    storage.getSchoolById(schoolId),
+    storage.getSchoolBranding(schoolId),
+  ]);
+
+  const rawLogoUrl = branding?.emailHeaderLogoUrl || branding?.logoUrl || null;
+
+  return {
+    schoolName: school?.name || null,
+    logoUrl: toEmailSafeLogoUrl(req, school?.code || null, rawLogoUrl),
+    primaryColour: branding?.primaryColour || null,
+    secondaryColour: branding?.secondaryColour || null,
+  };
+}
+
 function normalizeEmail(email: string | null | undefined): string | null {
   if (!email) return null;
   return email.trim().toLowerCase();
@@ -1091,14 +1116,7 @@ export async function registerRoutes(
 
       const resetLink = `${getPublicBaseUrl(req)}/reset-password?token=${invite.id}.${rawToken}`;
 
-      let emailBranding:
-        | {
-            schoolName?: string | null;
-            logoUrl?: string | null;
-            primaryColour?: string | null;
-            secondaryColour?: string | null;
-          }
-        | undefined;
+      let emailBranding: EmailBrandingPayload | undefined;
 
       let brandingSchoolId: string | null = user.schoolId;
 
@@ -1114,23 +1132,7 @@ export async function registerRoutes(
         }
       }
 
-      if (brandingSchoolId) {
-        const [school, branding] = await Promise.all([
-          storage.getSchoolById(brandingSchoolId),
-          storage.getSchoolBranding(brandingSchoolId),
-        ]);
-
-        const rawLogoUrl = branding?.emailHeaderLogoUrl || branding?.logoUrl || null;
-
-        emailBranding = {
-          schoolName: school?.name || null,
-          // Prefer email-specific logo, fall back to general school logo.
-          // Convert data URIs to a public HTTPS endpoint for email client compatibility.
-          logoUrl: toEmailSafeLogoUrl(req, school?.code || null, rawLogoUrl),
-          primaryColour: branding?.primaryColour || null,
-          secondaryColour: branding?.secondaryColour || null,
-        };
-      }
+      emailBranding = await getEmailBrandingForSchool(req, brandingSchoolId);
 
       const sent = await sendPasswordResetEmail(email, resetLink, emailBranding);
       if (!sent) {
@@ -2138,7 +2140,8 @@ export async function registerRoutes(
         user.email,
         payment.paymentReference || paymentId,
         payment.totalAmount || "0.00",
-        "external_reference"
+        "external_reference",
+        await getEmailBrandingForSchool(req, payment.schoolId)
       );
       if (!submittedSent) {
         console.log(`[PAYMENT REF SUBMITTED] Parent: ${user.email}, Ref: ${cleanRef}, OrderRef: ${payment.paymentReference}`);
@@ -2185,7 +2188,12 @@ export async function registerRoutes(
       });
 
       if (payment?.parentIdentifier) {
-        const sent = await sendPaymentVerifiedEmail(payment.parentIdentifier, payment.paymentReference || payment.id, payment.totalAmount || "0.00");
+        const sent = await sendPaymentVerifiedEmail(
+          payment.parentIdentifier,
+          payment.paymentReference || payment.id,
+          payment.totalAmount || "0.00",
+          await getEmailBrandingForSchool(req, payment.schoolId),
+        );
         if (!sent) {
           console.log(`[PAYMENT CONFIRMED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
         }
@@ -2217,7 +2225,12 @@ export async function registerRoutes(
       });
 
       if (payment?.parentIdentifier) {
-        const sent = await sendPaymentRejectedEmail(payment.parentIdentifier, payment.paymentReference || payment.id, payment.totalAmount || "0.00");
+        const sent = await sendPaymentRejectedEmail(
+          payment.parentIdentifier,
+          payment.paymentReference || payment.id,
+          payment.totalAmount || "0.00",
+          await getEmailBrandingForSchool(req, payment.schoolId),
+        );
         if (!sent) {
           console.log(`[PAYMENT REJECTED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
         }
@@ -2755,7 +2768,7 @@ export async function registerRoutes(
       });
 
       const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${invite.id}.${rawToken}`;
-      const sent = await sendInviteEmail(email, normalizedRole, inviteLink);
+      const sent = await sendInviteEmail(email, normalizedRole, inviteLink, await getEmailBrandingForSchool(req, sid));
       if (!sent) {
         console.log(`[INVITE] Link for ${email} (${role}): ${inviteLink}`);
         if (!isResendConfigured()) {
@@ -3699,7 +3712,13 @@ export async function registerRoutes(
       });
 
       const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${invite.id}.${rawToken}`;
-      const emailSent = await sendSchoolSetupInviteEmail(adminEmail, adminName, school.name, inviteLink);
+      const emailSent = await sendSchoolSetupInviteEmail(
+        adminEmail,
+        adminName,
+        school.name,
+        inviteLink,
+        await getEmailBrandingForSchool(req, school.id),
+      );
 
       if (!emailSent) {
         console.log(`[SCHOOL SETUP INVITE] Link for ${adminEmail}: ${inviteLink}`);
@@ -3774,7 +3793,13 @@ export async function registerRoutes(
       } as any);
 
       const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${replacement.id}.${rawToken}`;
-      const emailSent = await sendSchoolSetupInviteEmail(invite.email, invite.inviteeName || "School Admin", school.name, inviteLink);
+      const emailSent = await sendSchoolSetupInviteEmail(
+        invite.email,
+        invite.inviteeName || "School Admin",
+        school.name,
+        inviteLink,
+        await getEmailBrandingForSchool(req, school.id),
+      );
 
       await auditLog(req, "school_setup_invite_resent", `school:${school.id}`, {
         originalInviteId: invite.id,
