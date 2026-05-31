@@ -55,7 +55,9 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
 function wrapEmail(title: string, body: string, branding?: EmailBranding): string {
   const brandPrimary = branding?.primaryColour || "#1e3a5f";
   const brandSecondary = branding?.secondaryColour || "#0f172a";
-  const heading = branding?.schoolName || "Scholar Shelf";
+  const appName = "Scholar Shelf";
+  const schoolName = (branding?.schoolName || "").trim();
+  const showSchoolName = schoolName.length > 0 && schoolName.toLowerCase() !== appName.toLowerCase();
   const logoUrl = branding?.logoUrl || null;
 
   return `<!DOCTYPE html>
@@ -77,11 +79,12 @@ function wrapEmail(title: string, body: string, branding?: EmailBranding): strin
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="vertical-align:middle;">
-                    <span style="color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:0.5px;">
-                      ${heading}
-                    </span>
+                    <div style="color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:0.5px;line-height:1.2;">
+                      ${appName}
+                    </div>
+                    ${showSchoolName ? `<div style="color:#dbeafe;font-size:13px;line-height:1.35;margin-top:4px;">${schoolName}</div>` : ""}
                   </td>
-                  ${logoUrl ? `<td align="right" style="vertical-align:middle;"><img src="${logoUrl}" alt="${heading} logo" style="max-height:42px;max-width:150px;display:block;background:#ffffff;border-radius:6px;padding:4px;" /></td>` : ""}
+                  ${logoUrl ? `<td align="right" style="vertical-align:middle;width:180px;"><img src="${logoUrl}" alt="${showSchoolName ? schoolName : appName} logo" style="max-height:56px;max-width:170px;display:block;margin-left:auto;background:#ffffff;border-radius:6px;padding:4px;object-fit:contain;" /></td>` : ""}
                 </tr>
               </table>
             </td>
