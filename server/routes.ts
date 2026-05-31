@@ -1977,7 +1977,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_order_created",
         userId: req.session.userId!,
-        details: `Order created: ref=${reference}, amount=£${total.toFixed(2)}, baskets=${basketIds.length}`,
+        metadata: `Order created: ref=${reference}, amount=£${total.toFixed(2)}, baskets=${basketIds.length}`,
       });
 
       res.status(201).json(payment);
@@ -2031,7 +2031,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_reference_submitted",
         userId: req.session.userId!,
-        details: `Reference submitted: ref=${cleanRef}, paymentId=${paymentId}`,
+        metadata: `Reference submitted: ref=${cleanRef}, paymentId=${paymentId}`,
       });
 
       // Notify parent
@@ -2082,7 +2082,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_confirmed",
         userId: req.session.userId!,
-        details: `Payment confirmed: id=${payment.id}, ref=${payment.paymentReference}, extRef=${payment.paymentReferenceNumber || "N/A"}`,
+        metadata: `Payment confirmed: id=${payment.id}, ref=${payment.paymentReference}, extRef=${payment.paymentReferenceNumber || "N/A"}`,
       });
 
       if (payment?.parentIdentifier) {
@@ -2114,7 +2114,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_rejected",
         userId: req.session.userId!,
-        details: `Payment rejected: id=${payment.id}, ref=${payment.paymentReference}, reason=${reviewNote || "none"}`,
+        metadata: `Payment rejected: id=${payment.id}, ref=${payment.paymentReference}, reason=${reviewNote || "none"}`,
       });
 
       if (payment?.parentIdentifier) {
@@ -2139,7 +2139,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_needs_review",
         userId: req.session.userId!,
-        details: `Payment flagged for review: id=${payment.id}, ref=${payment.paymentReference}, note=${reviewNote || "none"}`,
+        metadata: `Payment flagged for review: id=${payment.id}, ref=${payment.paymentReference}, note=${reviewNote || "none"}`,
       });
 
       res.json(payment);
@@ -2158,7 +2158,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_ready_for_collection",
         userId: req.session.userId!,
-        details: `Order marked ready for collection: id=${payment.id}, ref=${payment.paymentReference}`,
+        metadata: `Order marked ready for collection: id=${payment.id}, ref=${payment.paymentReference}`,
       });
 
       res.json(payment);
@@ -2176,7 +2176,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_collected",
         userId: req.session.userId!,
-        details: `Order collected: id=${payment.id}, ref=${payment.paymentReference}`,
+        metadata: `Order collected: id=${payment.id}, ref=${payment.paymentReference}`,
       });
 
       res.json(payment);
@@ -2194,7 +2194,7 @@ export async function registerRoutes(
       await storage.createAuditLog({
         action: "payment_cancelled",
         userId: req.session.userId!,
-        details: `Order cancelled: id=${payment.id}, ref=${payment.paymentReference}, reason=${reviewNote || "none"}`,
+        metadata: `Order cancelled: id=${payment.id}, ref=${payment.paymentReference}, reason=${reviewNote || "none"}`,
       });
 
       res.json(payment);
@@ -2704,9 +2704,9 @@ export async function registerRoutes(
 
       // Webhook is trusted (signature verified) — no schoolId filter needed
       if (status === "confirmed" || status === "paid" || status === "completed") {
-        await storage.confirmPayment(payment.id);
+        await storage.confirmPayment(payment.id, "webhook");
       } else if (status === "rejected" || status === "failed" || status === "cancelled") {
-        await storage.rejectPayment(payment.id);
+        await storage.rejectPayment(payment.id, "webhook");
       }
 
       res.json({ message: "Payment updated", paymentId: payment.id });
@@ -4412,11 +4412,8 @@ export async function registerRoutes(
   });
 
   // ── API catch-all: return JSON 404 for unknown /api routes ──
-  app.all("/api", (_req: Request, res: Response) => {
-    res.status(404).json({ message: "API endpoint not found" });
-  });
-
-  app.all("/api/*rest", (_req: Request, res: Response) => {
+  // Catch-all for unknown API routes — return JSON 404 instead of HTML
+  app.all("/api/*path", (_req: Request, res: Response) => {
     res.status(404).json({ message: "API endpoint not found" });
   });
 
