@@ -519,6 +519,34 @@ function getPublicBaseUrl(req: Request): string {
   return `${protocol}://${host}`;
 }
 
+function toEmailSafeLogoUrl(req: Request, schoolCode: string | null | undefined, rawLogoUrl: string | null | undefined): string | null {
+  if (!rawLogoUrl) return null;
+
+  if (rawLogoUrl.startsWith("data:")) {
+    if (!schoolCode) return null;
+    return `${getPublicBaseUrl(req)}/api/public/schools/${encodeURIComponent(schoolCode)}/email-logo`;
+  }
+
+  if (rawLogoUrl.startsWith("/")) {
+    return `${getPublicBaseUrl(req)}${rawLogoUrl}`;
+  }
+
+  return rawLogoUrl;
+}
+
+function parseDataUriImage(dataUri: string): { mimeType: string; buffer: Buffer } | null {
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(dataUri);
+  if (!match) return null;
+  try {
+    return {
+      mimeType: match[1],
+      buffer: Buffer.from(match[2], "base64"),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function normalizeEmail(email: string | null | undefined): string | null {
   if (!email) return null;
   return email.trim().toLowerCase();
@@ -1092,10 +1120,13 @@ export async function registerRoutes(
           storage.getSchoolBranding(brandingSchoolId),
         ]);
 
+        const rawLogoUrl = branding?.emailHeaderLogoUrl || branding?.logoUrl || null;
+
         emailBranding = {
           schoolName: school?.name || null,
           // Prefer email-specific logo, fall back to general school logo.
-          logoUrl: branding?.emailHeaderLogoUrl || branding?.logoUrl || null,
+          // Convert data URIs to a public HTTPS endpoint for email client compatibility.
+          logoUrl: toEmailSafeLogoUrl(req, school?.code || null, rawLogoUrl),
           primaryColour: branding?.primaryColour || null,
           secondaryColour: branding?.secondaryColour || null,
         };
@@ -1598,6 +1629,35 @@ export async function registerRoutes(
       res.json({ schoolId: school.id, schoolCode: school.code, ...buildBrandingResponse(branding, school.name) });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to load public branding" });
+    }
+  });
+
+  app.get("/api/public/schools/:code/email-logo", async (req, res) => {
+    try {
+      const code = normalizeSchoolCode(routeParam(req.params.code));
+      const schools = await storage.getSchools();
+      const school = schools.find((item) => normalizeSchoolCode(item.code) === code);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const branding = await storage.getSchoolBranding(school.id);
+      const rawLogo = branding?.emailHeaderLogoUrl || branding?.logoUrl || null;
+      if (!rawLogo) return res.status(404).json({ message: "Logo not found" });
+
+      if (rawLogo.startsWith("data:")) {
+        const parsed = parseDataUriImage(rawLogo);
+        if (!parsed) return res.status(400).json({ message: "Invalid logo format" });
+        res.setHeader("Content-Type", parsed.mimeType);
+        res.setHeader("Cache-Control", "public, max-age=600");
+        return res.send(parsed.buffer);
+      }
+
+      if (rawLogo.startsWith("/")) {
+        return res.redirect(302, `${getPublicBaseUrl(req)}${rawLogo}`);
+      }
+
+      return res.redirect(302, rawLogo);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load public email logo" });
     }
   });
 
