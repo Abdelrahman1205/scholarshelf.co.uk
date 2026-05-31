@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { pgTable, text, varchar, integer, numeric, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, numeric, boolean, timestamp, index, uniqueIndex, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -187,6 +187,20 @@ export const auditLogs = pgTable("audit_logs", {
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
+
+// Session storage used by connect-pg-simple.
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: json("sess").notNull(),
+    expire: timestamp("expire", { mode: "date" }).notNull(),
+  },
+  (table) => ({
+    expireIdx: index("IDX_session_expire").on(table.expire),
+  }),
+);
+export type UserSession = typeof userSessions.$inferSelect;
 
 export const classes = pgTable("classes", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
