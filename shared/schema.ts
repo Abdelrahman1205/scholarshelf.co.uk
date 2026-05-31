@@ -315,22 +315,49 @@ export const insertBasketItemSchema = createInsertSchema(basketItems).omit({ id:
 export type InsertBasketItem = z.infer<typeof insertBasketItemSchema>;
 export type BasketItem = typeof basketItems.$inferSelect;
 
+/**
+ * Payment / Order statuses:
+ *   awaiting_reference    – order created, parent has not yet submitted external reference
+ *   reference_submitted   – parent submitted a Paragon/external reference number
+ *   confirmed             – admin verified the reference and approved the payment
+ *   rejected              – admin rejected the reference; parent may resubmit
+ *   needs_review          – admin flagged for further investigation
+ *   ready_for_collection  – payment confirmed, books ready for parent/student collection
+ *   collected             – books collected / order fully complete
+ *   cancelled             – order cancelled by admin
+ *
+ * Legacy status "pending" is treated as "awaiting_reference" in the UI.
+ * Legacy status "completed" is treated as "confirmed".
+ * Legacy status "failed" is treated as "rejected".
+ */
 export const bookPayments = pgTable("book_payments", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   parentIdentifier: text("parent_identifier").notNull(),
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull(),
-  paymentMethod: text("payment_method").default("bank_transfer"),
+  paymentMethod: text("payment_method").default("external_reference"),
   paymentReference: text("payment_reference").unique().notNull(),
-  status: text("status").default("pending").notNull(),
+  status: text("status").default("awaiting_reference").notNull(),
   paidAt: timestamp("paid_at").defaultNow(),
   confirmedAt: timestamp("confirmed_at"),
+  // External payment reference fields (Paragon App or similar)
+  paymentReferenceNumber: text("payment_reference_number"),
+  paymentReferenceSubmittedAt: timestamp("payment_reference_submitted_at"),
+  paymentReferenceSubmittedBy: varchar("payment_reference_submitted_by", { length: 36 }),
+  // Admin review fields
+  paymentReviewedAt: timestamp("payment_reviewed_at"),
+  paymentReviewedBy: varchar("payment_reviewed_by", { length: 36 }),
+  paymentReviewNote: text("payment_review_note"),
+  // Legacy / optional fields
   externalPaymentId: text("external_payment_id"),
   externalPaymentStatus: text("external_payment_status"),
   notes: text("notes"),
   schoolId: varchar("school_id", { length: 36 }),
 });
 
-export const insertBookPaymentSchema = createInsertSchema(bookPayments).omit({ id: true, paidAt: true, confirmedAt: true });
+export const insertBookPaymentSchema = createInsertSchema(bookPayments).omit({
+  id: true, paidAt: true, confirmedAt: true,
+  paymentReferenceSubmittedAt: true, paymentReviewedAt: true,
+});
 export type InsertBookPayment = z.infer<typeof insertBookPaymentSchema>;
 export type BookPayment = typeof bookPayments.$inferSelect;
 

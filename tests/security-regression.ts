@@ -101,6 +101,10 @@ async function testUnauthenticatedAccess() {
     { path: "/api/books", body: { title: "Hacked Book" } },
     { path: "/api/students", body: { name: "Hacked Student" } },
     { path: "/api/classes", body: { name: "Hacked Class" } },
+    { path: "/api/admin/payments/fake-id/confirm", body: {} },
+    { path: "/api/admin/payments/fake-id/reject", body: {} },
+    { path: "/api/admin/payments/fake-id/needs-review", body: {} },
+    { path: "/api/parent/payments/fake-id/submit-reference", body: { referenceNumber: "HACK123", confirmed: true } },
   ];
 
   for (const { path, body } of postPaths) {
@@ -149,6 +153,22 @@ async function testRBACEnforcement() {
     }
   }
 
+  // Teacher should NOT access admin payment review endpoints
+  const teacherPaymentBlocked = [
+    { method: "POST", path: "/api/admin/payments/fake-id/confirm" },
+    { method: "POST", path: "/api/admin/payments/fake-id/reject" },
+    { method: "POST", path: "/api/admin/payments/fake-id/needs-review" },
+  ];
+
+  for (const { method, path } of teacherPaymentBlocked) {
+    const { status } = await fetchJson(path, { method, headers: { Cookie: teacherCookie }, body: JSON.stringify({}) });
+    if (status === 401 || status === 403) {
+      pass(`Teacher ${method} ${path} → ${status} (blocked)`);
+    } else {
+      fail(`Teacher ${method} ${path} → ${status}`, `Expected 401/403, teacher should not access admin payment routes`);
+    }
+  }
+
   // Parent should NOT access admin or teacher endpoints
   const parentBlocked = [
     "/api/admin/users",
@@ -164,6 +184,16 @@ async function testRBACEnforcement() {
       pass(`Parent GET ${path} → ${status} (blocked)`);
     } else {
       fail(`Parent GET ${path} → ${status}`, `Expected 401/403, parent should not access admin/teacher routes`);
+    }
+  }
+
+  // Parent should NOT access admin payment review endpoints
+  for (const { method, path } of teacherPaymentBlocked) {
+    const { status } = await fetchJson(path, { method, headers: { Cookie: parentCookie }, body: JSON.stringify({}) });
+    if (status === 401 || status === 403) {
+      pass(`Parent ${method} ${path} → ${status} (blocked)`);
+    } else {
+      fail(`Parent ${method} ${path} → ${status}`, `Expected 401/403, parent should not confirm/reject payments`);
     }
   }
 }

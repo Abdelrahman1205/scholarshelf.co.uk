@@ -277,7 +277,7 @@ function DashboardSection() {
           ? [{ type: "warning" as const, msg: `${summary.lowStockBooks} book${summary.lowStockBooks !== 1 ? "s" : ""} running low on stock — reorder soon`, href: "/admin/books" }]
           : []),
         ...(summary.pendingPayments > 0
-          ? [{ type: "warning" as const, msg: `${summary.pendingPayments} payment${summary.pendingPayments !== 1 ? "s" : ""} awaiting your verification`, href: "/admin/payments" }]
+          ? [{ type: "warning" as const, msg: `${summary.pendingPayments} payment reference${summary.pendingPayments !== 1 ? "s" : ""} awaiting review`, href: "/admin/payments" }]
           : []),
         ...(summary.extraCopyRequestsPending > 0
           ? [{ type: "info" as const, msg: `${summary.extraCopyRequestsPending} extra copy request${summary.extraCopyRequestsPending !== 1 ? "s" : ""} from teachers pending review`, href: "/admin/requests" }]
@@ -698,10 +698,17 @@ function DashboardSection() {
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { class: string; label: string }> = {
     pending: { class: "bg-amber-100 text-amber-700 border-amber-200", label: "Pending" },
+    awaiting_reference: { class: "bg-amber-100 text-amber-700 border-amber-200", label: "Awaiting Reference" },
+    reference_submitted: { class: "bg-blue-100 text-blue-700 border-blue-200", label: "Reference Submitted" },
+    confirmed: { class: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Payment Confirmed" },
     completed: { class: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Completed" },
-    failed: { class: "bg-red-100 text-red-700 border-red-200", label: "Rejected" },
-    approved: { class: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Approved" },
+    ready_for_collection: { class: "bg-indigo-100 text-indigo-700 border-indigo-200", label: "Ready for Collection" },
+    collected: { class: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Collected" },
+    cancelled: { class: "bg-gray-100 text-gray-500 border-gray-200", label: "Cancelled" },
     rejected: { class: "bg-red-100 text-red-700 border-red-200", label: "Rejected" },
+    failed: { class: "bg-red-100 text-red-700 border-red-200", label: "Rejected" },
+    needs_review: { class: "bg-orange-100 text-orange-700 border-orange-200", label: "Needs Review" },
+    approved: { class: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Approved" },
     allocated: { class: "bg-blue-100 text-blue-700 border-blue-200", label: "Allocated" },
     received: { class: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Received" },
     absent: { class: "bg-gray-100 text-gray-700 border-gray-200", label: "Absent" },
@@ -3077,84 +3084,225 @@ function PaymentsSection() {
   const { toast } = useToast();
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [reviewNote, setReviewNote] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const { data: payments = [] } = useQuery<any[]>({ queryKey: ["/api/admin/payments"], queryFn: getQueryFn({ on401: "throw" }) });
 
+  const resetDialog = () => { setDetailOpen(false); setReviewNote(""); };
+
   const confirmMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/confirm`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); setDetailOpen(false); toast({ title: "Payment confirmed & books allocated" }); },
+    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/confirm`, { reviewNote: reviewNote.trim() || undefined }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); resetDialog(); toast({ title: "Payment confirmed & books allocated" }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/reject`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); setDetailOpen(false); toast({ title: "Payment rejected" }); },
+    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/reject`, { reviewNote: reviewNote.trim() || undefined }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); resetDialog(); toast({ title: "Payment rejected — parent can resubmit" }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
+
+  const needsReviewMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/needs-review`, { reviewNote: reviewNote.trim() || undefined }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); resetDialog(); toast({ title: "Payment flagged for review" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const readyMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/ready-for-collection`, { reviewNote: reviewNote.trim() || undefined }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); resetDialog(); toast({ title: "Order marked ready for collection" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const collectedMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/collected`, { reviewNote: reviewNote.trim() || undefined }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); resetDialog(); toast({ title: "Order marked as collected" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/admin/payments/${id}/cancel`, { reviewNote: reviewNote.trim() || undefined }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/payments"] }); resetDialog(); toast({ title: "Order cancelled" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const anyMutationPending = confirmMutation.isPending || rejectMutation.isPending || needsReviewMutation.isPending || readyMutation.isPending || collectedMutation.isPending || cancelMutation.isPending;
+  const isReviewActionable = (status: string) => ["reference_submitted", "needs_review"].includes(status);
+  const isFulfilmentActionable = (status: string) => ["confirmed", "ready_for_collection"].includes(status);
+  const isActionable = (status: string) => isReviewActionable(status) || isFulfilmentActionable(status);
+  const filteredPayments = statusFilter === "all" ? payments : payments.filter((p: any) => p.status === statusFilter);
+  const actionableCount = payments.filter((p: any) => isActionable(p.status)).length;
 
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Payments</h1>
-        <p className="text-muted-foreground text-sm mt-1">Review and manage parent payment confirmations.</p>
+        <h1 className="text-2xl font-heading font-bold tracking-tight">Payment Review</h1>
+        <p className="text-muted-foreground text-sm mt-1">
+          Review parent payment references submitted via external payment apps.
+          {actionableCount > 0 && <span className="ml-2 text-blue-600 font-medium">{actionableCount} awaiting review</span>}
+        </p>
+      </div>
+
+      {/* Status filter */}
+      <div className="flex items-center gap-3">
+        <Label className="text-sm text-muted-foreground">Filter by status:</Label>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All ({payments.length})</SelectItem>
+            <SelectItem value="awaiting_reference">Awaiting Reference</SelectItem>
+            <SelectItem value="reference_submitted">Reference Submitted</SelectItem>
+            <SelectItem value="confirmed">Confirmed</SelectItem>
+            <SelectItem value="ready_for_collection">Ready for Collection</SelectItem>
+            <SelectItem value="collected">Collected</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
+            <SelectItem value="needs_review">Needs Review</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Card className="border-border/50 shadow-sm">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
-              <TableHead>Reference</TableHead>
+              <TableHead>Order Ref</TableHead>
+              <TableHead>Payment Ref #</TableHead>
               <TableHead>Parent</TableHead>
               <TableHead>Amount</TableHead>
-              <TableHead>Method</TableHead>
-              <TableHead>Date</TableHead>
+              <TableHead>Submitted</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {payments.map((p: any) => (
-              <TableRow key={p.id}>
-                <TableCell className="font-mono text-sm">{p.paymentReference}</TableCell>
+            {filteredPayments.map((p: any) => (
+              <TableRow key={p.id} className={isActionable(p.status) ? "bg-blue-50/40" : undefined}>
+                <TableCell className="font-mono text-xs text-muted-foreground">{p.paymentReference}</TableCell>
+                <TableCell className="font-mono text-sm font-medium">{p.paymentReferenceNumber || <span className="text-muted-foreground italic">Not submitted</span>}</TableCell>
                 <TableCell className="text-muted-foreground">{p.parentIdentifier}</TableCell>
                 <TableCell className="font-medium">£{parseFloat(p.totalAmount || "0").toFixed(2)}</TableCell>
-                <TableCell className="text-muted-foreground capitalize">{(p.paymentMethod || "").replace(/_/g, " ")}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">{p.paidAt ? new Date(p.paidAt).toLocaleDateString() : "—"}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{p.paymentReferenceSubmittedAt ? new Date(p.paymentReferenceSubmittedAt).toLocaleDateString() : "—"}</TableCell>
                 <TableCell><StatusBadge status={p.status} /></TableCell>
                 <TableCell className="text-right">
-                  <Button variant="ghost" size="sm" onClick={() => { setSelectedPayment(p); setDetailOpen(true); }}><Eye className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="sm" onClick={() => { setSelectedPayment(p); setReviewNote(""); setDetailOpen(true); }}>
+                    {isActionable(p.status) ? <ClipboardList className="w-4 h-4 text-blue-600" /> : <Eye className="w-4 h-4" />}
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}
-            {payments.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No payments yet.</TableCell></TableRow>
+            {filteredPayments.length === 0 && (
+              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                {statusFilter === "all" ? "No payments yet." : `No payments with status "${statusFilter.replace(/_/g, " ")}".`}
+              </TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </Card>
 
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+      <Dialog open={detailOpen} onOpenChange={(open) => { if (!open) resetDialog(); else setDetailOpen(true); }}>
         {selectedPayment && (
-          <DialogContent className="sm:max-w-[500px]">
+          <DialogContent className="sm:max-w-[550px]">
             <DialogHeader>
-              <DialogTitle>Payment Details</DialogTitle>
-              <DialogDescription>Reference: {selectedPayment.paymentReference}</DialogDescription>
+              <DialogTitle>Payment Review</DialogTitle>
+              <DialogDescription>Order: {selectedPayment.paymentReference}</DialogDescription>
             </DialogHeader>
-            <div className="space-y-3">
+            <div className="space-y-4">
+              {/* Key details */}
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-muted-foreground">Parent:</span> <span className="font-medium">{selectedPayment.parentIdentifier}</span></div>
                 <div><span className="text-muted-foreground">Amount:</span> <span className="font-bold text-primary">£{parseFloat(selectedPayment.totalAmount || "0").toFixed(2)}</span></div>
-                <div><span className="text-muted-foreground">Method:</span> <span className="capitalize">{(selectedPayment.paymentMethod || "").replace(/_/g, " ")}</span></div>
                 <div><span className="text-muted-foreground">Status:</span> <StatusBadge status={selectedPayment.status} /></div>
+                <div><span className="text-muted-foreground">Created:</span> <span>{selectedPayment.paidAt ? new Date(selectedPayment.paidAt).toLocaleDateString() : "—"}</span></div>
               </div>
-              {selectedPayment.notes && <div className="text-sm"><span className="text-muted-foreground">Notes:</span> {selectedPayment.notes}</div>}
+
+              {/* External payment reference */}
+              <div className="rounded-lg border p-3 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">External Payment Reference</p>
+                {selectedPayment.paymentReferenceNumber ? (
+                  <>
+                    <p className="font-mono text-lg font-bold">{selectedPayment.paymentReferenceNumber}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Submitted {selectedPayment.paymentReferenceSubmittedAt ? new Date(selectedPayment.paymentReferenceSubmittedAt).toLocaleString() : "—"}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">Parent has not submitted a reference yet.</p>
+                )}
+              </div>
+
+              {/* Previous review info (if already reviewed) */}
+              {selectedPayment.paymentReviewedAt && (
+                <div className="rounded-lg border border-dashed p-3 space-y-1 bg-muted/20">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Previous Review</p>
+                  <p className="text-sm">
+                    Reviewed {new Date(selectedPayment.paymentReviewedAt).toLocaleString()}
+                    {selectedPayment.paymentReviewedBy && <span className="text-muted-foreground"> by {selectedPayment.paymentReviewedBy}</span>}
+                  </p>
+                  {selectedPayment.paymentReviewNote && (
+                    <p className="text-sm"><span className="text-muted-foreground">Note:</span> {selectedPayment.paymentReviewNote}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Parent notes */}
+              {selectedPayment.notes && (
+                <div className="text-sm"><span className="text-muted-foreground">Parent notes:</span> {selectedPayment.notes}</div>
+              )}
+
+              {/* Review note input — only for actionable statuses */}
+              {isActionable(selectedPayment.status) && (
+                <div className="space-y-2">
+                  <Label>Review Note (optional)</Label>
+                  <Textarea
+                    value={reviewNote}
+                    onChange={(e) => setReviewNote(e.target.value)}
+                    placeholder="Add a note about this review decision..."
+                    rows={2}
+                  />
+                </div>
+              )}
             </div>
-            {selectedPayment.status === "pending" && (
-              <DialogFooter className="gap-2">
-                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10" onClick={() => rejectMutation.mutate(selectedPayment.id)} disabled={rejectMutation.isPending}>Reject</Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => confirmMutation.mutate(selectedPayment.id)} disabled={confirmMutation.isPending}>
-                  {confirmMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+
+            {/* Payment review actions — for reference_submitted / needs_review */}
+            {isReviewActionable(selectedPayment.status) && (
+              <DialogFooter className="gap-2 sm:gap-2">
+                <Button variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50"
+                  onClick={() => needsReviewMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
+                  Flag for Review
+                </Button>
+                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                  onClick={() => rejectMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
+                  {rejectMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                  Reject
+                </Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => confirmMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
+                  {confirmMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                   Confirm & Allocate
+                </Button>
+              </DialogFooter>
+            )}
+
+            {/* Fulfilment actions — for confirmed / ready_for_collection */}
+            {isFulfilmentActionable(selectedPayment.status) && (
+              <DialogFooter className="gap-2 sm:gap-2">
+                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                  onClick={() => cancelMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
+                  Cancel Order
+                </Button>
+                {selectedPayment.status === "confirmed" && (
+                  <Button className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                    onClick={() => readyMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
+                    {readyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                    Mark Ready for Collection
+                  </Button>
+                )}
+                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => collectedMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
+                  {collectedMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                  Mark Collected
                 </Button>
               </DialogFooter>
             )}
@@ -3801,7 +3949,7 @@ function ReportsSection() {
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Payments Verified</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-green-600">{pay.completed}</div><p className="text-xs text-muted-foreground">{pay.pending} pending</p></CardContent>
+          <CardContent><div className="text-2xl font-bold text-green-600">{pay.confirmed}</div><p className="text-xs text-muted-foreground">{pay.referenceSubmitted + (pay.needsReview || 0)} awaiting review</p></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Parent Link Rate</CardTitle></CardHeader>
@@ -3873,10 +4021,12 @@ function ReportsSection() {
               <div className="text-xl font-bold text-yellow-600">${pay.pendingRevenue.toLocaleString()}</div>
             </div>
           </div>
-          <div className="flex gap-4 mt-4">
-            <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" /> {pay.pending} Pending</Badge>
-            <Badge variant="default" className="gap-1 bg-green-600"><CheckCircle2 className="h-3 w-3" /> {pay.completed} Verified</Badge>
+          <div className="flex flex-wrap gap-3 mt-4">
+            <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" /> {pay.awaitingReference} Awaiting Ref</Badge>
+            <Badge className="gap-1 bg-blue-600"><ClipboardList className="h-3 w-3" /> {pay.referenceSubmitted} Submitted</Badge>
+            <Badge className="gap-1 bg-green-600"><CheckCircle2 className="h-3 w-3" /> {pay.confirmed} Confirmed</Badge>
             <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> {pay.rejected} Rejected</Badge>
+            {(pay.needsReview || 0) > 0 && <Badge className="gap-1 bg-orange-500"><AlertTriangle className="h-3 w-3" /> {pay.needsReview} Review</Badge>}
           </div>
         </CardContent>
       </Card>

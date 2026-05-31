@@ -643,8 +643,8 @@ async function getSchoolSetupState(schoolId: string) {
       linkingCodes: linkingCodes.length,
       linkedParents: linkingCodes.filter((code) => code.isUsed).length,
       payments: payments.length,
-      verifiedPayments: payments.filter((payment) => payment.status === "completed").length,
-      pendingPayments: payments.filter((payment) => payment.status === "pending").length,
+      verifiedPayments: payments.filter((payment) => payment.status === "completed" || payment.status === "confirmed").length,
+      pendingPayments: payments.filter((payment) => ["pending", "awaiting_reference", "reference_submitted", "needs_review"].includes(payment.status!)).length,
       brandingConfigured: brandingSetupStatus,
     },
     checklist,
@@ -1938,17 +1938,20 @@ export async function registerRoutes(
     res.json(baskets);
   });
 
+  // POST /api/parent/payments — create order (awaiting external payment reference)
   app.post("/api/parent/payments", requireRole("parent"), async (req, res) => {
     try {
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
-      const { basketIds, paymentMethod, paymentReference } = req.body;
+      const { basketIds } = req.body;
+      if (!basketIds || !Array.isArray(basketIds) || basketIds.length === 0) {
+        return res.status(400).json({ message: "basketIds is required" });
+      }
       const loadedBaskets = [];
       let total = 0;
       for (const id of basketIds) {
         const basket = await storage.getBasket(id);
         if (!basket) return res.status(404).json({ message: `Basket ${id} not found` });
-        // Verify this basket belongs to the parent
         if (basket.parentIdentifier !== user.email) {
           return res.status(403).json({ message: "Access denied" });
         }
@@ -1956,30 +1959,7 @@ export async function registerRoutes(
         total += parseFloat(basket.totalAmount);
       }
 
-      const reference = paymentReference || generatePaymentReference();
-
-      let externalPaymentId: string | undefined;
-      let externalPaymentStatus: string | undefined;
-
-      if (isExternalIntegrationEnabled() && loadedBaskets.length > 0) {
-        const firstBasket = loadedBaskets[0];
-        const extResult = await createExternalPayment({
-          eduBookReference: reference,
-          studentName: firstBasket.student?.name || "Unknown",
-          studentClass: firstBasket.student?.class?.name || "Unknown",
-          parentEmail: user.email,
-          amountGBP: total,
-          items: (firstBasket.items || []).map((item: any) => ({
-            title: item.book?.title || "Book",
-            quantity: item.quantity || 1,
-            unitPrice: parseFloat(item.unitPrice || "0"),
-          })),
-        });
-        if (extResult) {
-          externalPaymentId = extResult.externalPaymentId;
-          externalPaymentStatus = extResult.externalStatus;
-        }
-      }
+      const reference = generatePaymentReference();
 
       // Derive schoolId from the first basket's student
       const firstStudent = loadedBaskets[0]?.student;
@@ -1988,27 +1968,17 @@ export async function registerRoutes(
       const payment = await storage.createPayment({
         parentIdentifier: user.email,
         totalAmount: total.toFixed(2),
-        paymentMethod: paymentMethod || "bank_transfer",
+        paymentMethod: "external_reference",
         paymentReference: reference,
-        status: "pending",
-        externalPaymentId,
-        externalPaymentStatus,
+        status: "awaiting_reference",
         schoolId: paymentSchoolId,
       }, basketIds);
 
-      // Notify parent that payment submission has been received
-      const submittedSent = await sendPaymentSubmittedEmail(
-        user.email,
-        reference,
-        total.toFixed(2),
-        paymentMethod || "bank_transfer"
-      );
-      if (!submittedSent) {
-        console.log(`[PAYMENT SUBMITTED] Parent: ${user.email}, Ref: ${reference}, Amount: £${total.toFixed(2)}`);
-        if (!isResendConfigured()) {
-          console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for payment submission email.");
-        }
-      }
+      await storage.createAuditLog({
+        action: "payment_order_created",
+        userId: req.session.userId!,
+        details: `Order created: ref=${reference}, amount=£${total.toFixed(2)}, baskets=${basketIds.length}`,
+      });
 
       res.status(201).json(payment);
     } catch (e: any) {
@@ -2016,6 +1986,72 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/parent/payments/:id/submit-reference — submit external payment reference
+  app.post("/api/parent/payments/:id/submit-reference", requireRole("parent"), async (req, res) => {
+    try {
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+
+      const paymentId = routeParam(req.params.id);
+      const { referenceNumber, confirmed, notes } = req.body;
+
+      // Validate required fields
+      if (!referenceNumber || typeof referenceNumber !== "string" || referenceNumber.trim().length < 3) {
+        return res.status(400).json({ message: "A valid payment reference number is required (minimum 3 characters)." });
+      }
+      if (confirmed !== true) {
+        return res.status(400).json({ message: "You must confirm that you have completed the payment." });
+      }
+
+      // Sanitise
+      const cleanRef = referenceNumber.trim().toUpperCase();
+
+      // Verify this payment belongs to the parent
+      const existing = await storage.getPaymentById(paymentId);
+      if (!existing) return res.status(404).json({ message: "Payment not found" });
+      if (existing.parentIdentifier !== user.email) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      // Check for duplicate reference within the same school
+      if (existing.schoolId) {
+        const isDuplicate = await storage.isPaymentReferenceDuplicate(cleanRef, existing.schoolId, paymentId);
+        if (isDuplicate) {
+          return res.status(409).json({ message: "This payment reference has already been submitted for another order in this school." });
+        }
+      }
+
+      const payment = await storage.submitPaymentReference(
+        paymentId,
+        cleanRef,
+        req.session.userId!,
+        notes?.trim() || undefined,
+      );
+
+      await storage.createAuditLog({
+        action: "payment_reference_submitted",
+        userId: req.session.userId!,
+        details: `Reference submitted: ref=${cleanRef}, paymentId=${paymentId}`,
+      });
+
+      // Notify parent
+      const submittedSent = await sendPaymentSubmittedEmail(
+        user.email,
+        payment.paymentReference || paymentId,
+        payment.totalAmount || "0.00",
+        "external_reference"
+      );
+      if (!submittedSent) {
+        console.log(`[PAYMENT REF SUBMITTED] Parent: ${user.email}, Ref: ${cleanRef}, OrderRef: ${payment.paymentReference}`);
+      }
+
+      res.json(payment);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // GET /api/parent/payments — list parent's payments
   app.get("/api/parent/payments", requireRole("parent"), async (req, res) => {
     const user = await storage.getUserById(req.session.userId!);
     if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
@@ -2035,30 +2071,24 @@ export async function registerRoutes(
       const sid = sessionSchoolId(req);
       if (sid) {
         const setupState = await getSchoolSetupState(sid);
-        if (!setupState) {
-          return res.status(404).json({ message: "School not found" });
-        }
+        if (!setupState) return res.status(404).json({ message: "School not found" });
         if (!setupState.operationalSetupComplete) {
-          return res.status(409).json({
-            message: "Complete school setup before confirming payments.",
-            missingSteps: setupState.missingSteps,
-          });
+          return res.status(409).json({ message: "Complete school setup before confirming payments.", missingSteps: setupState.missingSteps });
         }
       }
-      const payment = await storage.confirmPayment(routeParam(req.params.id), sid);
+      const { reviewNote } = req.body || {};
+      const payment = await storage.confirmPayment(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
 
-      // Notify parent that payment has been verified
+      await storage.createAuditLog({
+        action: "payment_confirmed",
+        userId: req.session.userId!,
+        details: `Payment confirmed: id=${payment.id}, ref=${payment.paymentReference}, extRef=${payment.paymentReferenceNumber || "N/A"}`,
+      });
+
       if (payment?.parentIdentifier) {
-        const sent = await sendPaymentVerifiedEmail(
-          payment.parentIdentifier,
-          payment.paymentReference || payment.id,
-          payment.totalAmount || "0.00"
-        );
+        const sent = await sendPaymentVerifiedEmail(payment.parentIdentifier, payment.paymentReference || payment.id, payment.totalAmount || "0.00");
         if (!sent) {
-          console.log(`[PAYMENT VERIFIED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
-          if (!isResendConfigured()) {
-            console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for payment verified email.");
-          }
+          console.log(`[PAYMENT CONFIRMED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
         }
       }
 
@@ -2073,32 +2103,99 @@ export async function registerRoutes(
       const sid = sessionSchoolId(req);
       if (sid) {
         const setupState = await getSchoolSetupState(sid);
-        if (!setupState) {
-          return res.status(404).json({ message: "School not found" });
-        }
+        if (!setupState) return res.status(404).json({ message: "School not found" });
         if (!setupState.operationalSetupComplete) {
-          return res.status(409).json({
-            message: "Complete school setup before processing payments.",
-            missingSteps: setupState.missingSteps,
-          });
+          return res.status(409).json({ message: "Complete school setup before processing payments.", missingSteps: setupState.missingSteps });
         }
       }
-      const payment = await storage.rejectPayment(routeParam(req.params.id), sid);
+      const { reviewNote } = req.body || {};
+      const payment = await storage.rejectPayment(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
 
-      // Notify parent that payment has been rejected
+      await storage.createAuditLog({
+        action: "payment_rejected",
+        userId: req.session.userId!,
+        details: `Payment rejected: id=${payment.id}, ref=${payment.paymentReference}, reason=${reviewNote || "none"}`,
+      });
+
       if (payment?.parentIdentifier) {
-        const sent = await sendPaymentRejectedEmail(
-          payment.parentIdentifier,
-          payment.paymentReference || payment.id,
-          payment.totalAmount || "0.00"
-        );
+        const sent = await sendPaymentRejectedEmail(payment.parentIdentifier, payment.paymentReference || payment.id, payment.totalAmount || "0.00");
         if (!sent) {
           console.log(`[PAYMENT REJECTED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
-          if (!isResendConfigured()) {
-            console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for payment rejected email.");
-          }
         }
       }
+
+      res.json(payment);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/admin/payments/:id/needs-review", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { reviewNote } = req.body || {};
+      const payment = await storage.markPaymentNeedsReview(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
+
+      await storage.createAuditLog({
+        action: "payment_needs_review",
+        userId: req.session.userId!,
+        details: `Payment flagged for review: id=${payment.id}, ref=${payment.paymentReference}, note=${reviewNote || "none"}`,
+      });
+
+      res.json(payment);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // === ORDER FULFILMENT STATUS ===
+  app.post("/api/admin/payments/:id/ready-for-collection", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { reviewNote } = req.body || {};
+      const payment = await storage.markPaymentReadyForCollection(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
+
+      await storage.createAuditLog({
+        action: "payment_ready_for_collection",
+        userId: req.session.userId!,
+        details: `Order marked ready for collection: id=${payment.id}, ref=${payment.paymentReference}`,
+      });
+
+      res.json(payment);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/admin/payments/:id/collected", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { reviewNote } = req.body || {};
+      const payment = await storage.markPaymentCollected(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
+
+      await storage.createAuditLog({
+        action: "payment_collected",
+        userId: req.session.userId!,
+        details: `Order collected: id=${payment.id}, ref=${payment.paymentReference}`,
+      });
+
+      res.json(payment);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/admin/payments/:id/cancel", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { reviewNote } = req.body || {};
+      const payment = await storage.cancelPayment(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
+
+      await storage.createAuditLog({
+        action: "payment_cancelled",
+        userId: req.session.userId!,
+        details: `Order cancelled: id=${payment.id}, ref=${payment.paymentReference}, reason=${reviewNote || "none"}`,
+      });
 
       res.json(payment);
     } catch (e: any) {
@@ -3804,8 +3901,8 @@ export async function registerRoutes(
       ]);
 
       const lowStock = books.filter((b) => b.isActive && (b.stockQuantity ?? 0) <= (b.lowStockThreshold ?? 10)).length;
-      const pendingPayments = payments.filter((p) => p.status === "pending").length;
-      const paidOrders = payments.filter((p) => p.status === "completed").length;
+      const pendingPayments = payments.filter((p) => ["pending", "awaiting_reference", "reference_submitted", "needs_review"].includes(p.status!)).length;
+      const paidOrders = payments.filter((p) => p.status === "completed" || p.status === "confirmed").length;
       const awaitingCollection = allocations.filter((a: any) => a.status === "allocated").length;
       const completedHandovers = allocations.filter((a: any) => a.status === "received").length;
 
@@ -3982,9 +4079,9 @@ export async function registerRoutes(
       // Approximate parents linked via used linking codes
       const parentsLinked = parentCodesUsed;
 
-      const pendingPayments = scopedPayments.filter((p) => p.status === "pending").length;
+      const pendingPayments = scopedPayments.filter((p) => ["pending", "awaiting_reference", "reference_submitted", "needs_review"].includes(p.status!)).length;
       const paymentsSubmitted = scopedPayments.length;
-      const paymentsVerified = scopedPayments.filter((p) => p.status === "completed").length;
+      const paymentsVerified = scopedPayments.filter((p) => p.status === "completed" || p.status === "confirmed").length;
 
       const allocatedItems = scopedAllocations.filter((a: any) => a.status === "allocated");
       const readyForDistribution = allocatedItems.length;
@@ -4191,12 +4288,14 @@ export async function registerRoutes(
 
       // ── Payment report ──
       const paymentsByStatus = {
-        pending: payments.filter((p) => p.status === "pending"),
-        completed: payments.filter((p) => p.status === "completed"),
-        rejected: payments.filter((p) => p.status === "rejected"),
+        awaiting_reference: payments.filter((p) => p.status === "awaiting_reference" || p.status === "pending"),
+        reference_submitted: payments.filter((p) => p.status === "reference_submitted"),
+        confirmed: payments.filter((p) => p.status === "confirmed" || p.status === "completed"),
+        rejected: payments.filter((p) => p.status === "rejected" || p.status === "failed"),
+        needs_review: payments.filter((p) => p.status === "needs_review"),
       };
-      const totalRevenue = paymentsByStatus.completed.reduce((sum, p) => sum + Number(p.totalAmount ?? 0), 0);
-      const pendingRevenue = paymentsByStatus.pending.reduce((sum, p) => sum + Number(p.totalAmount ?? 0), 0);
+      const totalRevenue = paymentsByStatus.confirmed.reduce((sum, p) => sum + Number(p.totalAmount ?? 0), 0);
+      const pendingRevenue = [...paymentsByStatus.awaiting_reference, ...paymentsByStatus.reference_submitted, ...paymentsByStatus.needs_review].reduce((sum, p) => sum + Number(p.totalAmount ?? 0), 0);
 
       // ── Allocation / distribution report ──
       const allocationsByStatus = {
@@ -4260,9 +4359,11 @@ export async function registerRoutes(
         },
         payments: {
           total: payments.length,
-          pending: paymentsByStatus.pending.length,
-          completed: paymentsByStatus.completed.length,
+          awaitingReference: paymentsByStatus.awaiting_reference.length,
+          referenceSubmitted: paymentsByStatus.reference_submitted.length,
+          confirmed: paymentsByStatus.confirmed.length,
           rejected: paymentsByStatus.rejected.length,
+          needsReview: paymentsByStatus.needs_review.length,
           totalRevenue: Math.round(totalRevenue * 100) / 100,
           pendingRevenue: Math.round(pendingRevenue * 100) / 100,
         },
@@ -4308,6 +4409,11 @@ export async function registerRoutes(
       console.error("Reports endpoint error:", e);
       res.status(500).json({ message: "Failed to generate reports" });
     }
+  });
+
+  // ── API catch-all: return JSON 404 for unknown /api/* routes ──
+  app.all("/api/*", (_req: Request, res: Response) => {
+    res.status(404).json({ message: "API endpoint not found" });
   });
 
   return httpServer;

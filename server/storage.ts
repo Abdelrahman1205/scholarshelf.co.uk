@@ -266,8 +266,15 @@ export interface IStorage {
   // Payments
   createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment>;
   getPayments(parentIdentifier?: string, schoolId?: string | null): Promise<schema.BookPayment[]>;
-  confirmPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment>;
-  rejectPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  getPaymentById(id: string, schoolId?: string | null): Promise<schema.BookPayment | undefined>;
+  submitPaymentReference(paymentId: string, referenceNumber: string, submittedBy: string, notes?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  confirmPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  rejectPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  markPaymentNeedsReview(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  markPaymentReadyForCollection(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  markPaymentCollected(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  cancelPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
+  isPaymentReferenceDuplicate(referenceNumber: string, schoolId: string, excludePaymentId?: string): Promise<boolean>;
   updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null>;
 
   // Allocations
@@ -1020,16 +1027,66 @@ class DatabaseStorage implements IStorage {
     return getDb().select().from(schema.bookPayments).orderBy(desc(schema.bookPayments.paidAt));
   }
 
-  async confirmPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment> {
-    // Verify ownership if schoolId set
+  async getPaymentById(id: string, schoolId?: string | null): Promise<schema.BookPayment | undefined> {
+    const conditions = [eq(schema.bookPayments.id, id)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [payment] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    return payment;
+  }
+
+  async submitPaymentReference(
+    paymentId: string,
+    referenceNumber: string,
+    submittedBy: string,
+    notes?: string,
+    schoolId?: string | null,
+  ): Promise<schema.BookPayment> {
     const conditions = [eq(schema.bookPayments.id, paymentId)];
     const sf = schoolFilter(schema.bookPayments, schoolId);
     if (sf) conditions.push(sf);
     const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
 
-    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), { status: "completed", confirmedAt: new Date() });
+    // Only allow submission when status is awaiting_reference, rejected, or legacy pending
+    const allowedStatuses = ["awaiting_reference", "rejected", "pending", "failed"];
+    if (!allowedStatuses.includes(existing.status)) {
+      throw new Error(`Cannot submit reference for payment in status: ${existing.status}`);
+    }
 
+    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      paymentReferenceNumber: referenceNumber,
+      paymentReferenceSubmittedAt: new Date(),
+      paymentReferenceSubmittedBy: submittedBy,
+      status: "reference_submitted",
+      notes: notes || existing.notes,
+    });
+
+    // Update basket status to "paid" (reference submitted)
+    const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
+    for (const bp of bps) {
+      await getDb().update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, bp.basketId));
+    }
+
+    return payment;
+  }
+
+  async confirmPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+
+    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      status: "confirmed",
+      confirmedAt: new Date(),
+      paymentReviewedAt: new Date(),
+      paymentReviewedBy: reviewedBy,
+      paymentReviewNote: reviewNote || null,
+    });
+
+    // Create allocations from linked baskets
     const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
       await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
@@ -1047,6 +1104,7 @@ class DatabaseStorage implements IStorage {
           try {
             await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
           } catch (e) {
+            // Stock adjustment failure should not block allocation
           }
         }
       }
@@ -1055,19 +1113,112 @@ class DatabaseStorage implements IStorage {
     return payment;
   }
 
-  async rejectPayment(paymentId: string, schoolId?: string | null): Promise<schema.BookPayment> {
+  async rejectPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
     const conditions = [eq(schema.bookPayments.id, paymentId)];
     const sf = schoolFilter(schema.bookPayments, schoolId);
     if (sf) conditions.push(sf);
     const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
 
-    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), { status: "failed" });
+    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      status: "rejected",
+      paymentReviewedAt: new Date(),
+      paymentReviewedBy: reviewedBy,
+      paymentReviewNote: reviewNote || null,
+    });
+    // Reset baskets to pending so parent can resubmit
     const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
       await getDb().update(schema.childBookBaskets).set({ status: "pending" }).where(eq(schema.childBookBaskets.id, bp.basketId));
     }
     return payment;
+  }
+
+  async markPaymentNeedsReview(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+
+    return updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      status: "needs_review",
+      paymentReviewedAt: new Date(),
+      paymentReviewedBy: reviewedBy,
+      paymentReviewNote: reviewNote || null,
+    });
+  }
+
+  async markPaymentReadyForCollection(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+    if (existing.status !== "confirmed") throw new Error("Only confirmed payments can be marked ready for collection");
+
+    return updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      status: "ready_for_collection",
+      paymentReviewedAt: new Date(),
+      paymentReviewedBy: reviewedBy,
+      paymentReviewNote: reviewNote || existing.paymentReviewNote,
+    });
+  }
+
+  async markPaymentCollected(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+    if (existing.status !== "ready_for_collection" && existing.status !== "confirmed") {
+      throw new Error("Only confirmed or ready-for-collection orders can be marked as collected");
+    }
+
+    return updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      status: "collected",
+      paymentReviewedAt: new Date(),
+      paymentReviewedBy: reviewedBy,
+      paymentReviewNote: reviewNote || existing.paymentReviewNote,
+    });
+  }
+
+  async cancelPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+    if (existing.status === "collected") throw new Error("Collected orders cannot be cancelled");
+
+    // Reset associated baskets
+    const links = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
+    for (const link of links) {
+      await getDb().update(schema.childBookBaskets).set({ status: "cancelled" }).where(eq(schema.childBookBaskets.id, link.basketId));
+    }
+
+    return updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
+      status: "cancelled",
+      paymentReviewedAt: new Date(),
+      paymentReviewedBy: reviewedBy,
+      paymentReviewNote: reviewNote || null,
+    });
+  }
+
+  async isPaymentReferenceDuplicate(referenceNumber: string, schoolId: string, excludePaymentId?: string): Promise<boolean> {
+    const conditions = [
+      eq(schema.bookPayments.paymentReferenceNumber, referenceNumber),
+      eq(schema.bookPayments.schoolId, schoolId),
+    ];
+    if (excludePaymentId) {
+      // We need sql`!=` but drizzle doesn't have neq in simple form, use raw
+      // Actually drizzle has `ne` — but safer to just filter in JS for one check
+    }
+    const rows = await getDb().select({ id: schema.bookPayments.id }).from(schema.bookPayments).where(and(...conditions));
+    if (excludePaymentId) {
+      return rows.some(r => r.id !== excludePaymentId);
+    }
+    return rows.length > 0;
   }
 
   // === ALLOCATIONS ===

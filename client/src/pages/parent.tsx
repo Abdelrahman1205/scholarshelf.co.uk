@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ShoppingCart, Link as LinkIcon, History, CreditCard, Plus, BookOpen, Camera, X, Users, MessageSquare, Send, ArrowLeft, Lock } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,12 +20,25 @@ interface ParentPageProps {
 
 function StatusBadge({ status }: { status: string }) {
   switch (status) {
+    case "awaiting_reference":
     case "pending":
-      return <Badge className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">{status}</Badge>;
+      return <Badge className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">Awaiting Reference</Badge>;
+    case "reference_submitted":
+      return <Badge className="bg-blue-500/10 text-blue-600 hover:bg-blue-500/20">Reference Submitted</Badge>;
+    case "confirmed":
     case "completed":
-      return <Badge className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">{status}</Badge>;
+      return <Badge className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Payment Confirmed</Badge>;
+    case "ready_for_collection":
+      return <Badge className="bg-indigo-500/10 text-indigo-600 hover:bg-indigo-500/20">Ready for Collection</Badge>;
+    case "collected":
+      return <Badge className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">Collected</Badge>;
+    case "cancelled":
+      return <Badge className="bg-gray-500/10 text-gray-500 hover:bg-gray-500/20">Cancelled</Badge>;
+    case "rejected":
     case "failed":
-      return <Badge className="bg-red-500/10 text-red-600 hover:bg-red-500/20">{status}</Badge>;
+      return <Badge className="bg-red-500/10 text-red-600 hover:bg-red-500/20">Reference Rejected</Badge>;
+    case "needs_review":
+      return <Badge className="bg-orange-500/10 text-orange-600 hover:bg-orange-500/20">Under Review</Badge>;
     default:
       return <Badge variant="secondary">{status}</Badge>;
   }
@@ -445,12 +459,12 @@ function ParentBasketsSection({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="font-heading">
-              {paymentResult ? "Transfer Confirmed" : "Bank Transfer Details"}
+              {paymentResult ? "Order Created" : "Confirm Book Order"}
             </DialogTitle>
             <DialogDescription>
               {paymentResult
-                ? "Your payment has been recorded. The school will verify your transfer shortly."
-                : "Please use the details below to make your bank transfer. Include the reference number exactly as shown."}
+                ? "Your order has been created. Please pay using the Paragon App, then submit your payment reference."
+                : "Review the order details below and proceed to create your order."}
             </DialogDescription>
           </DialogHeader>
 
@@ -470,32 +484,14 @@ function ParentBasketsSection({
                   <span className="text-primary text-lg">£{parseFloat(selectedBasketForPayment.totalAmount || "0").toFixed(2)}</span>
                 </div>
               </div>
-              <div className="rounded-lg border-2 border-primary/30 p-4 bg-primary/5 text-sm space-y-2">
-                <p className="font-semibold text-primary">Bank Transfer Details</p>
-                <div className="space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Sort Code</span>
-                    <span className="font-mono font-medium">20-00-00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Account Number</span>
-                    <span className="font-mono font-medium">12345678</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Account Name</span>
-                    <span className="font-medium">EduBook School Ltd</span>
-                  </div>
-                  <div className="flex justify-between items-center border-t border-primary/20 pt-2 mt-2">
-                    <span className="text-muted-foreground">Payment Reference</span>
-                    <span className="font-mono font-bold text-primary bg-primary/10 px-3 py-1 rounded-md text-base" data-testid="text-payment-reference-preview">
-                      {selectedBasketForPayment.generatedReference || "Generating..."}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="rounded-lg border border-amber-500/30 p-3 bg-amber-500/5 text-sm text-amber-700">
-                <p className="font-medium">Important:</p>
-                <p>Use the exact reference above when making your bank transfer so the school can match your payment.</p>
+              <div className="rounded-lg border-2 border-blue-500/30 p-4 bg-blue-500/5 text-sm space-y-2">
+                <p className="font-semibold text-blue-700">How to Pay</p>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>Create your order below</li>
+                  <li>Pay using the <strong>Paragon App</strong> (your school&apos;s official payment system)</li>
+                  <li>Come back to the <strong>Payments</strong> section and enter the reference number from Paragon</li>
+                  <li>The school will verify your payment and allocate the books</li>
+                </ol>
               </div>
             </div>
           )}
@@ -505,22 +501,23 @@ function ParentBasketsSection({
               <div className="rounded-lg border border-emerald-500/30 p-4 bg-emerald-500/5 text-sm space-y-2">
                 <div className="flex items-center gap-2 text-emerald-600 font-semibold mb-2">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  Payment Recorded
+                  Order Created Successfully
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Reference</span>
+                  <span className="text-muted-foreground">Order Reference</span>
                   <span className="font-mono font-medium" data-testid="text-payment-reference">
                     {paymentResult.paymentReference}
                   </span>
                 </div>
                 <div className="flex justify-between font-semibold border-t border-emerald-500/20 pt-2 mt-2">
-                  <span>Amount</span>
+                  <span>Amount Due</span>
                   <span className="text-primary text-lg">£{parseFloat(paymentResult.totalAmount || "0").toFixed(2)}</span>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground">
-                The school will verify your bank transfer and confirm the payment. You can track the status in your Payments section.
-              </p>
+              <div className="rounded-lg border border-amber-500/30 p-3 bg-amber-500/5 text-sm text-amber-700">
+                <p className="font-medium">Next Step:</p>
+                <p>Pay using the <strong>Paragon App</strong>, then go to the <strong>Payments</strong> section to submit your payment reference number.</p>
+              </div>
             </div>
           )}
 
@@ -538,12 +535,12 @@ function ParentBasketsSection({
                 </Button>
                 <Button
                   data-testid="button-confirm-payment"
-                  onClick={() => paymentMutation.mutate({ basketIds: [selectedBasketForPayment.id], reference: selectedBasketForPayment.generatedReference })}
+                  onClick={() => paymentMutation.mutate({ basketIds: [selectedBasketForPayment.id] })}
                   disabled={paymentMutation.isPending}
                   className="gap-2"
                 >
                   <CreditCard className="w-4 h-4" />
-                  {paymentMutation.isPending ? "Processing..." : "I've Made the Transfer"}
+                  {paymentMutation.isPending ? "Creating Order..." : "Create Order"}
                 </Button>
               </div>
             ) : (
@@ -568,15 +565,25 @@ function ParentBasketsSection({
 function ParentPaymentsSection({
   paymentsQuery,
   payments,
+  onSubmitReference,
 }: {
   paymentsQuery: any;
   payments: any[];
+  onSubmitReference: (payment: any) => void;
 }) {
+  // Payments needing reference (awaiting_reference, rejected, pending, failed)
+  const awaitingReference = payments.filter((p: any) =>
+    ["awaiting_reference", "rejected", "pending", "failed"].includes(p.status)
+  );
+  const submittedOrProcessed = payments.filter((p: any) =>
+    !["awaiting_reference", "rejected", "pending", "failed"].includes(p.status)
+  );
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-3xl font-heading font-bold tracking-tight text-foreground">Payments</h1>
-        <p className="text-muted-foreground mt-2">Review your payment history and current payment statuses.</p>
+        <p className="text-muted-foreground mt-2">Submit your Paragon payment reference and track payment statuses.</p>
       </div>
 
       {paymentsQuery.isLoading ? (
@@ -587,46 +594,93 @@ function ParentPaymentsSection({
             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-4">
               <History className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-heading font-medium">Payment History</h3>
-            <p className="text-muted-foreground max-w-sm mt-2">A list of past transactions and receipts will appear here.</p>
+            <h3 className="text-lg font-heading font-medium">No Payments Yet</h3>
+            <p className="text-muted-foreground max-w-sm mt-2">Create a book order from the Baskets section first, then submit your payment reference here.</p>
           </CardContent>
         </Card>
       ) : (
-        <Card className="border-border">
-          <CardHeader>
-            <CardTitle className="font-heading">Payment History</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="px-6">Date</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Method</TableHead>
-                  <TableHead>Reference</TableHead>
-                  <TableHead className="text-right px-6">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {payments.map((payment: any) => (
-                  <TableRow key={payment.id} data-testid={`row-payment-${payment.id}`}>
-                    <TableCell className="px-6">{payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "—"}</TableCell>
-                    <TableCell data-testid={`text-payment-amount-${payment.id}`}>£{parseFloat(payment.totalAmount || "0").toFixed(2)}</TableCell>
-                    <TableCell className="capitalize">{(payment.paymentMethod || "").replace(/_/g, " ")}</TableCell>
-                    <TableCell>
-                      <span className="font-mono bg-muted px-2 py-1 rounded text-sm" data-testid={`text-payment-ref-${payment.id}`}>
-                        {payment.paymentReference}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right px-6">
+        <>
+          {/* Orders awaiting payment reference */}
+          {awaitingReference.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="font-heading font-medium text-lg flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-amber-600" /> Action Required — Submit Payment Reference
+              </h3>
+              {awaitingReference.map((payment: any) => (
+                <Card key={payment.id} className="border-border border-l-4 border-l-amber-500" data-testid={`card-awaiting-ref-${payment.id}`}>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Order Reference</p>
+                        <p className="font-mono font-medium">{payment.paymentReference}</p>
+                      </div>
                       <StatusBadge status={payment.status} />
-                    </TableCell>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Amount Due</span>
+                      <span className="font-semibold text-lg text-primary">£{parseFloat(payment.totalAmount || "0").toFixed(2)}</span>
+                    </div>
+                    {(payment.status === "rejected" || payment.status === "failed") && payment.paymentReviewNote && (
+                      <div className="rounded-lg border border-red-500/30 p-3 bg-red-500/5 text-sm text-red-700">
+                        <p className="font-medium">Rejection reason:</p>
+                        <p>{payment.paymentReviewNote}</p>
+                      </div>
+                    )}
+                    <Button
+                      onClick={() => onSubmitReference(payment)}
+                      className="w-full gap-2"
+                      data-testid={`button-submit-ref-${payment.id}`}
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      {(payment.status === "rejected" || payment.status === "failed") ? "Resubmit Payment Reference" : "Submit Payment Reference"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* All payments history */}
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle className="font-heading">Payment History</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="px-6">Date</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Order Ref</TableHead>
+                    <TableHead>Payment Ref</TableHead>
+                    <TableHead className="text-right px-6">Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                </TableHeader>
+                <TableBody>
+                  {payments.map((payment: any) => (
+                    <TableRow key={payment.id} data-testid={`row-payment-${payment.id}`}>
+                      <TableCell className="px-6">{payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "—"}</TableCell>
+                      <TableCell data-testid={`text-payment-amount-${payment.id}`}>£{parseFloat(payment.totalAmount || "0").toFixed(2)}</TableCell>
+                      <TableCell>
+                        <span className="font-mono bg-muted px-2 py-1 rounded text-sm">{payment.paymentReference}</span>
+                      </TableCell>
+                      <TableCell>
+                        {payment.paymentReferenceNumber ? (
+                          <span className="font-mono bg-blue-50 text-blue-700 px-2 py-1 rounded text-sm">{payment.paymentReferenceNumber}</span>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">Not submitted</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right px-6">
+                        <StatusBadge status={payment.status} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
       )}
     </div>
   );
@@ -986,13 +1040,48 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
     onSuccess: () => { toast({ title: "Basket Created" }); queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets'] }); },
     onError: (err: Error) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
+  // Create order (awaiting external payment reference)
   const paymentMutation = useMutation({
-    mutationFn: async ({ basketIds, reference }: { basketIds: string[]; reference: string }) => {
-      const res = await apiRequest("POST", "/api/parent/payments", { basketIds, paymentMethod: "bank_transfer", paymentReference: reference }); return res.json();
+    mutationFn: async ({ basketIds }: { basketIds: string[] }) => {
+      const res = await apiRequest("POST", "/api/parent/payments", { basketIds });
+      return res.json();
     },
-    onSuccess: (data) => { setPaymentResult(data); queryClient.invalidateQueries({ queryKey: ['/api/parent/baskets'] }); queryClient.invalidateQueries({ queryKey: ['/api/parent/payments'] }); },
-    onError: (err: Error) => { toast({ title: "Payment Error", description: err.message, variant: "destructive" }); setPaymentDialogOpen(false); },
+    onSuccess: (data) => {
+      setPaymentResult(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/baskets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/payments"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Order Error", description: err.message, variant: "destructive" });
+      setPaymentDialogOpen(false);
+    },
   });
+
+  // Submit external payment reference
+  const submitReferenceMutation = useMutation({
+    mutationFn: async ({ paymentId, referenceNumber, confirmed, notes }: { paymentId: string; referenceNumber: string; confirmed: boolean; notes?: string }) => {
+      const res = await apiRequest("POST", `/api/parent/payments/${paymentId}/submit-reference`, { referenceNumber, confirmed, notes });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Reference Submitted", description: "Your payment reference has been submitted for school review." });
+      setReferenceDialogPayment(null);
+      setRefNumber("");
+      setRefConfirmed(false);
+      setRefNotes("");
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/payments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/parent/baskets"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Submission Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // State for reference submission dialog
+  const [referenceDialogPayment, setReferenceDialogPayment] = useState<any>(null);
+  const [refNumber, setRefNumber] = useState("");
+  const [refConfirmed, setRefConfirmed] = useState(false);
+  const [refNotes, setRefNotes] = useState("");
 
   const children = childrenQuery.data || [];
   const baskets = basketsQuery.data || [];
@@ -1008,7 +1097,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
       case "baskets":
         return <ParentBasketsSection basketsQuery={basketsQuery} baskets={baskets} children={children} pendingBaskets={pendingBaskets} processedBaskets={processedBaskets} childrenWithoutBaskets={childrenWithoutBaskets} createBasketMutation={createBasketMutation} setSelectedBasketForPayment={setSelectedBasketForPayment} setPaymentResult={setPaymentResult} setPaymentDialogOpen={setPaymentDialogOpen} paymentDialogOpen={paymentDialogOpen} paymentResult={paymentResult} selectedBasketForPayment={selectedBasketForPayment} paymentMutation={paymentMutation} />;
       case "payments":
-        return <ParentPaymentsSection paymentsQuery={paymentsQuery} payments={payments} />;
+        return <ParentPaymentsSection paymentsQuery={paymentsQuery} payments={payments} onSubmitReference={(p) => { setReferenceDialogPayment(p); setRefNumber(""); setRefConfirmed(false); setRefNotes(""); }} />;
       case "messages":
         return <ParentMessagesSection children={children} />;
       default:
@@ -1019,52 +1108,86 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {renderSection()}
-      <Dialog open={paymentDialogOpen} onOpenChange={(open) => { if (!open) { setPaymentDialogOpen(false); setPaymentResult(null); setSelectedBasketForPayment(null); } }}>
+      {/* Reference Submission Dialog */}
+      <Dialog open={!!referenceDialogPayment} onOpenChange={(open) => { if (!open) { setReferenceDialogPayment(null); setRefNumber(""); setRefConfirmed(false); setRefNotes(""); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="font-heading">{paymentResult ? "Transfer Confirmed" : "Bank Transfer Details"}</DialogTitle>
-            <DialogDescription>{paymentResult ? "Your payment has been recorded." : "Use the details below to make your bank transfer."}</DialogDescription>
+            <DialogTitle className="font-heading">Submit Payment Reference</DialogTitle>
+            <DialogDescription>
+              Enter the payment reference number from the Paragon App after completing your payment.
+            </DialogDescription>
           </DialogHeader>
-          {selectedBasketForPayment && !paymentResult && (
+          {referenceDialogPayment && (
             <div className="space-y-4">
-              <div className="rounded-lg border border-border p-4 space-y-2">
-                <div className="flex justify-between text-sm"><span className="text-muted-foreground">Child</span><span className="font-medium">{selectedBasketForPayment.student?.name || "Child"}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-muted-foreground">Class</span><span>{selectedBasketForPayment.student?.class?.name || "—"}</span></div>
-                <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-2"><span>Total</span><span className="text-primary text-lg">£{parseFloat(selectedBasketForPayment.totalAmount || "0").toFixed(2)}</span></div>
-              </div>
-              <div className="rounded-lg border-2 border-primary/30 p-4 bg-primary/5 text-sm space-y-2">
-                <p className="font-semibold text-primary">Bank Transfer Details</p>
-                <div className="space-y-1">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Sort Code</span><span className="font-mono font-medium">20-00-00</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Account Number</span><span className="font-mono font-medium">12345678</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Account Name</span><span className="font-medium">EduBook School Ltd</span></div>
-                  <div className="flex justify-between items-center border-t border-primary/20 pt-2 mt-2"><span className="text-muted-foreground">Reference</span><span className="font-mono font-bold text-primary bg-primary/10 px-3 py-1 rounded-md">{selectedBasketForPayment.generatedReference || "..."}</span></div>
+              <div className="rounded-lg border border-border p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Order Reference</span>
+                  <span className="font-mono font-medium">{referenceDialogPayment.paymentReference}</span>
+                </div>
+                <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2">
+                  <span>Amount</span>
+                  <span className="text-primary text-lg">£{parseFloat(referenceDialogPayment.totalAmount || "0").toFixed(2)}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-amber-500/30 p-3 bg-amber-500/5 text-sm text-amber-700"><p className="font-medium">Important:</p><p>Use the exact reference above when making your bank transfer.</p></div>
-            </div>
-          )}
-          {paymentResult && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-emerald-500/30 p-4 bg-emerald-500/5 text-sm space-y-2">
-                <div className="flex items-center gap-2 text-emerald-600 font-semibold mb-2"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>Payment Recorded</div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Reference</span><span className="font-mono font-medium">{paymentResult.paymentReference}</span></div>
-                <div className="flex justify-between font-semibold border-t border-emerald-500/20 pt-2 mt-2"><span>Amount</span><span className="text-primary text-lg">£{parseFloat(paymentResult.totalAmount || "0").toFixed(2)}</span></div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ref-number">Payment Reference Number *</Label>
+                <Input
+                  id="ref-number"
+                  placeholder="Enter reference from Paragon App"
+                  value={refNumber}
+                  onChange={(e) => setRefNumber(e.target.value)}
+                  className="font-mono"
+                  data-testid="input-ref-number"
+                />
               </div>
-              <p className="text-sm text-muted-foreground">The school will verify your bank transfer and confirm the payment.</p>
+
+              <div className="space-y-2">
+                <Label htmlFor="ref-notes">Additional Notes (optional)</Label>
+                <Textarea
+                  id="ref-notes"
+                  placeholder="Any additional details about your payment..."
+                  value={refNotes}
+                  onChange={(e) => setRefNotes(e.target.value)}
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="ref-confirmed"
+                  checked={refConfirmed}
+                  onChange={(e) => setRefConfirmed(e.target.checked)}
+                  className="mt-1"
+                  data-testid="checkbox-confirm-payment"
+                />
+                <Label htmlFor="ref-confirmed" className="text-sm font-normal leading-snug cursor-pointer">
+                  I confirm I have paid using the school&apos;s official payment system (Paragon App).
+                </Label>
+              </div>
             </div>
           )}
           <DialogFooter>
-            {!paymentResult ? (
-              <div className="flex gap-2 w-full justify-end">
-                <Button variant="outline" onClick={() => { setPaymentDialogOpen(false); setSelectedBasketForPayment(null); }}>Cancel</Button>
-                <Button onClick={() => paymentMutation.mutate({ basketIds: [selectedBasketForPayment.id], reference: selectedBasketForPayment.generatedReference })} disabled={paymentMutation.isPending} className="gap-2">
-                  <CreditCard className="w-4 h-4" />{paymentMutation.isPending ? "Processing..." : "I've Made the Transfer"}
-                </Button>
-              </div>
-            ) : (
-              <Button onClick={() => { setPaymentDialogOpen(false); setPaymentResult(null); setSelectedBasketForPayment(null); }}>Done</Button>
-            )}
+            <div className="flex gap-2 w-full justify-end">
+              <Button variant="outline" onClick={() => { setReferenceDialogPayment(null); setRefNumber(""); setRefConfirmed(false); setRefNotes(""); }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => submitReferenceMutation.mutate({
+                  paymentId: referenceDialogPayment.id,
+                  referenceNumber: refNumber,
+                  confirmed: refConfirmed,
+                  notes: refNotes || undefined,
+                })}
+                disabled={submitReferenceMutation.isPending || !refNumber.trim() || !refConfirmed}
+                className="gap-2"
+                data-testid="button-submit-reference"
+              >
+                <CreditCard className="w-4 h-4" />
+                {submitReferenceMutation.isPending ? "Submitting..." : "Submit Reference"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
