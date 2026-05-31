@@ -341,16 +341,16 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
                             </div>
                             <div className="flex items-center gap-2">
                               {done ? (
-                                <Button variant="outline" size="sm" disabled className="text-emerald-600 border-emerald-200 bg-emerald-50 pointer-events-none">
+                                <Button variant="success" size="sm" disabled>
                                   <CheckCircle2 className="w-4 h-4 mr-1" /> Confirmed
                                 </Button>
                               ) : abs ? (
-                                <Button variant="outline" size="sm" disabled className="text-red-600 border-red-200 bg-red-50 pointer-events-none">
+                                <Button variant="destructive" size="sm" disabled>
                                   <AlertTriangle className="w-4 h-4 mr-1" /> Absent
                                 </Button>
                               ) : (
                                 <>
-                                  <Button variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50"
+                                  <Button variant="outline" size="sm"
                                     disabled={marking || confirming} onClick={() => absentMut.mutate(a.id)}>
                                     <AlertTriangle className="w-4 h-4 mr-1" />{marking ? "..." : "Absent"}
                                   </Button>

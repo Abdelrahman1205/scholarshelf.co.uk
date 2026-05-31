@@ -1741,7 +1741,7 @@ function SchoolsSection() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-destructive"
+                    className="text-destructive hover:bg-destructive/10"
                     onClick={() => {
                       if (window.confirm(`Delete school ${school.name}? This only works if no related data exists.`)) {
                         deleteMutation.mutate(school.id);
@@ -1995,7 +1995,7 @@ function UsersSection() {
                     </Button>
                   )}
                   {currentUser?.id !== u.id && !isProtectedPlatformOwner(u.role) && (
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedUser(u); setDeleteOpen(true); }}>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedUser(u); setDeleteOpen(true); }}>
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   )}
@@ -2350,7 +2350,7 @@ function ClassesSection() {
                   <Button variant="ghost" size="sm" onClick={() => { setSelectedClass(cls); setForm({ name: cls.name || "", academicYear: cls.academicYear || "2025-2026", teacherId: cls.teacherId || "none" }); setEditOpen(true); }}>
                     <Pencil className="w-4 h-4" />
                   </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }}>
+                  <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </TableCell>
@@ -2503,7 +2503,7 @@ function StudentsSection() {
                   <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(student); setForm({ name: student.name || "", classId: student.classId || "" }); setEditOpen(true); }}>
                     <Pencil className="w-4 h-4" />
                   </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedStudent(student); setDeleteOpen(true); }}>
+                  <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedStudent(student); setDeleteOpen(true); }}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </TableCell>
@@ -2721,7 +2721,7 @@ function BooksSection() {
                     <Button variant="ghost" size="sm" onClick={() => { setSelectedBook(book); setForm({ title: book.title || "", author: book.author || "", isbn: book.isbn || "", price: book.price || "", description: book.description || "", isActive: book.isActive ?? true, stockQuantity: book.stockQuantity || 0, lowStockThreshold: book.lowStockThreshold || 10, reorderQuantity: book.reorderQuantity || 50 }); setEditOpen(true); }}>
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setSelectedBook(book); setDeleteOpen(true); }}>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedBook(book); setDeleteOpen(true); }}>
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </TableCell>
@@ -2968,7 +2968,7 @@ function LevelCard({ level, expanded, onToggle, books, addItemForm, setAddItemFo
                     <TableCell>{item.quantity}</TableCell>
                     <TableCell>£{parseFloat(item.book?.price || "0").toFixed(2)}</TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" className="text-destructive" onClick={() => removeItemMutation.mutate(item.id)}><Trash2 className="w-3 h-3" /></Button>
+                      <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => removeItemMutation.mutate(item.id)}><Trash2 className="w-3 h-3" /></Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -3268,16 +3268,16 @@ function PaymentsSection() {
             {/* Payment review actions — for reference_submitted / needs_review */}
             {isReviewActionable(selectedPayment.status) && (
               <DialogFooter className="gap-2 sm:gap-2">
-                <Button variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50"
+                <Button variant="warning"
                   onClick={() => needsReviewMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
                   Flag for Review
                 </Button>
-                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                <Button variant="destructive"
                   onClick={() => rejectMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
                   {rejectMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                   Reject
                 </Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                <Button variant="success"
                   onClick={() => confirmMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
                   {confirmMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                   Confirm & Allocate
@@ -3288,18 +3288,18 @@ function PaymentsSection() {
             {/* Fulfilment actions — for confirmed / ready_for_collection */}
             {isFulfilmentActionable(selectedPayment.status) && (
               <DialogFooter className="gap-2 sm:gap-2">
-                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                <Button variant="destructive"
                   onClick={() => cancelMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
                   Cancel Order
                 </Button>
                 {selectedPayment.status === "confirmed" && (
-                  <Button className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                  <Button variant="default"
                     onClick={() => readyMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
                     {readyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                     Mark Ready for Collection
                   </Button>
                 )}
-                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                <Button variant="success"
                   onClick={() => collectedMutation.mutate(selectedPayment.id)} disabled={anyMutationPending}>
                   {collectedMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                   Mark Collected
@@ -3412,10 +3412,10 @@ function ExtraRequestsSection() {
                 <TableCell className="text-right space-x-1">
                   {r.status === "pending" && (
                     <>
-                      <Button variant="ghost" size="sm" className="text-emerald-600" onClick={() => approveMutation.mutate(r.id)} disabled={approveMutation.isPending}>
+                      <Button variant="ghost" size="sm" className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" onClick={() => approveMutation.mutate(r.id)} disabled={approveMutation.isPending}>
                         <CheckCircle2 className="w-4 h-4" />
                       </Button>
-                      <Button variant="ghost" size="sm" className="text-destructive" onClick={() => rejectMutation.mutate(r.id)} disabled={rejectMutation.isPending}>
+                      <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => rejectMutation.mutate(r.id)} disabled={rejectMutation.isPending}>
                         <XCircle className="w-4 h-4" />
                       </Button>
                     </>
