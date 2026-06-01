@@ -1735,6 +1735,14 @@ export async function registerRoutes(
     res.json(book);
   });
 
+  // Scan book by barcode/bookCode
+  app.get("/api/books/scan/:code", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
+    const sid = sessionSchoolId(req);
+    const book = await storage.getBookByCode(routeParam(req.params.code), sid);
+    if (!book) return res.status(404).json({ message: "Book not found for this code" });
+    res.json(book);
+  });
+
   // === INVENTORY (school-scoped) ===
   app.post("/api/books/:id/stock", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
@@ -4431,7 +4439,7 @@ export async function registerRoutes(
       const requestsByStatus = {
         pending: extraRequests.filter((r: any) => r.status === "pending"),
         approved: extraRequests.filter((r: any) => r.status === "approved"),
-        rejected: extraRequests.filter((r: any) => r.status === "rejected"),
+           rejected: extraRequests.filter((r: any) => r.status === "rejected"),
       };
       const requestsByReason: Record<string, number> = {};
       for (const r of extraRequests) {
@@ -4535,11 +4543,9 @@ export async function registerRoutes(
   });
 
   // ── API catch-all: return JSON 404 for unknown /api routes ──
-  // Catch-all for unknown API routes — return JSON 404 instead of HTML
   app.all("/api/*path", (_req: Request, res: Response) => {
     res.status(404).json({ message: "API endpoint not found" });
   });
 
   return httpServer;
 }
-

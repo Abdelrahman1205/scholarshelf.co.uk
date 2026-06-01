@@ -239,9 +239,11 @@ export const books = pgTable("books", {
   lowStockThreshold: integer("low_stock_threshold").default(10),
   reorderQuantity: integer("reorder_quantity").default(50),
   schoolId: varchar("school_id", { length: 36 }),
+  bookCode: varchar("book_code", { length: 50 }),
+  barcodeGeneratedAt: timestamp("barcode_generated_at"),
 });
 
-export const insertBookSchema = createInsertSchema(books).omit({ id: true });
+export const insertBookSchema = createInsertSchema(books).omit({ id: true, bookCode: true, barcodeGeneratedAt: true });
 export type InsertBook = z.infer<typeof insertBookSchema>;
 export type Book = typeof books.$inferSelect;
 
@@ -519,4 +521,3 @@ export const resetPasswordSchema = z.object({
   token: z.string().min(1, "Reset token is required"),
   password: z.string().min(8, "Password must be at least 8 characters").max(200),
 });
-

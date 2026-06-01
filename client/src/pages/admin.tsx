@@ -7,7 +7,7 @@ import {
   QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
   Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
   XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw
+  Archive, RefreshCw, Printer
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,8 +20,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
-import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
+import JsBarcode from "jsbarcode";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -1680,7 +1680,13 @@ function SchoolsSection() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                    onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}
+                  >
+                    View
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
                     disabled={inviteAdminMutation.isPending}
                     onClick={() => {
                       const adminName = school.firstAdminName || window.prompt("First School Admin full name:") || "";
@@ -1701,7 +1707,6 @@ function SchoolsSection() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-amber-700 border-amber-300 hover:bg-amber-50"
                     disabled={isEnteringSupport}
                     onClick={() => handleEnterSupport(school.id)}
                   >
@@ -2570,6 +2575,7 @@ function StudentsSection() {
 // ─── BOOKS ─────────────────────────────────────────────────────
 function BooksSection() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -2582,6 +2588,12 @@ function BooksSection() {
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [isbnLooking, setIsbnLooking] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const [barcodeBook, setBarcodeBook] = useState<any>(null);
+  const [barcodeOpen, setBarcodeOpen] = useState(false);
+  const barcodeRef = useRef<SVGSVGElement | null>(null);
+  const [scanInput, setScanInput] = useState("");
+  const [scanResult, setScanResult] = useState<any>(null);
+  const [scanNotFound, setScanNotFound] = useState(false);
 
   const { data: books = [] } = useQuery<any[]>({ queryKey: ["/api/books"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -2621,6 +2633,33 @@ function BooksSection() {
 
   useEffect(() => { return () => { if (scannerRef.current) { try { scannerRef.current.stop(); scannerRef.current.clear(); } catch {} } }; }, []);
 
+  // Render barcode when dialog opens
+  useEffect(() => {
+    if (barcodeOpen && barcodeBook?.bookCode && barcodeRef.current) {
+      try { JsBarcode(barcodeRef.current, barcodeBook.bookCode, { format: "CODE128", width: 2, height: 80, displayValue: true, fontSize: 14, margin: 10 }); } catch {}
+    }
+  }, [barcodeOpen, barcodeBook]);
+
+  async function handleScanInput(code: string) {
+    if (!code.trim()) return;
+    setScanNotFound(false); setScanResult(null);
+    try {
+      const res = await fetch(`/api/books/scan/${encodeURIComponent(code.trim())}`, { credentials: "include" });
+      if (res.ok) { const book = await res.json(); setScanResult(book); setScanNotFound(false); }
+      else { setScanNotFound(true); }
+    } catch { setScanNotFound(true); }
+  }
+
+  function printBarcode(book: any) {
+    const svg = document.querySelector("#barcode-print-area svg");
+    if (!svg) return;
+    const schoolLabel = (user as any)?.schoolName || (user as any)?.schoolCode || "";
+    const win = window.open("", "_blank", "width=420,height=350");
+    if (!win) return;
+    win.document.write(`<html><head><title>Barcode - ${book.title}</title><style>body{text-align:center;font-family:sans-serif;padding:20px;margin:0}.school{font-size:11px;color:#888;margin-bottom:2px}.title{font-size:15px;font-weight:bold;margin:4px 0 2px}.author{font-size:12px;color:#666;margin:0 0 8px}.code{font-size:11px;color:#555;font-family:monospace;margin-top:6px}@media print{body{padding:8px}}</style></head><body>${schoolLabel ? `<p class="school">${schoolLabel}</p>` : ""}<p class="title">${book.title}</p>${book.author ? `<p class="author">${book.author}</p>` : ""}${svg.outerHTML}<p class="code">${book.bookCode}</p><script>window.print();window.close();</script></body></html>`);
+    win.document.close();
+  }
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/books", data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setAddOpen(false); resetForm(); toast({ title: "Book added" }); },
@@ -2647,7 +2686,7 @@ function BooksSection() {
 
   function resetForm() { setForm({ title: "", author: "", isbn: "", price: "", description: "", isActive: true, stockQuantity: 0, lowStockThreshold: 10, reorderQuantity: 50 }); }
 
-  const filtered = books.filter((b: any) => b.title?.toLowerCase().includes(search.toLowerCase()) || b.author?.toLowerCase().includes(search.toLowerCase()) || b.isbn?.toLowerCase().includes(search.toLowerCase()));
+  const filtered = books.filter((b: any) => b.title?.toLowerCase().includes(search.toLowerCase()) || b.author?.toLowerCase().includes(search.toLowerCase()) || b.isbn?.toLowerCase().includes(search.toLowerCase()) || b.bookCode?.toLowerCase().includes(search.toLowerCase()));
 
   const bookFormFields = (
     <>
@@ -2682,10 +2721,33 @@ function BooksSection() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input type="search" placeholder="Search by title, author, or ISBN..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input type="search" placeholder="Search by title, author, ISBN, or book code..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <div className="relative max-w-xs">
+          <ScanBarcode className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Scan or type book code..." className="pl-9 bg-card font-mono" value={scanInput} onChange={(e) => setScanInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { handleScanInput(scanInput); } }} />
+        </div>
       </div>
+      {scanResult && (
+        <Alert className="border-emerald-200 bg-emerald-50">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          <AlertTitle className="text-emerald-800">Book Found</AlertTitle>
+          <AlertDescription className="text-emerald-700">
+            <strong>{scanResult.title}</strong> by {scanResult.author || "Unknown"} — Stock: {scanResult.stockQuantity || 0} — Code: <span className="font-mono">{scanResult.bookCode}</span>
+            <Button variant="ghost" size="sm" className="ml-2" onClick={() => { setScanResult(null); setScanInput(""); }}>Dismiss</Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      {scanNotFound && (
+        <Alert variant="destructive">
+          <XCircle className="h-4 w-4" />
+          <AlertTitle>Not Found</AlertTitle>
+          <AlertDescription>No book matches code "{scanInput}". <Button variant="ghost" size="sm" onClick={() => { setScanNotFound(false); setScanInput(""); }}>Dismiss</Button></AlertDescription>
+        </Alert>
+      )}
 
       <Card className="border-border/50 shadow-sm">
         <Table>
@@ -2693,6 +2755,7 @@ function BooksSection() {
             <TableRow>
               <TableHead>Title</TableHead>
               <TableHead>Author</TableHead>
+              <TableHead>Book Code</TableHead>
               <TableHead>ISBN</TableHead>
               <TableHead>Price</TableHead>
               <TableHead>Stock</TableHead>
@@ -2707,6 +2770,11 @@ function BooksSection() {
                 <TableRow key={book.id}>
                   <TableCell className="font-medium">{book.title}</TableCell>
                   <TableCell className="text-muted-foreground">{book.author || "—"}</TableCell>
+                  <TableCell className="text-sm font-mono">
+                    {book.bookCode ? (
+                      <Button variant="ghost" size="sm" className="h-auto py-0.5 px-1 font-mono text-xs" onClick={() => { setBarcodeBook(book); setBarcodeOpen(true); }}>{book.bookCode}</Button>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                   <TableCell className="text-muted-foreground text-sm font-mono">{book.isbn || "—"}</TableCell>
                   <TableCell>£{parseFloat(book.price).toFixed(2)}</TableCell>
                   <TableCell>
@@ -2729,7 +2797,7 @@ function BooksSection() {
               );
             })}
             {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{search ? "No matching books" : "No books yet. Add your first book above."}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">{search ? "No matching books" : "No books yet. Add your first book above."}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -2802,6 +2870,25 @@ function BooksSection() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Barcode View/Print Dialog */}
+      <Dialog open={barcodeOpen} onOpenChange={setBarcodeOpen}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Book Barcode (CODE128)</DialogTitle>
+            <DialogDescription>{barcodeBook?.title}{barcodeBook?.author ? ` — ${barcodeBook.author}` : ""}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-2 py-4" id="barcode-print-area">
+            {(user as any)?.schoolName && <p className="text-xs text-muted-foreground">{(user as any).schoolName}</p>}
+            {barcodeBook?.bookCode && <svg ref={barcodeRef} />}
+            <p className="text-sm font-mono font-medium">{barcodeBook?.bookCode}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBarcodeOpen(false)}>Close</Button>
+            <Button onClick={() => printBarcode(barcodeBook)}><Printer className="w-4 h-4 mr-2" /> Print Label</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -4178,21 +4265,18 @@ export default function AdminPage({ section }: { section: string }) {
     reports: <ReportsSection />,
   };
 
+
   let resolvedSection = section;
   const ownerOnlySections = new Set(["owner", "schools", "school-details", "pending-setups", "admin-invites", "email-status", "activity", "owner-settings"]);
 
-  // Non-owners cannot access owner sections
   if (ownerOnlySections.has(section) && !requesterIsOwner) {
     resolvedSection = "dashboard";
   }
 
-  // Outside support mode, owner account stays in owner-control pages only
   if (requesterIsOwner && !inSupportMode && !ownerOnlySections.has(section)) {
     resolvedSection = "owner";
   }
 
-  // In support mode: redirect owner-only sections to school dashboard
-  // Owner sees school admin pages, not the platform dashboard
   if (inSupportMode && ownerOnlySections.has(section)) {
     resolvedSection = "dashboard";
   }

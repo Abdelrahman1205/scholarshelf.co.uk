@@ -217,6 +217,7 @@ export interface IStorage {
   getBooks(schoolId?: string | null): Promise<schema.Book[]>;
   getBook(id: string, schoolId?: string | null): Promise<schema.Book | undefined>;
   getBookByIsbn(isbn: string, schoolId?: string | null): Promise<schema.Book | undefined>;
+  getBookByCode(code: string, schoolId?: string | null): Promise<schema.Book | undefined>;
   createBook(book: schema.InsertBook): Promise<schema.Book>;
   updateBook(id: string, book: Partial<schema.InsertBook>, schoolId?: string | null): Promise<schema.Book | undefined>;
   deleteBook(id: string, schoolId?: string | null): Promise<void>;
@@ -610,8 +611,31 @@ class DatabaseStorage implements IStorage {
     return book;
   }
 
+  async getBookByCode(code: string, schoolId?: string | null): Promise<schema.Book | undefined> {
+    const conditions = [eq(schema.books.bookCode, code)];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    const [book] = await getDb().select().from(schema.books).where(and(...conditions));
+    return book;
+  }
+
   async createBook(book: schema.InsertBook): Promise<schema.Book> {
-    const created = await insertAndFetchById(schema.books, book);
+    // Auto-generate bookCode: BK-{schoolCode}-{sequenceNumber}
+    let bookCode: string | undefined;
+    if (book.schoolId) {
+      // Get the school code
+      const [school] = await getDb().select({ code: schema.schools.code }).from(schema.schools).where(eq(schema.schools.id, book.schoolId));
+      const schoolCode = school?.code || "UNK";
+      // Count existing books for this school to determine sequence
+      const [result] = await getDb().select({ count: sql<number>`count(*)` }).from(schema.books).where(eq(schema.books.schoolId, book.schoolId));
+      const seq = (Number(result?.count) || 0) + 1;
+      bookCode = `BK-${schoolCode}-${String(seq).padStart(6, "0")}`;
+    }
+    const created = await insertAndFetchById(schema.books, {
+      ...book,
+      bookCode: bookCode || null,
+      barcodeGeneratedAt: bookCode ? new Date() : null,
+    });
     return created;
   }
 
@@ -1831,7 +1855,7 @@ class DatabaseStorage implements IStorage {
         createdAt: now(),
       };
       return created;
-    }
+      }
   }
 }
 
