@@ -2572,6 +2572,21 @@ function StudentsSection() {
   );
 }
 
+// ─── BARCODE RENDERER ──────────────────────────────────────────
+function BarcodeDisplay({ value, width = 2, height = 80 }: { value: string; width?: number; height?: number }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    if (svgRef.current && value) {
+      try {
+        JsBarcode(svgRef.current, value, { format: "CODE128", width, height, displayValue: false, margin: 10 });
+      } catch (e) {
+        console.error("JsBarcode render error:", e);
+      }
+    }
+  }, [value, width, height]);
+  return <svg ref={svgRef} />;
+}
+
 // ─── BOOKS ─────────────────────────────────────────────────────
 function BooksSection() {
   const { toast } = useToast();
@@ -2590,7 +2605,6 @@ function BooksSection() {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [barcodeBook, setBarcodeBook] = useState<any>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
-  const barcodeRef = useRef<SVGSVGElement | null>(null);
   const [scanInput, setScanInput] = useState("");
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanNotFound, setScanNotFound] = useState(false);
@@ -2621,7 +2635,7 @@ function BooksSection() {
         const html5Qr = new Html5Qrcode("barcode-reader");
         scannerRef.current = html5Qr;
         await html5Qr.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 300, height: 150 } } as any,
-          (decodedText) => { const isbn = decodedText.trim().replace(/[^0-9X]/gi, ""); stopScanner(); if (!addOpen) setAddOpen(true); lookupIsbn(isbn); }, () => {});
+          (decodedText) => { const code = decodedText.trim(); stopScanner(); setScanInput(code); handleScanInput(code); }, () => {});
       } catch (err: any) { setScannerError(err?.message || "Could not access camera."); setScannerOpen(false); }
     }, 100);
   }
@@ -2632,13 +2646,6 @@ function BooksSection() {
   }
 
   useEffect(() => { return () => { if (scannerRef.current) { try { scannerRef.current.stop(); scannerRef.current.clear(); } catch {} } }; }, []);
-
-  // Render barcode when dialog opens
-  useEffect(() => {
-    if (barcodeOpen && barcodeBook?.bookCode && barcodeRef.current) {
-      try { JsBarcode(barcodeRef.current, barcodeBook.bookCode, { format: "CODE128", width: 2, height: 80, displayValue: true, fontSize: 14, margin: 10 }); } catch {}
-    }
-  }, [barcodeOpen, barcodeBook]);
 
   async function handleScanInput(code: string) {
     if (!code.trim()) return;
@@ -2806,7 +2813,7 @@ function BooksSection() {
       {/* Scanner Dialog */}
       <Dialog open={scannerOpen} onOpenChange={(open) => { if (!open) stopScanner(); }}>
         <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Scan Book Barcode</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Scan Book Code (CODE128)</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div id="barcode-reader" className="w-full rounded-lg overflow-hidden bg-black min-h-[280px]" />
             {scannerError && <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{scannerError}</div>}
@@ -2880,7 +2887,7 @@ function BooksSection() {
           </DialogHeader>
           <div className="flex flex-col items-center gap-2 py-4" id="barcode-print-area">
             {(user as any)?.schoolName && <p className="text-xs text-muted-foreground">{(user as any).schoolName}</p>}
-            {barcodeBook?.bookCode && <svg ref={barcodeRef} />}
+            {barcodeBook?.bookCode && <BarcodeDisplay value={barcodeBook.bookCode} />}
             <p className="text-sm font-mono font-medium">{barcodeBook?.bookCode}</p>
           </div>
           <DialogFooter>
@@ -4264,7 +4271,6 @@ export default function AdminPage({ section }: { section: string }) {
     branding: <BrandingSection />,
     reports: <ReportsSection />,
   };
-
 
   let resolvedSection = section;
   const ownerOnlySections = new Set(["owner", "schools", "school-details", "pending-setups", "admin-invites", "email-status", "activity", "owner-settings"]);
