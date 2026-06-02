@@ -7,7 +7,7 @@ import {
   QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
   Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
   XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw, Printer
+  Archive, RefreshCw, Printer, ShieldAlert, ShieldOff, Ban
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1379,6 +1379,13 @@ function SchoolsSection() {
     notes: "",
   });
 
+  // Danger Zone state
+  const [dangerAction, setDangerAction] = useState<"suspend" | "archive" | "restore" | "request_deletion" | "delete" | null>(null);
+  const [dangerSchool, setDangerSchool] = useState<any>(null);
+  const [dangerReason, setDangerReason] = useState("");
+  const [dangerConfirmText, setDangerConfirmText] = useState("");
+  const [dangerLoading, setDangerLoading] = useState(false);
+
   async function handleEnterSupport(schoolId: string) {
     try {
       await enterSupportMode(schoolId);
@@ -1390,8 +1397,15 @@ function SchoolsSection() {
   }
 
   const { data: schools = [] } = useQuery<any[]>({
-    queryKey: ["/api/owner/schools"],
-    queryFn: getQueryFn({ on401: "throw" }),
+    queryKey: ["/api/owner/schools", statusFilter === "deleted" ? "includeDeleted" : ""],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (statusFilter === "deleted") params.set("includeDeleted", "true");
+      if (statusFilter !== "all" && statusFilter !== "deleted") params.set("status", statusFilter);
+      const res = await fetch(`/api/owner/schools?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load schools");
+      return res.json();
+    },
   });
 
   const createMutation = useMutation({
@@ -1447,16 +1461,6 @@ function SchoolsSection() {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/owner/schools/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/owner/dashboard"] });
-      toast({ title: "School deleted" });
-    },
-    onError: (err: any) => toast({ title: "Delete blocked", description: err.message, variant: "destructive" }),
-  });
-
   const inviteAdminMutation = useMutation({
     mutationFn: ({ schoolId, adminName, adminEmail }: { schoolId: string; adminName: string; adminEmail: string }) =>
       apiRequest("POST", `/api/owner/schools/${schoolId}/invite-admin`, { adminName, adminEmail }),
@@ -1498,6 +1502,9 @@ function SchoolsSection() {
     if (status === "active") return "bg-emerald-100 text-emerald-700 border-emerald-200";
     if (status === "pending_setup") return "bg-amber-100 text-amber-700 border-amber-200";
     if (status === "suspended") return "bg-red-100 text-red-700 border-red-200";
+    if (status === "archived") return "bg-slate-100 text-slate-600 border-slate-200";
+    if (status === "pending_deletion") return "bg-orange-100 text-orange-700 border-orange-200";
+    if (status === "deleted") return "bg-gray-100 text-gray-500 border-gray-300 line-through";
     return "";
   }
 
@@ -1533,29 +1540,108 @@ function SchoolsSection() {
       school.code?.toLowerCase().includes(q) ||
       school.contactEmail?.toLowerCase().includes(q)
     );
-
-    const setup = String(school.setupStatus || "");
-    const invite = String(school.firstAdminInviteStatus || "");
-    const schoolStatus = String(school.status || "");
-    const matchesFilter = statusFilter === "all"
-      ? true
-      : statusFilter === "pending_setup"
-        ? schoolStatus === "pending_setup"
-        : statusFilter === "pending_admin_invite"
-          ? setup === "pending_admin_invite" || setup === "school_created" || invite === "not_invited"
-          : statusFilter === "pending_admin_acceptance"
-            ? setup === "pending_admin_acceptance" || invite === "pending" || invite === "expired"
-            : statusFilter === "setup_in_progress"
-              ? setup === "admin_accepted" || setup === "operational_setup_in_progress"
-              : statusFilter === "active"
-                ? schoolStatus === "active"
-                : statusFilter === "suspended"
-                  ? schoolStatus === "suspended"
-                  : true;
-
-    return matchesSearch && matchesFilter;
+    // When a specific statusFilter is applied via the query, all returned schools already match
+    // But for "all" we still get non-deleted, so client filter is a safety net
+    return matchesSearch;
   });
 
+  // ─── DANGER ZONE HELPERS ─────────────────────────────────────────
+  const DANGER_CONFIG: Record<string, { title: string; description: string; confirmWord: string | ((s: any) => string); variant: "destructive" | "default"; buttonLabel: string }> = {
+    suspend: {
+      title: "Suspend School",
+      description: "Suspending will immediately block all school users (admins, teachers, parents, students) from accessing their dashboards. The school data will be preserved. Only you (platform owner) can restore access.",
+      confirmWord: "SUSPEND",
+      variant: "destructive",
+      buttonLabel: "Suspend School",
+    },
+    archive: {
+      title: "Archive School",
+      description: "Archiving will remove this school from the active client list and block all school users. No new orders, invites, or distributions will be allowed. Historical records are preserved. You can restore the school later if needed.",
+      confirmWord: "ARCHIVE",
+      variant: "destructive",
+      buttonLabel: "Archive School",
+    },
+    restore: {
+      title: "Restore School",
+      description: "Restoring will set the school status back to Active and re-enable normal access for all school users.",
+      confirmWord: "RESTORE",
+      variant: "default",
+      buttonLabel: "Restore School",
+    },
+    request_deletion: {
+      title: "Mark for Pending Deletion",
+      description: "This marks the school for permanent deletion. No records will be removed yet, but the school will be flagged for final review before permanent deletion.",
+      confirmWord: (s: any) => `DELETE ${s?.code || ""}`,
+      variant: "destructive",
+      buttonLabel: "Mark Pending Deletion",
+    },
+    delete: {
+      title: "Permanently Delete School",
+      description: "This will permanently soft-delete this school. The school and all its data will be hidden from normal views. This action cannot be easily undone. If there are active orders or pending payment references, deletion will be blocked.",
+      confirmWord: (s: any) => `DELETE ${s?.code || ""}`,
+      variant: "destructive",
+      buttonLabel: "Permanently Delete",
+    },
+  };
+
+  function getExpectedConfirm() {
+    if (!dangerAction || !dangerSchool) return "";
+    const cfg = DANGER_CONFIG[dangerAction];
+    return typeof cfg.confirmWord === "function" ? cfg.confirmWord(dangerSchool) : cfg.confirmWord;
+  }
+
+  async function executeDangerAction() {
+    if (!dangerAction || !dangerSchool) return;
+    setDangerLoading(true);
+    try {
+      const id = dangerSchool.id;
+      let endpoint = "";
+      let method = "POST";
+      switch (dangerAction) {
+        case "suspend": endpoint = `/api/owner/schools/${id}/suspend`; break;
+        case "archive": endpoint = `/api/owner/schools/${id}/archive`; break;
+        case "restore": endpoint = `/api/owner/schools/${id}/restore`; break;
+        case "request_deletion": endpoint = `/api/owner/schools/${id}/request-deletion`; break;
+        case "delete": endpoint = `/api/owner/schools/${id}`; method = "DELETE"; break;
+      }
+      await apiRequest(method as any, endpoint, { reason: dangerReason, confirmText: dangerConfirmText });
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/schools"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/owner/dashboard"] });
+      toast({ title: DANGER_CONFIG[dangerAction].title, description: `${dangerSchool.name} — action completed successfully.` });
+      setDangerAction(null);
+      setDangerSchool(null);
+      setDangerReason("");
+      setDangerConfirmText("");
+    } catch (err: any) {
+      let msg = err.message || "Action failed";
+      let blockers: string[] | undefined;
+      // apiRequest throws Error("status: jsonBody") — try to parse the body portion
+      const colonIdx = msg.indexOf(": ");
+      if (colonIdx > 0) {
+        try {
+          const parsed = JSON.parse(msg.slice(colonIdx + 2));
+          msg = parsed.message || msg;
+          blockers = parsed.blockers;
+        } catch {}
+      }
+      toast({
+        title: "Action blocked",
+        description: blockers ? `${msg}\n${blockers.join("\n")}` : msg,
+        variant: "destructive",
+      });
+    } finally {
+      setDangerLoading(false);
+    }
+  }
+
+  function openDanger(action: "suspend" | "archive" | "restore" | "request_deletion" | "delete", school: any) {
+    setDangerAction(action);
+    setDangerSchool(school);
+    setDangerReason("");
+    setDangerConfirmText("");
+  }
+
+  // ─── RENDER ──────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1580,26 +1666,14 @@ function SchoolsSection() {
             </p>
             {(inviteSummary.manualInviteLinkAllowed || import.meta.env.DEV || !inviteSummary.emailSent) && (
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    navigator.clipboard.writeText(inviteSummary.inviteLink).then(() => {
-                      toast({ title: "Invite link copied" });
-                    }).catch(() => {
-                      toast({ title: "Copy failed", description: inviteSummary.inviteLink, variant: "destructive" });
-                    });
-                  }}
-                >
-                  Copy setup link
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setInviteSummary(null)}
-                >
-                  Dismiss
-                </Button>
+                <Button variant="outline" size="sm" onClick={() => {
+                  navigator.clipboard.writeText(inviteSummary.inviteLink).then(() => {
+                    toast({ title: "Invite link copied" });
+                  }).catch(() => {
+                    toast({ title: "Copy failed", description: inviteSummary.inviteLink, variant: "destructive" });
+                  });
+                }}>Copy setup link</Button>
+                <Button variant="ghost" size="sm" onClick={() => setInviteSummary(null)}>Dismiss</Button>
               </div>
             )}
           </AlertDescription>
@@ -1614,13 +1688,13 @@ function SchoolsSection() {
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-full sm:w-[260px]"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="all">All active</SelectItem>
             <SelectItem value="pending_setup">Pending setup</SelectItem>
-            <SelectItem value="pending_admin_invite">Pending admin invite</SelectItem>
-            <SelectItem value="pending_admin_acceptance">Pending admin acceptance</SelectItem>
-            <SelectItem value="setup_in_progress">Setup in progress</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="suspended">Suspended</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
+            <SelectItem value="pending_deletion">Pending Deletion</SelectItem>
+            <SelectItem value="deleted">Deleted</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -1633,138 +1707,123 @@ function SchoolsSection() {
               <TableHead>Code</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Setup</TableHead>
-              <TableHead>First Admin</TableHead>
-              <TableHead>Invite Status</TableHead>
               <TableHead>Contact Email</TableHead>
-              <TableHead>Admins</TableHead>
-              <TableHead>Teachers</TableHead>
-              <TableHead>Parents</TableHead>
-              <TableHead>Students</TableHead>
-              <TableHead>Books</TableHead>
+              <TableHead>Users</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((school: any) => (
-              <TableRow key={school.id}>
-                <TableCell className="font-medium">{school.name}</TableCell>
-                <TableCell className="text-muted-foreground">{school.code}</TableCell>
-                <TableCell>
-                  <Badge variant="outline" className={badgeClass(school.status)}>{school.status || "unknown"}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className={setupBadge(school.setupStatus).cls}>
-                    {setupBadge(school.setupStatus).label}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-xs">{school.firstAdminEmail || "Not invited"}</TableCell>
-                <TableCell>
-                  <Badge variant="outline" className={badgeClass(school.firstAdminInviteStatus === "accepted" ? "active" : school.firstAdminInviteStatus === "pending" ? "pending_setup" : "suspended")}>
-                    {inviteStatusLabel(school.firstAdminInviteStatus)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-muted-foreground text-xs">{school.contactEmail || "Not available"}</TableCell>
-                <TableCell>{school.counts?.admins ?? 0}</TableCell>
-                <TableCell>{school.counts?.teachers ?? 0}</TableCell>
-                <TableCell>{school.counts?.parents ?? 0}</TableCell>
-                <TableCell>{school.counts?.students ?? 0}</TableCell>
-                <TableCell>{school.counts?.books ?? 0}</TableCell>
-                <TableCell className="text-right space-x-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}
-                  >
-                    View
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}
-                  >
-                    View
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    disabled={inviteAdminMutation.isPending}
-                    onClick={() => {
-                      const adminName = school.firstAdminName || window.prompt("First School Admin full name:") || "";
-                      const adminEmail = school.firstAdminEmail || window.prompt("First School Admin email:") || "";
-                      if (!adminName || !adminEmail) return;
-                      inviteAdminMutation.mutate({ schoolId: school.id, adminName, adminEmail });
-                    }}
-                  >
-                    {school.firstAdminInviteStatus === "pending" ? "Resend" : "Invite Admin"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}
-                  >
-                    Setup Status
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={isEnteringSupport}
-                    onClick={() => handleEnterSupport(school.id)}
-                  >
-                    {isEnteringSupport ? "Entering..." : "Support"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedSchool(school);
-                      setForm({
-                        name: school.name || "",
-                        code: school.code || "",
-                        status: school.status || "pending_setup",
-                        firstAdminName: "",
-                        firstAdminEmail: "",
-                        contactEmail: school.contactEmail || "",
-                        contactPhone: school.contactPhone || "",
-                        address: school.address || "",
-                        notes: school.notes || "",
-                      });
-                      setEditOpen(true);
-                    }}
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedSchool(school);
-                      updateMutation.mutate({ status: school.status === "suspended" ? "active" : "suspended" });
-                    }}
-                  >
-                    {school.status === "suspended" ? "Activate" : "Suspend"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:bg-destructive/10"
-                    onClick={() => {
-                      if (window.confirm(`Delete school ${school.name}? This only works if no related data exists.`)) {
-                        deleteMutation.mutate(school.id);
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {filtered.map((school: any) => {
+              const st = school.status || "unknown";
+              const totalUsers = (school.counts?.admins ?? 0) + (school.counts?.teachers ?? 0) + (school.counts?.parents ?? 0) + (school.counts?.students ?? 0);
+              return (
+                <TableRow key={school.id} className={st === "deleted" ? "opacity-50" : ""}>
+                  <TableCell className="font-medium">{school.name}</TableCell>
+                  <TableCell className="text-muted-foreground font-mono text-xs">{school.code}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={badgeClass(st)}>{st}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={setupBadge(school.setupStatus).cls}>
+                      {setupBadge(school.setupStatus).label}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{school.contactEmail || "—"}</TableCell>
+                  <TableCell className="text-xs">{totalUsers}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="outline" size="sm" onClick={() => navigateTo(`/admin/school-details?schoolId=${encodeURIComponent(school.id)}`)}>
+                        View
+                      </Button>
+                      {st !== "deleted" && (
+                        <>
+                          <Button variant="default" size="sm" disabled={inviteAdminMutation.isPending}
+                            onClick={() => {
+                              const adminName = school.firstAdminName || window.prompt("First School Admin full name:") || "";
+                              const adminEmail = school.firstAdminEmail || window.prompt("First School Admin email:") || "";
+                              if (!adminName || !adminEmail) return;
+                              inviteAdminMutation.mutate({ schoolId: school.id, adminName, adminEmail });
+                            }}>
+                            {school.firstAdminInviteStatus === "pending" ? "Resend" : "Invite Admin"}
+                          </Button>
+                          {st === "active" && (
+                            <Button variant="outline" size="sm" disabled={isEnteringSupport}
+                              onClick={() => handleEnterSupport(school.id)}>
+                              {isEnteringSupport ? "..." : "Support"}
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" onClick={() => {
+                            setSelectedSchool(school);
+                            setForm({
+                              name: school.name || "", code: school.code || "", status: school.status || "pending_setup",
+                              firstAdminName: "", firstAdminEmail: "",
+                              contactEmail: school.contactEmail || "", contactPhone: school.contactPhone || "",
+                              address: school.address || "", notes: school.notes || "",
+                            });
+                            setEditOpen(true);
+                          }}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                      {/* Danger zone quick-access */}
+                      {st === "active" && (
+                        <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50"
+                          onClick={() => openDanger("suspend", school)}>
+                          <ShieldOff className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {st === "suspended" && (
+                        <Button variant="ghost" size="sm" className="text-emerald-600 hover:bg-emerald-50"
+                          onClick={() => openDanger("restore", school)}>
+                          <RefreshCw className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {(st === "active" || st === "suspended") && (
+                        <Button variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-50"
+                          onClick={() => openDanger("archive", school)}>
+                          <Archive className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {st === "archived" && (
+                        <>
+                          <Button variant="ghost" size="sm" className="text-emerald-600 hover:bg-emerald-50"
+                            onClick={() => openDanger("restore", school)}>
+                            <RefreshCw className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10"
+                            title="Mark for deletion"
+                            onClick={() => openDanger("request_deletion", school)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                      {st === "pending_deletion" && (
+                        <>
+                          <Button variant="ghost" size="sm" className="text-emerald-600 hover:bg-emerald-50"
+                            onClick={() => openDanger("restore", school)}>
+                            <RefreshCw className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10"
+                            title="Permanently delete"
+                            onClick={() => openDanger("delete", school)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
             {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-8">{search ? "No matching schools" : "No schools found"}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{search ? "No matching schools" : "No schools found"}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </Card>
 
+      {/* ─── ADD SCHOOL DIALOG ──────────────────────────────────────── */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
@@ -1807,25 +1866,19 @@ function SchoolsSection() {
         </DialogContent>
       </Dialog>
 
+      {/* ─── EDIT SCHOOL DIALOG ─────────────────────────────────────── */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
             <DialogTitle>Edit School</DialogTitle>
-            <DialogDescription>Update school identity, lifecycle status, and owner notes.</DialogDescription>
+            <DialogDescription>Update school identity and contact details. Use the Danger Zone actions in the table to change lifecycle status.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="grid gap-2"><Label>School Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="grid gap-2"><Label>School Code</Label><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div className="grid gap-2">
-              <Label>Status</Label>
-              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pending_setup">Pending setup</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="suspended">Suspended</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              Current status: <Badge variant="outline" className={badgeClass(form.status)}>{form.status}</Badge>
+              <span className="ml-2 text-xs">Use table actions to change lifecycle status.</span>
             </div>
             <div className="grid gap-2"><Label>Contact Email</Label><Input type="email" value={form.contactEmail} onChange={(e) => setForm({ ...form, contactEmail: e.target.value })} /></div>
             <div className="grid gap-2"><Label>Contact Phone</Label><Input value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} /></div>
@@ -1834,7 +1887,11 @@ function SchoolsSection() {
           </div>
           <DialogFooter>
             <Button
-              onClick={() => updateMutation.mutate(form)}
+              onClick={() => updateMutation.mutate({
+                name: form.name, code: form.code,
+                contactEmail: form.contactEmail || null, contactPhone: form.contactPhone || null,
+                address: form.address || null, notes: form.notes || null,
+              })}
               disabled={updateMutation.isPending || !form.name || !form.code}
             >
               {updateMutation.isPending ? "Saving..." : "Save Changes"}
@@ -1842,9 +1899,67 @@ function SchoolsSection() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ─── DANGER ZONE CONFIRMATION DIALOG ────────────────────────── */}
+      <AlertDialog open={!!dangerAction} onOpenChange={(open) => { if (!open) { setDangerAction(null); setDangerSchool(null); } }}>
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              {dangerAction && DANGER_CONFIG[dangerAction]?.title}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm">
+              {dangerAction && DANGER_CONFIG[dangerAction]?.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {dangerSchool && (
+            <div className="space-y-4 py-2">
+              <div className="bg-muted/50 rounded-lg p-3 text-sm space-y-1">
+                <div><span className="text-muted-foreground">School:</span> <span className="font-medium">{dangerSchool.name}</span></div>
+                <div><span className="text-muted-foreground">Code:</span> <span className="font-mono">{dangerSchool.code}</span></div>
+                <div><span className="text-muted-foreground">Current Status:</span> <Badge variant="outline" className={badgeClass(dangerSchool.status)}>{dangerSchool.status}</Badge></div>
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Reason <span className="text-destructive">*</span></Label>
+                <Textarea
+                  placeholder="Provide a reason for this action..."
+                  value={dangerReason}
+                  onChange={(e) => setDangerReason(e.target.value)}
+                  rows={2}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Type <span className="font-mono font-bold text-destructive">{getExpectedConfirm()}</span> to confirm</Label>
+                <Input
+                  placeholder={getExpectedConfirm()}
+                  value={dangerConfirmText}
+                  onChange={(e) => setDangerConfirmText(e.target.value)}
+                  className="font-mono"
+                />
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={dangerLoading}>Cancel</AlertDialogCancel>
+            <Button
+              variant={dangerAction ? DANGER_CONFIG[dangerAction]?.variant : "destructive"}
+              disabled={dangerLoading || !dangerReason.trim() || dangerConfirmText !== getExpectedConfirm()}
+              onClick={executeDangerAction}
+            >
+              {dangerLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              {dangerLoading ? "Processing..." : dangerAction && DANGER_CONFIG[dangerAction]?.buttonLabel}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
+
 
 // ─── USERS ─────────────────────────────────────────────────────
 function UsersSection() {

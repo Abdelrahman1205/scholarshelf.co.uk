@@ -129,6 +129,22 @@ function ensureDemoUsersInMemory() {
       notes: "Demo school (memory mode)",
       createdAt: now(),
       updatedAt: now(),
+      isDeleted: false,
+      suspendedAt: null,
+      suspendedBy: null,
+      suspensionReason: null,
+      archivedAt: null,
+      archivedBy: null,
+      archiveReason: null,
+      restoredAt: null,
+      restoredBy: null,
+      restoreReason: null,
+      deletionRequestedAt: null,
+      deletionRequestedBy: null,
+      deletionReason: null,
+      deletedAt: null,
+      deletedBy: null,
+      deleteReason: null,
     });
   }
 
@@ -189,6 +205,20 @@ function ensureDemoUsersInMemory() {
       updatedAt: now(),
       lastLoginAt: null,
     },
+    {
+      id: randomUUID(),
+      username: "finance",
+      passwordHash: bcrypt.hashSync("finance123", 10),
+      name: "Youssef Al-Baruni",
+      role: "finance",
+      email: "finance@alnoor.edu.ly",
+      status: "active",
+      schoolId: demoSchoolId,
+      emailVerifiedAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+      lastLoginAt: null,
+    },
   ];
 
   for (const user of demoUsers) {
@@ -209,7 +239,7 @@ export interface IStorage {
   getSchools(): Promise<schema.School[]>;
   getSchoolById(id: string): Promise<schema.School | undefined>;
   createSchool(school: schema.InsertSchool): Promise<schema.School>;
-  updateSchool(id: string, school: Partial<schema.InsertSchool>): Promise<schema.School | undefined>;
+  updateSchool(id: string, school: Partial<Omit<schema.School, "id">>): Promise<schema.School | undefined>;
   deleteSchool(id: string): Promise<void>;
   deleteSchoolAndRelatedData(id: string): Promise<void>;
 
@@ -381,13 +411,19 @@ class DatabaseStorage implements IStorage {
         notes: school.notes ?? null,
         createdAt: now(),
         updatedAt: now(),
+        isDeleted: false,
+        suspendedAt: null, suspendedBy: null, suspensionReason: null,
+        archivedAt: null, archivedBy: null, archiveReason: null,
+        restoredAt: null, restoredBy: null, restoreReason: null,
+        deletionRequestedAt: null, deletionRequestedBy: null, deletionReason: null,
+        deletedAt: null, deletedBy: null, deleteReason: null,
       };
       memorySchools.set(created.id, created);
       return created;
     }
   }
 
-  async updateSchool(id: string, school: Partial<schema.InsertSchool>): Promise<schema.School | undefined> {
+  async updateSchool(id: string, school: Partial<Omit<schema.School, "id">>): Promise<schema.School | undefined> {
     const updates = { ...school, updatedAt: new Date() };
     try {
       const updated = await updateAndFetchFirst(schema.schools, eq(schema.schools.id, id), updates);

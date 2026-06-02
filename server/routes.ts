@@ -111,8 +111,16 @@ async function ensureSessionSchoolIsActive(req: Request, res: Response): Promise
     return res.status(401).json({ message: "School account is not correctly configured" }) as any;
   }
 
-  if (school.status === "suspended") {
-    await auditLog(req, "session_blocked_suspended_school", `school:${schoolId}`, {
+  const INACTIVE_STATUSES: Record<string, string> = {
+    suspended: "This school account is currently suspended. Please contact platform support.",
+    archived: "This school account has been archived. Please contact platform support.",
+    pending_deletion: "This school account is pending deletion. Please contact platform support.",
+    deleted: "This school account has been removed. Please contact platform support.",
+  };
+
+  const inactiveMsg = INACTIVE_STATUSES[school.status];
+  if (inactiveMsg) {
+    await auditLog(req, `session_blocked_${school.status}_school`, `school:${schoolId}`, {
       userId: req.session.userId,
       role: req.session.role || null,
       activeContext: req.session.activeContext || null,
@@ -120,7 +128,7 @@ async function ensureSessionSchoolIsActive(req: Request, res: Response): Promise
 
     req.session.destroy(() => {});
     res.clearCookie("connect.sid");
-    return res.status(403).json({ message: "This school account is suspended. Contact support." }) as any;
+    return res.status(403).json({ message: inactiveMsg, schoolStatus: school.status }) as any;
   }
 
   return true;
@@ -580,7 +588,7 @@ function toEmailSafeLogoUrl(req: Request, schoolCode: string | null | undefined,
 }
 
 function parseDataUriImage(dataUri: string): { mimeType: string; buffer: Buffer } | null {
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(dataUri);
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUri);
   if (!match) return null;
   try {
     return {
@@ -3556,6 +3564,7 @@ export async function registerRoutes(
         { username: "teacher2", password: "teacher123", name: "Mr. Ali Hassan", role: "teacher", email: "ali.hassan@alnoor.edu.ly", status: "active" as const, schoolId },
         { username: "parent", password: "parent123", name: "Ahmed Al-Mansouri", role: "parent", email: "parent@example.com", status: "active" as const, schoolId },
         { username: "it_admin", password: "it123", name: "IT Support", role: "it_personnel", email: "it@alnoor.edu.ly", status: "active" as const, schoolId },
+        { username: "finance", password: "finance123", name: "Youssef Al-Baruni", role: "finance", email: "finance@alnoor.edu.ly", status: "active" as const, schoolId },
       ];
       const created: Array<{ username: string; role: string }> = [];
       for (const d of defaults) {
@@ -3802,15 +3811,27 @@ export async function registerRoutes(
   });
 
   // ═══ OWNER SCHOOL MANAGEMENT ════════════════════════════════
-  app.get("/api/owner/schools", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
+  app.get("/api/owner/schools", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
     try {
-      const [schools, users, books, classes, students] = await Promise.all([
+      const includeDeleted = req.query.includeDeleted === "true";
+      const statusFilter = typeof req.query.status === "string" ? req.query.status : undefined;
+
+      const [rawSchools, users, books, classes, students] = await Promise.all([
         storage.getSchools(),
         storage.getUsers(),
         storage.getBooks(),
         storage.getClasses(),
         storage.getStudents(),
       ]);
+
+      // Apply status filters
+      let schools = rawSchools;
+      if (!includeDeleted && statusFilter !== "deleted") {
+        schools = schools.filter(s => s.status !== "deleted" && !s.isDeleted);
+      }
+      if (statusFilter && statusFilter !== "all") {
+        schools = schools.filter(s => s.status === statusFilter);
+      }
 
       const invitesBySchool: Record<string, any[]> = {};
       await Promise.all(
@@ -3895,7 +3916,16 @@ export async function registerRoutes(
       }
       if (typeof req.body?.code === "string" && req.body.code.trim()) {
         const nextCode = normalizeSchoolCode(req.body.code);
-        const allSchools = await storage.getSchools();
+        const rawSchools = await storage.getSchools();
+      const showDeleted = req.query.includeDeleted === "true";
+      const statusFilter = req.query.status as string | undefined;
+      let allSchools = rawSchools;
+      if (!showDeleted) {
+        allSchools = allSchools.filter(s => s.status !== "deleted" && !s.isDeleted);
+      }
+      if (statusFilter && statusFilter !== "all") {
+        allSchools = allSchools.filter(s => s.status === statusFilter);
+      }
         const duplicate = allSchools.some((s) => s.id !== id && normalizeSchoolCode(s.code) === nextCode);
         if (duplicate) {
           return res.status(409).json({ message: "A school with this code already exists." });
@@ -3976,23 +4006,246 @@ export async function registerRoutes(
     }
   });
 
+  // ─── SCHOOL LIFECYCLE: SUSPEND ──────────────────────────────────
+  app.post("/api/owner/schools/:id/suspend", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const id = routeParam(req.params.id);
+      const school = await storage.getSchoolById(id);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      if (school.status !== "active") {
+        return res.status(409).json({ message: `Cannot suspend a school with status "${school.status}". Only active schools can be suspended.` });
+      }
+
+      const reason = String(req.body?.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "A suspension reason is required." });
+
+      const confirmText = String(req.body?.confirmText || "").trim();
+      if (confirmText !== "SUSPEND") {
+        return res.status(400).json({ message: "Typed confirmation required. Please type SUSPEND to confirm." });
+      }
+
+      const updated = await storage.updateSchool(id, {
+        status: "suspended",
+        suspendedAt: new Date(),
+        suspendedBy: req.session.userId!,
+        suspensionReason: reason,
+      });
+
+      await auditLog(req, "school_suspended", `school:${id}`, {
+        schoolId: id, schoolName: school.name, schoolCode: school.code,
+        previousStatus: school.status, newStatus: "suspended", reason,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to suspend school" });
+    }
+  });
+
+  // ─── SCHOOL LIFECYCLE: ARCHIVE ────────────────────────────────────
+  app.post("/api/owner/schools/:id/archive", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const id = routeParam(req.params.id);
+      const school = await storage.getSchoolById(id);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      if (school.status !== "active" && school.status !== "suspended") {
+        return res.status(409).json({ message: `Cannot archive a school with status "${school.status}". Only active or suspended schools can be archived.` });
+      }
+
+      const reason = String(req.body?.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "An archive reason is required." });
+
+      const confirmText = String(req.body?.confirmText || "").trim();
+      if (confirmText !== "ARCHIVE") {
+        return res.status(400).json({ message: "Typed confirmation required. Please type ARCHIVE to confirm." });
+      }
+
+      const updated = await storage.updateSchool(id, {
+        status: "archived",
+        archivedAt: new Date(),
+        archivedBy: req.session.userId!,
+        archiveReason: reason,
+      });
+
+      await auditLog(req, "school_archived", `school:${id}`, {
+        schoolId: id, schoolName: school.name, schoolCode: school.code,
+        previousStatus: school.status, newStatus: "archived", reason,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to archive school" });
+    }
+  });
+
+  // ─── SCHOOL LIFECYCLE: RESTORE ────────────────────────────────────
+  app.post("/api/owner/schools/:id/restore", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const id = routeParam(req.params.id);
+      const school = await storage.getSchoolById(id);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      if (school.status !== "suspended" && school.status !== "archived" && school.status !== "pending_deletion") {
+        return res.status(409).json({ message: `Cannot restore a school with status "${school.status}". Only suspended, archived, or pending-deletion schools can be restored.` });
+      }
+
+      const reason = String(req.body?.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "A restore reason is required." });
+
+      const updated = await storage.updateSchool(id, {
+        status: "active",
+        restoredAt: new Date(),
+        restoredBy: req.session.userId!,
+        restoreReason: reason,
+        // Clear suspension/archive/deletion metadata
+        suspendedAt: null,
+        suspendedBy: null,
+        suspensionReason: null,
+        archivedAt: null,
+        archivedBy: null,
+        archiveReason: null,
+        deletionRequestedAt: null,
+        deletionRequestedBy: null,
+        deletionReason: null,
+      });
+
+      await auditLog(req, "school_restored", `school:${id}`, {
+        schoolId: id, schoolName: school.name, schoolCode: school.code,
+        previousStatus: school.status, newStatus: "active", reason,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to restore school" });
+    }
+  });
+
+  // ─── SCHOOL LIFECYCLE: REQUEST DELETION ───────────────────────────
+  app.post("/api/owner/schools/:id/request-deletion", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
+    try {
+      const id = routeParam(req.params.id);
+      const school = await storage.getSchoolById(id);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      if (school.status !== "archived") {
+        return res.status(409).json({ message: `Cannot request deletion for a school with status "${school.status}". Only archived schools can be marked for deletion.` });
+      }
+
+      const reason = String(req.body?.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "A deletion reason is required." });
+
+      const confirmText = String(req.body?.confirmText || "").trim();
+      if (confirmText !== `DELETE ${school.code}`) {
+        return res.status(400).json({ message: `Typed confirmation required. Please type DELETE ${school.code} to confirm.` });
+      }
+
+      const updated = await storage.updateSchool(id, {
+        status: "pending_deletion",
+        deletionRequestedAt: new Date(),
+        deletionRequestedBy: req.session.userId!,
+        deletionReason: reason,
+      });
+
+      await auditLog(req, "school_deletion_requested", `school:${id}`, {
+        schoolId: id, schoolName: school.name, schoolCode: school.code,
+        previousStatus: school.status, newStatus: "pending_deletion", reason,
+      });
+
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to request school deletion" });
+    }
+  });
+
+  // ─── SCHOOL LIFECYCLE: PERMANENT DELETE (SOFT) ────────────────────
   app.delete("/api/owner/schools/:id", requireRole(...PLATFORM_OWNER_ROLES), async (req, res) => {
     try {
       const id = routeParam(req.params.id);
       const school = await storage.getSchoolById(id);
       if (!school) return res.status(404).json({ message: "School not found" });
 
-      if (school.status !== "suspended") {
+      if (school.status !== "pending_deletion" && school.status !== "archived") {
         return res.status(409).json({
-          message: "School must be suspended before deletion.",
+          message: `Cannot permanently delete a school with status "${school.status}". School must be archived or pending deletion first.`,
         });
       }
 
-      await storage.deleteSchoolAndRelatedData(id);
-      await auditLog(req, "school_deleted", `school:${id}`, { code: school.code, name: school.name });
-      res.status(204).send();
+      const reason = String(req.body?.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "A deletion reason is required." });
+
+      const confirmText = String(req.body?.confirmText || "").trim();
+      if (confirmText !== `DELETE ${school.code}`) {
+        return res.status(400).json({ message: `Typed confirmation required. Please type DELETE ${school.code} to confirm.` });
+      }
+
+      // Check for blockers
+      const blockers: string[] = [];
+      const schoolUsers = await storage.getUsers();
+      const schoolUserIds = schoolUsers.filter(u => u.schoolId === id).map(u => u.id);
+
+      if (schoolUserIds.length > 0) {
+        // Check active orders (payments with non-terminal status)
+        const payments = await storage.getPayments(id);
+        const activePayments = payments.filter(p =>
+          !["confirmed", "completed", "rejected", "failed", "cancelled", "collected"].includes(p.status)
+        );
+        if (activePayments.length > 0) {
+          blockers.push(`${activePayments.length} active payment order(s) exist. Resolve or cancel them first.`);
+        }
+
+        // Check pending payment references
+        const pendingRefs = payments.filter(p => p.status === "reference_submitted");
+        if (pendingRefs.length > 0) {
+          blockers.push(`${pendingRefs.length} pending payment reference(s) awaiting review.`);
+        }
+
+        // Check active distribution records
+        try {
+          const allocations = await storage.getAllocations(id);
+          const activeDistributions = allocations.filter(a =>
+            a.distributionStatus === "pending_distribution"
+          );
+          if (activeDistributions.length > 0) {
+            blockers.push(`${activeDistributions.length} pending book distribution(s). Complete or cancel them first.`);
+          }
+        } catch {}
+      }
+
+      // Check active invites
+      try {
+        const invites = await storage.getInvitesBySchool(id);
+        const pendingInvites = invites.filter((i: any) => i.status === "pending");
+        if (pendingInvites.length > 0) {
+          blockers.push(`${pendingInvites.length} pending invite(s). Revoke them first or let them expire.`);
+        }
+      } catch {}
+
+      if (blockers.length > 0) {
+        return res.status(409).json({
+          message: "Cannot delete school — active records exist. Consider archiving instead.",
+          blockers,
+        });
+      }
+
+      // Soft delete
+      const updated = await storage.updateSchool(id, {
+        status: "deleted",
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: req.session.userId!,
+        deleteReason: reason,
+      });
+
+      await auditLog(req, "school_deleted", `school:${id}`, {
+        schoolId: id, schoolName: school.name, schoolCode: school.code,
+        previousStatus: school.status, newStatus: "deleted", reason,
+      });
+
+      res.json({ message: "School has been permanently deleted (soft).", school: updated });
     } catch (e: any) {
-      res.status(400).json({ message: e.message || "Failed to delete school" });
+      res.status(500).json({ message: e.message || "Failed to delete school" });
     }
   });
 

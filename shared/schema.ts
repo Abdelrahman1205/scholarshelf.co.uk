@@ -58,7 +58,7 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const DISTRIBUTION_STATUSES = ["pending_distribution", "received_by_student", "student_absent", "issue_reported"] as const;
 export type DistributionStatus = (typeof DISTRIBUTION_STATUSES)[number];
 
-export const SCHOOL_STATUSES = ["active", "pending_setup", "suspended"] as const;
+export const SCHOOL_STATUSES = ["active", "pending_setup", "suspended", "archived", "pending_deletion", "deleted"] as const;
 export type SchoolStatus = (typeof SCHOOL_STATUSES)[number];
 
 export const SCHOOL_SETUP_STATUSES = [
@@ -85,9 +85,33 @@ export const schools = pgTable("schools", {
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  // Lifecycle metadata
+  isDeleted: boolean("is_deleted").default(false).notNull(),
+  suspendedAt: timestamp("suspended_at"),
+  suspendedBy: varchar("suspended_by", { length: 36 }),
+  suspensionReason: text("suspension_reason"),
+  archivedAt: timestamp("archived_at"),
+  archivedBy: varchar("archived_by", { length: 36 }),
+  archiveReason: text("archive_reason"),
+  restoredAt: timestamp("restored_at"),
+  restoredBy: varchar("restored_by", { length: 36 }),
+  restoreReason: text("restore_reason"),
+  deletionRequestedAt: timestamp("deletion_requested_at"),
+  deletionRequestedBy: varchar("deletion_requested_by", { length: 36 }),
+  deletionReason: text("deletion_reason"),
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: varchar("deleted_by", { length: 36 }),
+  deleteReason: text("delete_reason"),
 });
 
-export const insertSchoolSchema = createInsertSchema(schools).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertSchoolSchema = createInsertSchema(schools).omit({
+  id: true, createdAt: true, updatedAt: true,
+  isDeleted: true, suspendedAt: true, suspendedBy: true, suspensionReason: true,
+  archivedAt: true, archivedBy: true, archiveReason: true,
+  restoredAt: true, restoredBy: true, restoreReason: true,
+  deletionRequestedAt: true, deletionRequestedBy: true, deletionReason: true,
+  deletedAt: true, deletedBy: true, deleteReason: true,
+});
 export type InsertSchool = z.infer<typeof insertSchoolSchema>;
 export type School = typeof schools.$inferSelect;
 
