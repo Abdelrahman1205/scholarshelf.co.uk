@@ -49,10 +49,17 @@ function generatePaymentReference(): string {
 }
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.session.userId) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-  next();
+  (async () => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const allowed = await ensureSessionSchoolIsActive(req, res);
+    if (!allowed) return;
+    next();
+  })().catch((error) => {
+    console.error("Auth guard failure:", error);
+    res.status(500).json({ message: "Authentication failed" });
+  });
 }
 
 function requireRole(...roles: string[]) {
@@ -60,6 +67,8 @@ function requireRole(...roles: string[]) {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    const allowed = await ensureSessionSchoolIsActive(req, res);
+    if (!allowed) return;
     const currentContext = getActiveRequestContext(req);
     if (!roles.includes(currentContext)) {
       return res.status(403).json({ message: "Access denied" });
@@ -80,6 +89,41 @@ function splitInviteToken(token: string): { inviteId: string; rawToken: string }
     inviteId: token.substring(0, dotIndex),
     rawToken: token.substring(dotIndex + 1),
   };
+}
+
+async function ensureSessionSchoolIsActive(req: Request, res: Response): Promise<boolean> {
+  if (!req.session.userId) return false;
+
+  const sessionRole = resolveRole(req.session.role || "");
+  if (isPlatformOwnerRole(sessionRole)) {
+    return true;
+  }
+
+  const schoolId = sessionSchoolId(req);
+  if (!schoolId) {
+    return true;
+  }
+
+  const school = await storage.getSchoolById(schoolId);
+  if (!school) {
+    req.session.destroy(() => {});
+    res.clearCookie("connect.sid");
+    return res.status(401).json({ message: "School account is not correctly configured" }) as any;
+  }
+
+  if (school.status === "suspended") {
+    await auditLog(req, "session_blocked_suspended_school", `school:${schoolId}`, {
+      userId: req.session.userId,
+      role: req.session.role || null,
+      activeContext: req.session.activeContext || null,
+    }).catch(() => {});
+
+    req.session.destroy(() => {});
+    res.clearCookie("connect.sid");
+    return res.status(403).json({ message: "This school account is suspended. Contact support." }) as any;
+  }
+
+  return true;
 }
 
 const COMPLETE_SETUP_STATUSES = new Set(["operational_setup_complete", "complete", "active"]);
@@ -886,6 +930,14 @@ export async function registerRoutes(
           return res.status(401).json({ message: "School account is not correctly configured" });
         }
 
+        if (school.status === "suspended") {
+          await auditLog(req, "login_failed", `user:${user.id}`, {
+            reason: "school_suspended",
+            schoolId: user.schoolId,
+          });
+          return res.status(403).json({ message: "This school account is suspended. Contact support." });
+        }
+
         const providedSchoolCode = normalizeSchoolCode(String(schoolCode || ""));
         const expectedSchoolCode = normalizeSchoolCode(String(school.code || ""));
 
@@ -1207,6 +1259,8 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    const allowed = await ensureSessionSchoolIsActive(req, res);
+    if (!allowed) return;
     const user = await storage.getUserById(req.session.userId);
     if (!user) {
       return res.status(401).json({ message: "User not found" });
