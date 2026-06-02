@@ -4,14 +4,15 @@ import {
   BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, ChevronRight,
-  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2
+  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, Bell
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getQueryFn } from "@/lib/queryClient";
 import { applyBrandingToDocument } from "@/lib/branding";
+import { useToast } from "@/hooks/use-toast";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -22,6 +23,19 @@ interface NavItem {
   href: string;
   icon: typeof Settings;
   match?: string[];
+}
+
+interface NotificationItem {
+  key: string;
+  label: string;
+  count: number;
+  href: string;
+  severity: "info" | "warning" | "success";
+}
+
+interface NotificationSummary {
+  totalUnread: number;
+  items: NotificationItem[];
 }
 
 const roleConfig: Record<string, { label: string; color: string; navItems: NavItem[] }> = {
@@ -124,7 +138,9 @@ function isNavActive(href: string, location: string): boolean {
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
   const { user, logout, exitSupportMode, switchContext, isExitingSupport, isSwitchingContext } = useAuth();
+  const { toast } = useToast();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const lastNotificationCount = useRef(0);
 
   const isOwner = user?.primaryRole === "owner" || user?.primaryRole === "platform_admin" || user?.role === "owner" || user?.role === "platform_admin";
   const inSupportMode = isOwner && user?.supportMode?.active;
@@ -161,6 +177,14 @@ export default function Layout({ children }: LayoutProps) {
     staleTime: 60_000,
   });
 
+  const { data: notificationSummary } = useQuery<NotificationSummary>({
+    queryKey: ["/api/notifications/summary"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!user,
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+
   useEffect(() => {
     if (!shouldFetchBranding) {
       applyBrandingToDocument(null);
@@ -168,6 +192,20 @@ export default function Layout({ children }: LayoutProps) {
     }
     applyBrandingToDocument(schoolBranding || null);
   }, [shouldFetchBranding, schoolBranding]);
+
+  useEffect(() => {
+    const currentCount = notificationSummary?.totalUnread || 0;
+    if (lastNotificationCount.current > 0 && currentCount > lastNotificationCount.current) {
+      const delta = currentCount - lastNotificationCount.current;
+      toast({
+        title: "New notification",
+        description: delta === 1
+          ? "You have 1 new platform notification."
+          : `You have ${delta} new platform notifications.`,
+      });
+    }
+    lastNotificationCount.current = currentCount;
+  }, [notificationSummary?.totalUnread, toast]);
 
   const navItems = (() => {
     if (!config) return [] as NavItem[];
@@ -207,6 +245,10 @@ export default function Layout({ children }: LayoutProps) {
     await switchContext(context);
     navigateTo(defaultPath);
   }
+
+  const totalNotifications = notificationSummary?.totalUnread || 0;
+  const notificationItems = notificationSummary?.items || [];
+  const primaryNotificationHref = notificationItems[0]?.href;
 
   const SupportBanner = () => {
     if (!inSupportMode) return null;
@@ -282,6 +324,53 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         </div>
       )}
+
+      <div className="mx-3 mt-3 px-3 py-3 rounded-lg border border-primary/20 bg-primary/5 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] uppercase tracking-widest text-primary/80 font-semibold flex items-center gap-1.5">
+            <Bell className="h-3.5 w-3.5" />
+            Notifications
+          </div>
+          <span className={cn(
+            "text-xs font-bold px-2 py-0.5 rounded-full",
+            totalNotifications > 0 ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+          )}>
+            {totalNotifications > 99 ? "99+" : totalNotifications}
+          </span>
+        </div>
+
+        {notificationItems.length === 0 ? (
+          <p className="text-xs text-muted-foreground">All caught up.</p>
+        ) : (
+          <div className="space-y-1">
+            {notificationItems.slice(0, 4).map((item) => (
+              <button
+                key={item.key}
+                onClick={() => {
+                  navigateTo(item.href);
+                  setMobileOpen(false);
+                }}
+                className="w-full text-left flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-primary/10 transition-colors"
+              >
+                <span className="text-xs text-foreground truncate">{item.label}</span>
+                <span className={cn(
+                  "text-[11px] font-semibold px-1.5 py-0.5 rounded",
+                  item.severity === "warning"
+                    ? "bg-amber-100 text-amber-700"
+                    : item.severity === "success"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-blue-100 text-blue-700"
+                )}>
+                  {item.count}
+                </span>
+              </button>
+            ))}
+            {notificationItems.length > 4 && (
+              <p className="text-[11px] text-muted-foreground px-2">+{notificationItems.length - 4} more</p>
+            )}
+          </div>
+        )}
+      </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3 px-3">
@@ -401,16 +490,34 @@ export default function Layout({ children }: LayoutProps) {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground hidden sm:inline">{user?.name}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                if (primaryNotificationHref) {
+                  navigateTo(primaryNotificationHref);
+                  setMobileOpen(false);
+                }
+              }}
+              className="h-9 w-9 relative"
+              aria-label="Open latest notification"
+            >
+              <Bell className="h-5 w-5" />
+              {totalNotifications > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[1rem] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 font-semibold text-center">
+                  {totalNotifications > 99 ? "99+" : totalNotifications}
+                </span>
+              )}
+            </Button>
             <Button variant="ghost" size="icon" onClick={handleLogout} data-testid="button-logout-mobile" className="h-9 w-9" aria-label="Sign out">
               <LogOut className="h-5 w-5" />
             </Button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto bg-background">
-          <div className="max-w-7xl mx-auto p-4 md:p-6 lg:p-8">
-            {children}
-          </div>
+        {/* Page content */}
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto">
+          {children}
         </div>
       </main>
     </div>

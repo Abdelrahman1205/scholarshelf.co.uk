@@ -278,6 +278,7 @@ function resolveRole(role: string): string {
 
 const PLATFORM_OWNER_ROLES = ["owner", "platform_admin"];
 const ADMIN_UI_ROLES = ["admin", "school_admin", ...PLATFORM_OWNER_ROLES];
+const FINANCE_ROLES = [...ADMIN_UI_ROLES, "finance"] as const;
 const BRANDING_VIEW_PERMISSION = "BRANDING_VIEW";
 const BRANDING_MANAGE_PERMISSION = "BRANDING_MANAGE";
 const BRANDING_UPLOAD_LOGO_PERMISSION = "BRANDING_UPLOAD_LOGO";
@@ -2169,14 +2170,47 @@ export async function registerRoutes(
     res.json(payments);
   });
 
+  // === FINANCE SUMMARY ===
+  app.get("/api/finance/summary", requireRole(...FINANCE_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const payments = await storage.getPayments(undefined, sid);
+      const totalRevenue = payments
+        .filter((p) => p.status === "confirmed" || p.status === "completed")
+        .reduce((sum, p) => sum + parseFloat(p.totalAmount || "0"), 0);
+      const pendingReview = payments.filter((p) => p.status === "reference_submitted").length;
+      const awaitingRef = payments.filter((p) => p.status === "awaiting_reference" || p.status === "pending").length;
+      const confirmed = payments.filter((p) => p.status === "confirmed" || p.status === "completed").length;
+      const rejected = payments.filter((p) => p.status === "rejected" || p.status === "failed").length;
+      const needsReview = payments.filter((p) => p.status === "needs_review").length;
+      const cancelled = payments.filter((p) => p.status === "cancelled").length;
+      const totalOutstanding = payments
+        .filter((p) => !["confirmed", "completed", "cancelled", "rejected", "failed"].includes(p.status))
+        .reduce((sum, p) => sum + parseFloat(p.totalAmount || "0"), 0);
+      res.json({
+        totalPayments: payments.length,
+        totalRevenue: totalRevenue.toFixed(2),
+        totalOutstanding: totalOutstanding.toFixed(2),
+        pendingReview,
+        awaitingRef,
+        confirmed,
+        rejected,
+        needsReview,
+        cancelled,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // === ADMIN PAYMENTS (school-scoped) ===
-  app.get("/api/admin/payments", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.get("/api/admin/payments", requireRole(...FINANCE_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     const payments = await storage.getPayments(undefined, sid);
     res.json(payments);
   });
 
-  app.post("/api/admin/payments/:id/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.post("/api/admin/payments/:id/confirm", requireRole(...FINANCE_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (sid) {
@@ -2216,7 +2250,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/payments/:id/reject", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.post("/api/admin/payments/:id/reject", requireRole(...FINANCE_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (sid) {
@@ -2253,7 +2287,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/payments/:id/needs-review", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.post("/api/admin/payments/:id/needs-review", requireRole(...FINANCE_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { reviewNote } = req.body || {};
@@ -2272,7 +2306,7 @@ export async function registerRoutes(
   });
 
   // === ORDER FULFILMENT STATUS ===
-  app.post("/api/admin/payments/:id/ready-for-collection", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.post("/api/admin/payments/:id/ready-for-collection", requireRole(...FINANCE_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { reviewNote } = req.body || {};
@@ -2290,7 +2324,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/payments/:id/collected", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.post("/api/admin/payments/:id/collected", requireRole(...FINANCE_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { reviewNote } = req.body || {};
@@ -2308,7 +2342,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/payments/:id/cancel", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+  app.post("/api/admin/payments/:id/cancel", requireRole(...FINANCE_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       const { reviewNote } = req.body || {};
@@ -3212,6 +3246,127 @@ export async function registerRoutes(
     if (!sid) return res.json({ count: 0 });
     const count = await storage.getUnreadCount(req.session.userId!, sid);
     res.json({ count });
+  });
+
+  // GET /api/notifications/summary — unified cross-platform notifications
+  app.get("/api/notifications/summary", requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user) return res.status(401).json({ message: "Not authenticated" });
+
+      const context = getActiveRequestContext(req);
+      const sid = sessionSchoolId(req) || user.schoolId || null;
+
+      const items: Array<{
+        key: string;
+        label: string;
+        count: number;
+        href: string;
+        severity: "info" | "warning" | "success";
+      }> = [];
+
+      const pushItem = (
+        key: string,
+        label: string,
+        count: number,
+        href: string,
+        severity: "info" | "warning" | "success" = "info",
+      ) => {
+        const safeCount = Math.max(0, Number(count) || 0);
+        if (safeCount > 0) {
+          items.push({ key, label, count: safeCount, href, severity });
+        }
+      };
+
+      if (context === "parent" && sid) {
+        const unreadMessages = await storage.getUnreadCount(user.id, sid);
+        pushItem("messages", "New messages", unreadMessages, "/parent/messages", "info");
+
+        const baskets = await storage.getBaskets(user.email || user.id, sid);
+        const pendingBaskets = baskets.filter((basket: any) => basket.status === "pending").length;
+        pushItem("baskets", "Pending baskets", pendingBaskets, "/parent/baskets", "warning");
+
+        const payments = await storage.getPayments(user.email || user.id, sid);
+        const readyForCollection = payments.filter((payment: any) => payment.status === "ready_for_collection").length;
+        pushItem("collection", "Ready for collection", readyForCollection, "/parent/payments", "success");
+      }
+
+      if (context === "teacher" && sid) {
+        const unreadMessages = await storage.getUnreadCount(user.id, sid);
+        pushItem("messages", "New messages", unreadMessages, "/teacher/messages", "info");
+
+        const pendingDistribution = (await storage.getDistributionsByTeacher(user.id, sid, { status: "pending_distribution" })).length;
+        pushItem("distribution_pending", "Books to distribute", pendingDistribution, "/teacher/distribution", "warning");
+
+        const approvedExtraRequests = (await storage.getExtraCopyRequests({
+          teacherId: user.id,
+          status: "approved",
+          schoolId: sid,
+        })).length;
+        pushItem("extra_requests", "Approved extra requests", approvedExtraRequests, "/teacher/requests", "success");
+      }
+
+      if ((context === "admin" || context === "school_admin") && sid) {
+        const communicationThreads = await storage.getMessageThreads({ schoolId: sid, status: "open" });
+        const unreadConversations = communicationThreads.filter((thread: any) =>
+          (Number(thread.unreadByParent) || 0) + (Number(thread.unreadByTeacher) || 0) > 0
+        ).length;
+        pushItem("communications", "Unread conversations", unreadConversations, "/admin/communications", "info");
+
+        const pendingRequests = (await storage.getExtraCopyRequests({ status: "pending", schoolId: sid })).length;
+        pushItem("extra_requests", "Pending extra requests", pendingRequests, "/admin/requests", "warning");
+
+        const payments = await storage.getPayments(undefined, sid);
+        const paymentsToReview = payments.filter((payment: any) =>
+          payment.status === "reference_submitted" || payment.status === "needs_review"
+        ).length;
+        pushItem("payments_review", "Payments to review", paymentsToReview, "/admin/payments", "warning");
+
+        const distributionOverview = await storage.getDistributionOverview(sid);
+        pushItem("distribution_issues", "Distribution issues", Number(distributionOverview?.issues) || 0, "/admin/allocations", "warning");
+      }
+
+      if (context === "finance" && sid) {
+        const payments = await storage.getPayments(undefined, sid);
+        const paymentsToReview = payments.filter((payment: any) =>
+          payment.status === "reference_submitted" || payment.status === "needs_review"
+        ).length;
+        pushItem("payments_review", "Payments to review", paymentsToReview, "/finance/review", "warning");
+
+        const awaitingReference = payments.filter((payment: any) =>
+          payment.status === "awaiting_reference" || payment.status === "pending"
+        ).length;
+        pushItem("awaiting_reference", "Awaiting payment reference", awaitingReference, "/finance/payments", "info");
+      }
+
+      if ((context === "owner" || context === "platform_admin") && !sid) {
+        const schools = await storage.getSchools();
+        const pendingSetup = schools.filter((school: any) =>
+          school.status === "pending_setup" || school.setupStatus === "pending_admin_invite" || school.setupStatus === "pending_admin_acceptance"
+        ).length;
+        pushItem("pending_setups", "Schools pending setup", pendingSetup, "/admin/pending-setups", "warning");
+      }
+
+      if ((context === "owner" || context === "platform_admin") && sid) {
+        const communicationThreads = await storage.getMessageThreads({ schoolId: sid, status: "open" });
+        const unreadConversations = communicationThreads.filter((thread: any) =>
+          (Number(thread.unreadByParent) || 0) + (Number(thread.unreadByTeacher) || 0) > 0
+        ).length;
+        pushItem("communications", "Unread conversations", unreadConversations, "/admin/communications", "info");
+      }
+
+      items.sort((a, b) => b.count - a.count);
+      const totalUnread = items.reduce((sum, item) => sum + item.count, 0);
+
+      res.json({
+        context,
+        totalUnread,
+        items,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load notifications" });
+    }
   });
 
   // ── School Admin communication oversight ────────────────────
