@@ -449,6 +449,14 @@ class DatabaseStorage implements IStorage {
       const schoolBookIds = schoolBooks.map((b) => b.id);
       const schoolBookLevelIds = schoolBookLevels.map((l) => l.id);
 
+      const classLinkedStudents = schoolClassIds.length > 0
+        ? await db
+            .select({ id: schema.students.id })
+            .from(schema.students)
+            .where(inArray(schema.students.classId, schoolClassIds))
+        : [];
+      const allStudentIds = Array.from(new Set([...schoolStudentIds, ...classLinkedStudents.map((s) => s.id)]));
+
       if (schoolUserIds.length > 0) {
         await db.update(schema.invites).set({ invitedBy: null }).where(inArray(schema.invites.invitedBy, schoolUserIds));
         await db.delete(schema.userPermissions).where(inArray(schema.userPermissions.userId, schoolUserIds));
@@ -468,9 +476,9 @@ class DatabaseStorage implements IStorage {
         await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.classId, schoolClassIds));
       }
 
-      if (schoolStudentIds.length > 0) {
-        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.studentId, schoolStudentIds));
-        await db.delete(schema.childBookBaskets).where(inArray(schema.childBookBaskets.studentId, schoolStudentIds));
+      if (allStudentIds.length > 0) {
+        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.studentId, allStudentIds));
+        await db.delete(schema.childBookBaskets).where(inArray(schema.childBookBaskets.studentId, allStudentIds));
       }
 
       if (schoolBookIds.length > 0) {
@@ -496,6 +504,9 @@ class DatabaseStorage implements IStorage {
       await db.delete(schema.childLinkingCodes).where(eq(schema.childLinkingCodes.schoolId, id));
       await db.delete(schema.invites).where(eq(schema.invites.schoolId, id));
       await db.delete(schema.users).where(eq(schema.users.schoolId, id));
+      if (allStudentIds.length > 0) {
+        await db.delete(schema.students).where(inArray(schema.students.id, allStudentIds));
+      }
       await db.delete(schema.students).where(eq(schema.students.schoolId, id));
       await db.delete(schema.classes).where(eq(schema.classes.schoolId, id));
       await db.delete(schema.bookLevels).where(eq(schema.bookLevels.schoolId, id));
