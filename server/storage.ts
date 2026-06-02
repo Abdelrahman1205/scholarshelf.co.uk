@@ -423,8 +423,65 @@ class DatabaseStorage implements IStorage {
         .from(schema.users)
         .where(eq(schema.users.schoolId, id));
 
-      for (const schoolUser of schoolUsers) {
-        await db.update(schema.invites).set({ invitedBy: null }).where(eq(schema.invites.invitedBy, schoolUser.id));
+      const schoolClasses = await db
+        .select({ id: schema.classes.id })
+        .from(schema.classes)
+        .where(eq(schema.classes.schoolId, id));
+
+      const schoolStudents = await db
+        .select({ id: schema.students.id })
+        .from(schema.students)
+        .where(eq(schema.students.schoolId, id));
+
+      const schoolBooks = await db
+        .select({ id: schema.books.id })
+        .from(schema.books)
+        .where(eq(schema.books.schoolId, id));
+
+      const schoolBookLevels = await db
+        .select({ id: schema.bookLevels.id })
+        .from(schema.bookLevels)
+        .where(eq(schema.bookLevels.schoolId, id));
+
+      const schoolUserIds = schoolUsers.map((u) => u.id);
+      const schoolClassIds = schoolClasses.map((c) => c.id);
+      const schoolStudentIds = schoolStudents.map((s) => s.id);
+      const schoolBookIds = schoolBooks.map((b) => b.id);
+      const schoolBookLevelIds = schoolBookLevels.map((l) => l.id);
+
+      if (schoolUserIds.length > 0) {
+        await db.update(schema.invites).set({ invitedBy: null }).where(inArray(schema.invites.invitedBy, schoolUserIds));
+        await db.delete(schema.userPermissions).where(inArray(schema.userPermissions.userId, schoolUserIds));
+
+        await db.delete(schema.messageAuditLogs).where(inArray(schema.messageAuditLogs.actorUserId, schoolUserIds));
+        await db.delete(schema.messages).where(inArray(schema.messages.senderUserId, schoolUserIds));
+        await db.delete(schema.messageThreads).where(inArray(schema.messageThreads.parentUserId, schoolUserIds));
+        await db.delete(schema.messageThreads).where(inArray(schema.messageThreads.teacherUserId, schoolUserIds));
+
+        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.receivedByTeacherId, schoolUserIds));
+        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.absentMarkedByTeacherId, schoolUserIds));
+        await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.teacherId, schoolUserIds));
+      }
+
+      if (schoolClassIds.length > 0) {
+        await db.delete(schema.classBookLevels).where(inArray(schema.classBookLevels.classId, schoolClassIds));
+        await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.classId, schoolClassIds));
+      }
+
+      if (schoolStudentIds.length > 0) {
+        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.studentId, schoolStudentIds));
+        await db.delete(schema.childBookBaskets).where(inArray(schema.childBookBaskets.studentId, schoolStudentIds));
+      }
+
+      if (schoolBookIds.length > 0) {
+        await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.bookId, schoolBookIds));
+        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.bookId, schoolBookIds));
+        await db.delete(schema.basketItems).where(inArray(schema.basketItems.bookId, schoolBookIds));
+      }
+
+      if (schoolBookLevelIds.length > 0) {
+        await db.delete(schema.classBookLevels).where(inArray(schema.classBookLevels.bookLevelId, schoolBookLevelIds));
+        await db.delete(schema.bookLevelItems).where(inArray(schema.bookLevelItems.bookLevelId, schoolBookLevelIds));
       }
 
       await db.delete(schema.extraCopyRequests).where(eq(schema.extraCopyRequests.schoolId, id));
