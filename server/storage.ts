@@ -1,4 +1,4 @@
-import { eq, and, lt, desc, sql } from "drizzle-orm";
+import { eq, and, lt, desc, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
@@ -290,6 +290,15 @@ export interface IStorage {
   rejectExtraCopyRequest(id: string, adminNotes?: string, schoolId?: string | null): Promise<schema.ExtraCopyRequest>;
 
   markAllocationAbsent(allocationId: string, schoolId?: string | null): Promise<schema.FinanceBookAllocation>;
+
+  // === Teacher-led Distribution ===
+  getDistributionsByTeacher(teacherId: string, schoolId: string, filters?: { classId?: string; status?: string }): Promise<any[]>;
+  confirmDistribution(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
+  markDistributionAbsent(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
+  reportDistributionIssue(allocationId: string, teacherId: string, issueNote: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
+  getDistributionOverview(schoolId: string): Promise<any>;
+  adminConfirmDistribution(allocationId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
+  updateOrderStatus(paymentId: string, orderStatus: string, schoolId?: string | null): Promise<schema.BookPayment>;
 
   // Users (not school-scoped in interface — filtered in routes)
   getUsers(): Promise<schema.User[]>;
@@ -1390,6 +1399,154 @@ class DatabaseStorage implements IStorage {
       schema.financeBookAllocations,
       eq(schema.financeBookAllocations.id, allocationId),
       { status: "absent" }
+    );
+    return updated;
+  }
+
+  // === TEACHER-LED DISTRIBUTION ===
+
+  async getDistributionsByTeacher(teacherId: string, schoolId: string, filters?: { classId?: string; status?: string }): Promise<any[]> {
+    // Get classes assigned to this teacher
+    const teacherClasses = await getDb().select().from(schema.classes)
+      .where(and(eq(schema.classes.teacherId, teacherId), eq(schema.classes.schoolId, schoolId)));
+    if (teacherClasses.length === 0) return [];
+
+    const classIds = teacherClasses.map(c => c.id);
+    // Get students in those classes
+    let studentQuery = getDb().select().from(schema.students)
+      .where(and(
+        inArray(schema.students.classId, classIds),
+        eq(schema.students.schoolId, schoolId)
+      ));
+    const students = await studentQuery;
+    if (students.length === 0) return [];
+
+    const studentIds = students.map(s => s.id);
+    // Get allocations for those students
+    const conditions: any[] = [
+      inArray(schema.financeBookAllocations.studentId, studentIds),
+      eq(schema.financeBookAllocations.schoolId, schoolId),
+    ];
+    if (filters?.status) {
+      conditions.push(eq(schema.financeBookAllocations.distributionStatus, filters.status));
+    }
+    if (filters?.classId) {
+      const classStudents = students.filter(s => s.classId === filters.classId).map(s => s.id);
+      if (classStudents.length === 0) return [];
+      conditions.push(inArray(schema.financeBookAllocations.studentId, classStudents));
+    }
+
+    const allocations = await getDb().select().from(schema.financeBookAllocations)
+      .where(and(...conditions));
+
+    // Enrich with student, book, class info
+    const books = await getDb().select().from(schema.books).where(eq(schema.books.schoolId, schoolId));
+    const bookMap = new Map(books.map(b => [b.id, b]));
+    const studentMap = new Map(students.map(s => [s.id, s]));
+    const classMap = new Map(teacherClasses.map(c => [c.id, c]));
+
+    return allocations.map(a => {
+      const student = studentMap.get(a.studentId);
+      return {
+        ...a,
+        student,
+        book: bookMap.get(a.bookId),
+        class: student?.classId ? classMap.get(student.classId) : undefined,
+      };
+    });
+  }
+
+  async confirmDistribution(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation> {
+    const [existing] = await getDb().select().from(schema.financeBookAllocations)
+      .where(and(eq(schema.financeBookAllocations.id, allocationId), eq(schema.financeBookAllocations.schoolId, schoolId)));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      {
+        distributionStatus: "received_by_student",
+        status: "received",
+        receivedAt: new Date(),
+        receivedByTeacherId: teacherId,
+      }
+    );
+    return updated;
+  }
+
+  async markDistributionAbsent(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation> {
+    const [existing] = await getDb().select().from(schema.financeBookAllocations)
+      .where(and(eq(schema.financeBookAllocations.id, allocationId), eq(schema.financeBookAllocations.schoolId, schoolId)));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      {
+        distributionStatus: "student_absent",
+        absentMarkedAt: new Date(),
+        absentMarkedByTeacherId: teacherId,
+      }
+    );
+    return updated;
+  }
+
+  async reportDistributionIssue(allocationId: string, teacherId: string, issueNote: string, schoolId: string): Promise<schema.FinanceBookAllocation> {
+    const [existing] = await getDb().select().from(schema.financeBookAllocations)
+      .where(and(eq(schema.financeBookAllocations.id, allocationId), eq(schema.financeBookAllocations.schoolId, schoolId)));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      {
+        distributionStatus: "issue_reported",
+        issueNote,
+        absentMarkedByTeacherId: teacherId,
+      }
+    );
+    return updated;
+  }
+
+  async getDistributionOverview(schoolId: string): Promise<any> {
+    const allocations = await getDb().select().from(schema.financeBookAllocations)
+      .where(eq(schema.financeBookAllocations.schoolId, schoolId));
+    const total = allocations.length;
+    const pending = allocations.filter(a => a.distributionStatus === "pending_distribution" || !a.distributionStatus).length;
+    const received = allocations.filter(a => a.distributionStatus === "received_by_student").length;
+    const absent = allocations.filter(a => a.distributionStatus === "student_absent").length;
+    const issues = allocations.filter(a => a.distributionStatus === "issue_reported").length;
+    return { total, pending, received, absent, issues };
+  }
+
+  async adminConfirmDistribution(allocationId: string, schoolId: string): Promise<schema.FinanceBookAllocation> {
+    const [existing] = await getDb().select().from(schema.financeBookAllocations)
+      .where(and(eq(schema.financeBookAllocations.id, allocationId), eq(schema.financeBookAllocations.schoolId, schoolId)));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      {
+        distributionStatus: "received_by_student",
+        status: "received",
+        receivedAt: new Date(),
+      }
+    );
+    return updated;
+  }
+
+  async updateOrderStatus(paymentId: string, orderStatus: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    const conditions = [eq(schema.bookPayments.id, paymentId)];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
+    if (!existing) throw new Error("Payment not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.bookPayments,
+      eq(schema.bookPayments.id, paymentId),
+      { orderStatus }
     );
     return updated;
   }

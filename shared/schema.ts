@@ -39,6 +39,25 @@ export const LEGACY_ROLE_MAP: Record<string, UserRole> = {
   parent: "parent",
 };
 
+// === PAYMENT & DISTRIBUTION STATUS ENUMS ===
+export const PAYMENT_STATUSES = ["awaiting_reference", "reference_submitted", "confirmed", "rejected", "needs_review"] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export const ORDER_STATUSES = [
+  "awaiting_payment_reference",
+  "payment_under_review",
+  "payment_confirmed",
+  "ready_for_teacher_distribution",
+  "partially_distributed",
+  "distributed",
+  "pending_student_collection",
+  "cancelled",
+] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export const DISTRIBUTION_STATUSES = ["pending_distribution", "received_by_student", "student_absent", "issue_reported"] as const;
+export type DistributionStatus = (typeof DISTRIBUTION_STATUSES)[number];
+
 export const SCHOOL_STATUSES = ["active", "pending_setup", "suspended"] as const;
 export type SchoolStatus = (typeof SCHOOL_STATUSES)[number];
 
@@ -368,6 +387,8 @@ export const bookPayments = pgTable("book_payments", {
   externalPaymentStatus: text("external_payment_status"),
   notes: text("notes"),
   schoolId: varchar("school_id", { length: 36 }),
+  // Teacher-led distribution tracking
+  orderStatus: text("order_status").default("awaiting_payment_reference").notNull(),
 });
 
 export const insertBookPaymentSchema = createInsertSchema(bookPayments).omit({
@@ -389,8 +410,17 @@ export const financeBookAllocations = pgTable("finance_book_allocations", {
   bookId: varchar("book_id", { length: 36 }).references(() => books.id).notNull(),
   basketId: varchar("basket_id", { length: 36 }).references(() => childBookBaskets.id),
   status: text("status").default("allocated").notNull(),
+  // Distribution status for teacher-led workflow
+  distributionStatus: text("distribution_status").default("pending_distribution"),
   allocatedAt: timestamp("allocated_at").defaultNow(),
   receivedAt: timestamp("received_at"),
+  // Teacher who confirmed the student received the book
+  receivedByTeacherId: varchar("received_by_teacher_id", { length: 36 }).references(() => users.id),
+  // Absent tracking
+  absentMarkedAt: timestamp("absent_marked_at"),
+  absentMarkedByTeacherId: varchar("absent_marked_by_teacher_id", { length: 36 }).references(() => users.id),
+  // Issue reporting
+  issueNote: text("issue_note"),
   schoolId: varchar("school_id", { length: 36 }),
 });
 
@@ -492,6 +522,7 @@ export type InsertMessageAuditLog = z.infer<typeof insertMessageAuditLogSchema>;
 export type MessageAuditLog = typeof messageAuditLogs.$inferSelect;
 
 // === AUTH REQUEST VALIDATION SCHEMAS ===
+
 
 export const signInSchema = z.object({
   username: z.string().min(1, "Username is required").max(100),

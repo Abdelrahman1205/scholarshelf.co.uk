@@ -2189,6 +2189,9 @@ export async function registerRoutes(
       const { reviewNote } = req.body || {};
       const payment = await storage.confirmPayment(routeParam(req.params.id), req.session.userId!, reviewNote, sid);
 
+      // Update order status to ready_for_teacher_distribution
+      try { await storage.updateOrderStatus(payment.id, "ready_for_teacher_distribution", sid); } catch (_) {}
+
       await storage.createAuditLog({
         action: "payment_confirmed",
         userId: req.session.userId!,
@@ -2445,6 +2448,113 @@ export async function registerRoutes(
 
       const allocation = await storage.markAllocationAbsent(routeParam(req.params.id), sid);
       res.json(allocation);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // === TEACHER-LED BOOK DISTRIBUTION ===
+
+  // Teacher: get distribution list for their assigned classes
+  app.get("/api/teacher/book-distribution", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const filters: { classId?: string; status?: string } = {};
+      if (req.query.classId) filters.classId = req.query.classId as string;
+      if (req.query.status) filters.status = req.query.status as string;
+      const distributions = await storage.getDistributionsByTeacher(req.session.userId!, sid, filters);
+      res.json(distributions);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // Teacher: confirm student received book
+  app.post("/api/teacher/book-distribution/:id/confirm-received", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+
+      // Teacher-child protection: teachers cannot confirm for their own linked children
+      const allocations = await storage.getDistributionsByTeacher(req.session.userId!, sid);
+      const target = allocations.find((a: any) => a.id === routeParam(req.params.id));
+      if (!target) return res.status(404).json({ message: "Allocation not found or not in your classes" });
+
+      const user = await storage.getUserById(req.session.userId!);
+      if (user?.email) {
+        const parentLinks = await storage.getParentChildren(user.email);
+        const linkedStudentIds = new Set(parentLinks.map((l) => l.studentId));
+        if (linkedStudentIds.has(target.studentId)) {
+          return res.status(403).json({ message: "Cannot confirm distribution for your own linked child. Another teacher or admin must do this." });
+        }
+      }
+
+      const result = await storage.confirmDistribution(routeParam(req.params.id), req.session.userId!, sid);
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Teacher: mark student absent
+  app.post("/api/teacher/book-distribution/:id/mark-absent", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const result = await storage.markDistributionAbsent(routeParam(req.params.id), req.session.userId!, sid);
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Teacher: report issue with distribution
+  app.post("/api/teacher/book-distribution/:id/report-issue", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const { issueNote } = req.body;
+      if (!issueNote) return res.status(400).json({ message: "Issue note is required" });
+      const result = await storage.reportDistributionIssue(routeParam(req.params.id), req.session.userId!, issueNote, sid);
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Admin: get distribution overview for school
+  app.get("/api/admin/book-distribution", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const overview = await storage.getDistributionOverview(sid);
+      res.json(overview);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // Admin: confirm distribution on behalf
+  app.post("/api/admin/book-distribution/:id/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const result = await storage.adminConfirmDistribution(routeParam(req.params.id), sid);
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Admin: update order status on a payment
+  app.post("/api/admin/payments/:id/order-status", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { orderStatus } = req.body;
+      if (!orderStatus) return res.status(400).json({ message: "orderStatus is required" });
+      const result = await storage.updateOrderStatus(routeParam(req.params.id), orderStatus, sid);
+      res.json(result);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }

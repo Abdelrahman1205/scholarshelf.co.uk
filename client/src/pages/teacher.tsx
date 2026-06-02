@@ -169,10 +169,16 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
 
   const activeClassId = selectedClassId || assigned?.id || (classes?.[0]?.id ?? "");
 
+  const [issueAllocationId, setIssueAllocationId] = useState<string | null>(null);
+  const [issueNote, setIssueNote] = useState("");
+
   const { data: allocations, isLoading: allocLoading } = useQuery<Allocation[]>({
-    queryKey: ["/api/allocations", activeClassId],
+    queryKey: ["/api/teacher/book-distribution", activeClassId],
     queryFn: async () => {
-      const r = await fetch(`/api/allocations?classId=${activeClassId}`, { credentials: "include" });
+      const url = activeClassId
+        ? `/api/teacher/book-distribution?classId=${activeClassId}`
+        : "/api/teacher/book-distribution";
+      const r = await fetch(url, { credentials: "include" });
       if (!r.ok) throw new Error(`${r.status}`);
       return r.json();
     },
@@ -180,28 +186,36 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
   });
 
   const confirmMut = useMutation({
-    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/confirm`); },
-    onSuccess: () => { toast({ title: "Confirmed" }); queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); },
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/teacher/book-distribution/${id}/confirm-received`); },
+    onSuccess: () => { toast({ title: "Confirmed", description: "Student marked as received." }); queryClient.invalidateQueries({ queryKey: ["/api/teacher/book-distribution"] }); },
+    onError: (e: Error) => { toast({ title: "Error", description: e.message, variant: "destructive" }); },
   });
 
   const absentMut = useMutation({
-    mutationFn: async (id: string) => { await apiRequest("POST", `/api/allocations/${id}/absent`); },
-    onSuccess: () => { toast({ title: "Marked Absent" }); queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); },
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/teacher/book-distribution/${id}/mark-absent`); },
+    onSuccess: () => { toast({ title: "Marked Absent" }); queryClient.invalidateQueries({ queryKey: ["/api/teacher/book-distribution"] }); },
+  });
+
+  const issueMut = useMutation({
+    mutationFn: async ({ id, note }: { id: string; note: string }) => { await apiRequest("POST", `/api/teacher/book-distribution/${id}/report-issue`, { issueNote: note }); },
+    onSuccess: () => { toast({ title: "Issue Reported" }); setIssueAllocationId(null); setIssueNote(""); queryClient.invalidateQueries({ queryKey: ["/api/teacher/book-distribution"] }); },
+    onError: (e: Error) => { toast({ title: "Error", description: e.message, variant: "destructive" }); },
   });
 
   const groups = useMemo(() => {
     if (!allocations) return [];
     const map = new Map<string, StudentGroup>();
     for (const a of allocations) {
+      const ds = (a as any).distributionStatus || "pending_distribution";
+      const done = ds === "received_by_student";
       const e = map.get(a.studentId);
       if (e) {
         e.allocations.push(a);
-        if (a.status === "received") e.receivedCount++;
+        if (done) e.receivedCount++;
         e.totalCount++;
         e.allReceived = e.receivedCount === e.totalCount;
       } else {
-        const r = a.status === "received";
-        map.set(a.studentId, { student: a.student, allocations: [a], receivedCount: r ? 1 : 0, totalCount: 1, allReceived: r });
+        map.set(a.studentId, { student: a.student, allocations: [a], receivedCount: done ? 1 : 0, totalCount: 1, allReceived: done });
       }
     }
     return Array.from(map.values());
@@ -214,8 +228,10 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
   }, [groups, searchQuery]);
 
   const total = allocations?.length ?? 0;
-  const rcvd = allocations?.filter((a) => a.status === "received").length ?? 0;
-  const pend = total - rcvd;
+  const rcvd = allocations?.filter((a) => (a as any).distributionStatus === "received_by_student").length ?? 0;
+  const absnt = allocations?.filter((a) => (a as any).distributionStatus === "student_absent").length ?? 0;
+  const issues = allocations?.filter((a) => (a as any).distributionStatus === "issue_reported").length ?? 0;
+  const pend = total - rcvd - absnt - issues;
   const pct = total > 0 ? Math.round((rcvd / total) * 100) : 0;
 
   if (classesLoading) {
@@ -327,8 +343,10 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
                   <CardContent className="p-0">
                     <div className="divide-y divide-border">
                       {g.allocations.map((a) => {
-                        const done = a.status === "received";
-                        const abs = a.status === "absent";
+                        const ds = (a as any).distributionStatus || "pending_distribution";
+                        const done = ds === "received_by_student";
+                        const abs = ds === "student_absent";
+                        const issue = ds === "issue_reported";
                         const confirming = confirmMut.isPending && confirmMut.variables === a.id;
                         const marking = absentMut.isPending && absentMut.variables === a.id;
                         return (
@@ -338,25 +356,30 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
                               <span className="text-xs text-muted-foreground font-mono">
                                 {a.book.isbn ? `ISBN: ${a.book.isbn}` : "No ISBN"}
                               </span>
+                              {issue && (a as any).issueNote && (
+                                <span className="text-xs text-red-500 mt-1">Issue: {(a as any).issueNote}</span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2">
                               {done ? (
-                                <Button variant="success" size="sm" disabled>
-                                  <CheckCircle2 className="w-4 h-4 mr-1" /> Confirmed
-                                </Button>
+                                <Badge className="bg-emerald-500/10 text-emerald-600">Received</Badge>
                               ) : abs ? (
-                                <Button variant="destructive" size="sm" disabled>
-                                  <AlertTriangle className="w-4 h-4 mr-1" /> Absent
-                                </Button>
+                                <Badge variant="destructive">Absent</Badge>
+                              ) : issue ? (
+                                <Badge className="bg-red-500/10 text-red-600">Issue</Badge>
                               ) : (
                                 <>
+                                  <Button variant="ghost" size="sm"
+                                    onClick={() => { setIssueAllocationId(a.id); setIssueNote(""); }}>
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </Button>
                                   <Button variant="outline" size="sm"
                                     disabled={marking || confirming} onClick={() => absentMut.mutate(a.id)}>
-                                    <AlertTriangle className="w-4 h-4 mr-1" />{marking ? "..." : "Absent"}
+                                    {marking ? "..." : "Absent"}
                                   </Button>
                                   <Button variant="default" size="sm" disabled={confirming || marking}
                                     onClick={() => confirmMut.mutate(a.id)}>
-                                    <Circle className="w-4 h-4 mr-1" />{confirming ? "..." : "Confirm"}
+                                    <CheckCircle2 className="w-4 h-4 mr-1" />{confirming ? "..." : "Received"}
                                   </Button>
                                 </>
                               )}
@@ -372,6 +395,29 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
           )}
         </>
       )}
+
+      {/* Issue Report Dialog */}
+      <Dialog open={!!issueAllocationId} onOpenChange={(open) => { if (!open) setIssueAllocationId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Report Distribution Issue</DialogTitle>
+            <DialogDescription>Describe the issue with this book distribution.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="e.g. Book is damaged, wrong edition, student disputes receipt..."
+            value={issueNote}
+            onChange={(e) => setIssueNote(e.target.value)}
+            rows={3}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIssueAllocationId(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={!issueNote.trim() || issueMut.isPending}
+              onClick={() => issueAllocationId && issueMut.mutate({ id: issueAllocationId, note: issueNote })}>
+              {issueMut.isPending ? "Submitting..." : "Report Issue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -852,34 +898,34 @@ function TeacherMessagesSection() {
                 onClick={() => setSelectedThreadId(t.id)}
                 className="w-full text-left px-5 py-4 hover:bg-muted/30 transition-colors flex items-start gap-4"
               >
-                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
-                  <MessageSquare className="w-5 h-5" />
-                </div>
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+                    <MessageSquare className="w-5 h-5" />
+                  </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`text-sm font-medium truncate ${t.unreadByTeacher > 0 ? "text-foreground font-semibold" : "text-foreground"}`}>
-                      {t.subject}
-                    </span>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge className={t.status === "open" ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground"}>
-                        {t.status === "open" ? "Open" : "Closed"}
-                      </Badge>
-                      {t.unreadByTeacher > 0 && (
-                        <Badge className="bg-primary text-primary-foreground">{t.unreadByTeacher}</Badge>
-                      )}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-sm font-medium truncate ${t.unreadByTeacher > 0 ? "text-foreground font-semibold" : "text-foreground"}`}>
+                        {t.subject}
+                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge className={t.status === "open" ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground"}>
+                          {t.status === "open" ? "Open" : "Closed"}
+                        </Badge>
+                        {t.unreadByTeacher > 0 && (
+                          <Badge className="bg-primary text-primary-foreground">{t.unreadByTeacher}</Badge>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Parent: {t.parentName} &middot; Student: {t.studentName}
-                  </div>
-                  {t.lastMessage && (
-                    <p className="text-sm text-muted-foreground mt-1 truncate">
-                      {t.lastMessage.senderRole === "teacher" ? "You: " : ""}{t.lastMessage.body}
-                    </p>
-                  )}
-                  <div className="text-xs text-muted-foreground/70 mt-1">
-                    {t.lastMessage ? formatTime(t.lastMessage.createdAt) : formatTime(t.createdAt)}
-                  </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Parent: {t.parentName} &middot; Student: {t.studentName}
+                    </div>
+                    {t.lastMessage && (
+                      <p className="text-sm text-muted-foreground mt-1 truncate">
+                        {t.lastMessage.senderRole === "teacher" ? "You: " : ""}{t.lastMessage.body}
+                      </p>
+                    )}
+                    <div className="text-xs text-muted-foreground/70 mt-1">
+                      {t.lastMessage ? formatTime(t.lastMessage.createdAt) : formatTime(t.createdAt)}
+                    </div>
                 </div>
               </button>
             ))}
