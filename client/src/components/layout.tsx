@@ -89,6 +89,13 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Messages", href: "/teacher/messages", icon: MessageSquare },
     ],
   },
+  finance: {
+    label: "Finance",
+    color: "text-cyan-600",
+    navItems: [
+      { label: "Dashboard", href: "/finance", icon: LayoutDashboard },
+    ],
+  },
   parent: {
     label: "Parent",
     color: "text-violet-600",
@@ -108,7 +115,7 @@ function navigateTo(href: string) {
 }
 
 function isNavActive(href: string, location: string): boolean {
-  if (href === "/admin" || href === "/teacher" || href === "/parent") {
+  if (href === "/admin" || href === "/teacher" || href === "/parent" || href === "/finance") {
     return location === href;
   }
   return location.startsWith(href);
@@ -146,7 +153,7 @@ export default function Layout({ children }: LayoutProps) {
   const adminSetupComplete = !!setupStatus?.operationalSetupCompleted && !!setupStatus?.schoolActive;
 
   // Fetch branding for any school-scoped role (admin, teacher, parent, owner_support)
-  const shouldFetchBranding = effectiveRole === "admin" || effectiveRole === "owner_support" || effectiveRole === "teacher" || effectiveRole === "parent";
+  const shouldFetchBranding = effectiveRole === "admin" || effectiveRole === "owner_support" || effectiveRole === "teacher" || effectiveRole === "parent" || effectiveRole === "finance";
   const { data: schoolBranding } = useQuery<any>({
     queryKey: ["/api/school/branding"],
     queryFn: getQueryFn({ on401: "returnNull" }),

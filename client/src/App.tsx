@@ -11,6 +11,7 @@ import Layout from "@/components/layout";
 import AdminPage from "@/pages/admin";
 import TeacherPage from "@/pages/teacher";
 import ParentPage from "@/pages/parent";
+import FinancePage from "@/pages/finance";
 import LoginPage from "@/pages/login";
 import RegisterPage from "@/pages/register";
 import AcceptInvitePage from "@/pages/accept-invite";
@@ -23,6 +24,7 @@ function getRoleRoute(role: string) {
   if (role === "admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
+  if (role === "finance") return "/finance";
   return "/login";
 }
 
@@ -121,6 +123,17 @@ function Router() {
           <AuthGuard allowedRoles={["parent"]}>
             <Layout>
               <ParentPage section={params.section || "dashboard"} />
+            </Layout>
+          </AuthGuard>
+        )}
+      </Route>
+
+      {/* Finance routes */}
+      <Route path="/finance/:section?">
+        {(params) => (
+          <AuthGuard allowedRoles={["finance"]}>
+            <Layout>
+              <FinancePage section={params.section || "dashboard"} />
             </Layout>
           </AuthGuard>
         )}
