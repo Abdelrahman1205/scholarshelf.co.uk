@@ -430,6 +430,10 @@ class DatabaseStorage implements IStorage {
       await db.delete(schema.extraCopyRequests).where(eq(schema.extraCopyRequests.schoolId, id));
       await db.delete(schema.schoolBranding).where(eq(schema.schoolBranding.schoolId, id));
       await db.delete(schema.financeBookAllocations).where(eq(schema.financeBookAllocations.schoolId, id));
+      // Messaging tables reference users/students, so delete them before users/students.
+      await db.delete(schema.messageAuditLogs).where(eq(schema.messageAuditLogs.schoolId, id));
+      await db.delete(schema.messages).where(eq(schema.messages.schoolId, id));
+      await db.delete(schema.messageThreads).where(eq(schema.messageThreads.schoolId, id));
       await db.delete(schema.childBookBaskets).where(eq(schema.childBookBaskets.schoolId, id));
       await db.delete(schema.bookPayments).where(eq(schema.bookPayments.schoolId, id));
       await db.delete(schema.childLinkingCodes).where(eq(schema.childLinkingCodes.schoolId, id));
@@ -460,6 +464,18 @@ class DatabaseStorage implements IStorage {
           memoryInvites.set(inviteId, { ...invite, invitedBy: null });
         }
       });
+
+      for (let i = memoryMessages.length - 1; i >= 0; i--) {
+        if (memoryMessages[i].schoolId === id) {
+          memoryMessages.splice(i, 1);
+        }
+      }
+
+      for (let i = memoryMessageThreads.length - 1; i >= 0; i--) {
+        if (memoryMessageThreads[i].schoolId === id) {
+          memoryMessageThreads.splice(i, 1);
+        }
+      }
 
       memorySchools.delete(id);
       memorySchoolBranding.delete(id);
