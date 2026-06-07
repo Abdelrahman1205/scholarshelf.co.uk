@@ -1021,9 +1021,28 @@ class DatabaseStorage implements IStorage {
 
   async useLinkingCode(code: string, parentIdentifier: string): Promise<{ student: schema.Student; linkingCode: schema.ChildLinkingCode } | null> {
     const [linkingCode] = await getDb().select().from(schema.childLinkingCodes).where(
-      and(eq(schema.childLinkingCodes.code, code), eq(schema.childLinkingCodes.isUsed, false))
+      eq(schema.childLinkingCodes.code, code)
     );
     if (!linkingCode) return null;
+
+    // SECURITY: Check if already used
+    if (linkingCode.isUsed) {
+      throw new Error("This linking code has already been used.");
+    }
+
+    // SECURITY: Check expiry — if expiresAt is set, it must be in the future
+    if (linkingCode.expiresAt && new Date(linkingCode.expiresAt) < new Date()) {
+      throw new Error("This linking code has expired. Please request a new code from the school.");
+    }
+
+    // SECURITY: Check parentEmail — if the code was generated for a specific parent, enforce it
+    if (linkingCode.parentEmail && linkingCode.parentEmail.trim() !== "") {
+      const codeEmail = linkingCode.parentEmail.trim().toLowerCase();
+      const callerEmail = parentIdentifier.trim().toLowerCase();
+      if (codeEmail !== callerEmail) {
+        throw new Error("This linking code is not assigned to your email address.");
+      }
+    }
 
     const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, linkingCode.studentId));
     if (!student) return null;

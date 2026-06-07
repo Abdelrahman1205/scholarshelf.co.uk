@@ -2077,10 +2077,15 @@ export async function registerRoutes(
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       const result = await storage.useLinkingCode(code, user.email);
-      if (!result) return res.status(404).json({ message: "Invalid or already used linking code" });
+      if (!result) return res.status(404).json({ message: "Invalid linking code" });
       res.json(result);
     } catch (e: any) {
-      res.status(400).json({ message: e.message });
+      // Map specific security errors to appropriate HTTP status codes
+      const msg = e.message || "Unknown error";
+      if (msg.includes("not assigned to your email")) {
+        return res.status(403).json({ message: msg });
+      }
+      res.status(400).json({ message: msg });
     }
   });
 
@@ -2095,8 +2100,16 @@ export async function registerRoutes(
     try {
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
-      // Parent doesn't have a schoolId, but generateBasket derives it from the student
-      const basket = await storage.generateBasket(routeParam(req.params.id), user.email);
+
+      // SECURITY: Verify parent is linked to this student
+      const studentId = routeParam(req.params.id);
+      const children = await storage.getParentChildren(user.email);
+      const isLinked = children.some(c => c.studentId === studentId);
+      if (!isLinked) {
+        return res.status(403).json({ message: "You are not authorised to create a basket for this student" });
+      }
+
+      const basket = await storage.generateBasket(studentId, user.email);
       res.status(201).json(basket);
     } catch (e: any) {
       res.status(400).json({ message: e.message });

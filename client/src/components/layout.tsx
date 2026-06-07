@@ -4,7 +4,7 @@ import {
   BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, ChevronRight,
-  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, Bell
+  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -108,6 +108,8 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
     color: "text-cyan-600",
     navItems: [
       { label: "Dashboard", href: "/finance", icon: LayoutDashboard },
+      { label: "Payment Review", href: "/finance/payments", icon: CreditCard },
+      { label: "Reports", href: "/finance/reports", icon: BarChart3 },
     ],
   },
   parent: {

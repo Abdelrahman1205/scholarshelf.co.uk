@@ -7,3 +7,5 @@ vite.config.ts.*
 .vercel
 .env*
 tmp-*.cjs
+.fuse_hidden*
+**/.fuse_hidden*

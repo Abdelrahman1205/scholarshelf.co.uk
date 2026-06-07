@@ -14,6 +14,8 @@ function getRoleRoute(role: string): string {
   if (role === "admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
+  if (role === "finance") return "/finance";
+  if (role === "it_personnel") return "/admin";
   return "/login";
 }
 
@@ -75,6 +77,7 @@ export default function LoginPage() {
     e.preventDefault();
     try {
       const loggedInUser = await login({ username, password, schoolCode: schoolCode.trim() || undefined });
+      window.__schoolBlockedMessage = undefined;
       setLocation(getRoleRoute(loggedInUser.role));
     } catch {}
   }
@@ -85,6 +88,7 @@ export default function LoginPage() {
     setSchoolCode(demoSchoolCode || "");
     try {
       const loggedInUser = await login({ username: demoUsername, password: demoPassword, schoolCode: demoSchoolCode });
+      window.__schoolBlockedMessage = undefined;
       setLocation(getRoleRoute(loggedInUser.role));
     } catch {}
   }
@@ -103,6 +107,13 @@ export default function LoginPage() {
           <h1 className="font-heading text-3xl font-bold tracking-tight">{branding?.schoolName || "EduBook"}</h1>
           <p className="text-muted-foreground mt-1">School Book Management System</p>
         </div>
+
+        {window.__schoolBlockedMessage && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <p className="font-medium">School Access Blocked</p>
+            <p className="mt-1">{window.__schoolBlockedMessage}</p>
+          </div>
+        )}
 
         <Card>
           <CardHeader className="text-center pb-4">
@@ -210,6 +221,7 @@ export default function LoginPage() {
                   { label: "Admin", username: "admin", password: "admin123", schoolCode: "DEMO-001" },
                   { label: "Teacher", username: "teacher", password: "teacher123", schoolCode: "DEMO-001" },
                   { label: "Parent", username: "parent", password: "parent123", schoolCode: "DEMO-001" },
+                  { label: "Finance", username: "finance", password: "finance123", schoolCode: "DEMO-001" },
                 ].map((demo) => (
                   <Button
                     key={demo.username}

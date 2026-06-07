@@ -39,6 +39,8 @@ interface ExtraRequest {
 
 interface BookItem { id: string; title: string; isbn: string | null; }
 
+interface StudentRecord { id: string; name: string; studentCode: string | null; classId: string | null; }
+
 function StatusBadge({ status }: { status: string }) {
   const m: Record<string, string> = {
     allocated: "bg-amber-500/10 text-amber-600",
@@ -63,10 +65,10 @@ const REASONS = [
   { value: "OTHER", label: "Other" },
 ];
 
-function DashboardSection({ classes, allocations, extraRequests, isLoading }: {
-  classes: ClassItem[]; allocations: Allocation[]; extraRequests: ExtraRequest[]; isLoading: boolean;
+function DashboardSection({ classes, allocations, extraRequests, students, isLoading }: {
+  classes: ClassItem[]; allocations: Allocation[]; extraRequests: ExtraRequest[]; students: StudentRecord[]; isLoading: boolean;
 }) {
-  const totalStudents = new Set(allocations.map((a) => a.studentId)).size;
+  const totalStudents = students.length;
   const total = allocations.length;
   const received = allocations.filter((a) => a.status === "received").length;
   const pending = total - received;
@@ -156,7 +158,7 @@ function DashboardSection({ classes, allocations, extraRequests, isLoading }: {
   );
 }
 
-function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]; classesLoading: boolean }) {
+function DistributionSection({ classes, classesLoading, students: allStudents }: { classes: ClassItem[]; classesLoading: boolean; students: StudentRecord[] }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [selectedClassId, setSelectedClassId] = useState("");
@@ -202,24 +204,41 @@ function DistributionSection({ classes, classesLoading }: { classes: ClassItem[]
     onError: (e: Error) => { toast({ title: "Error", description: e.message, variant: "destructive" }); },
   });
 
+  const classStudents = useMemo(() => {
+    return allStudents.filter(s => s.classId === activeClassId);
+  }, [allStudents, activeClassId]);
+
   const groups = useMemo(() => {
-    if (!allocations) return [];
     const map = new Map<string, StudentGroup>();
-    for (const a of allocations) {
-      const ds = (a as any).distributionStatus || "pending_distribution";
-      const done = ds === "received_by_student";
-      const e = map.get(a.studentId);
-      if (e) {
-        e.allocations.push(a);
-        if (done) e.receivedCount++;
-        e.totalCount++;
-        e.allReceived = e.receivedCount === e.totalCount;
-      } else {
-        map.set(a.studentId, { student: a.student, allocations: [a], receivedCount: done ? 1 : 0, totalCount: 1, allReceived: done });
+    // First, add all students from the roster for this class
+    for (const s of classStudents) {
+      map.set(s.id, {
+        student: { id: s.id, name: s.name, studentCode: s.studentCode, class: null },
+        allocations: [],
+        receivedCount: 0,
+        totalCount: 0,
+        allReceived: false,
+      });
+    }
+    // Then overlay allocation data
+    if (allocations) {
+      for (const a of allocations) {
+        const ds = (a as any).distributionStatus || "pending_distribution";
+        const done = ds === "received_by_student";
+        const e = map.get(a.studentId);
+        if (e) {
+          e.allocations.push(a);
+          if (done) e.receivedCount++;
+          e.totalCount++;
+          e.allReceived = e.totalCount > 0 && e.receivedCount === e.totalCount;
+          e.student = a.student; // prefer allocation's richer student object
+        } else {
+          map.set(a.studentId, { student: a.student, allocations: [a], receivedCount: done ? 1 : 0, totalCount: 1, allReceived: done });
+        }
       }
     }
     return Array.from(map.values());
-  }, [allocations]);
+  }, [allocations, classStudents]);
 
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return groups;
@@ -942,6 +961,11 @@ export default function TeacherPage({ section = "dashboard" }: { section?: strin
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
+  const { data: allStudents } = useQuery<StudentRecord[]>({
+    queryKey: ["/api/students"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
   const { data: allAlloc } = useQuery<Allocation[]>({
     queryKey: ["/api/allocations"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -953,17 +977,18 @@ export default function TeacherPage({ section = "dashboard" }: { section?: strin
   });
 
   const c = classes || [];
+  const s = allStudents || [];
   const a = allAlloc || [];
   const r = extraReqs || [];
 
   switch (section) {
     case "distribution":
-      return <DistributionSection classes={c} classesLoading={classesLoading} />;
+      return <DistributionSection classes={c} classesLoading={classesLoading} students={s} />;
     case "requests":
       return <ExtraRequestsSection classes={c} />;
     case "messages":
       return <TeacherMessagesSection />;
     default:
-      return <DashboardSection classes={c} allocations={a} extraRequests={r} isLoading={classesLoading} />;
+      return <DashboardSection classes={c} allocations={a} extraRequests={r} students={s} isLoading={classesLoading} />;
   }
 }
