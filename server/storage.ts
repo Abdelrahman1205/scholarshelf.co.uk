@@ -872,10 +872,13 @@ class DatabaseStorage implements IStorage {
 
   // === STUDENTS ===
 
-  async getStudents(schoolId?: string | null): Promise<schema.Student[]> {
+  async getStudents(schoolId?: string | null, includeArchived = false): Promise<schema.Student[]> {
     try {
-      const filter = schoolFilter(schema.students, schoolId);
-      if (filter) return getDb().select().from(schema.students).where(filter);
+      const conditions: any[] = [];
+      const sf = schoolFilter(schema.students, schoolId);
+      if (sf) conditions.push(sf);
+      if (!includeArchived) conditions.push(eq(schema.students.isArchived, false));
+      if (conditions.length > 0) return getDb().select().from(schema.students).where(and(...conditions));
       return getDb().select().from(schema.students);
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
@@ -892,7 +895,7 @@ class DatabaseStorage implements IStorage {
   }
 
   async getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]> {
-    const conditions = [eq(schema.students.classId, classId)];
+    const conditions: any[] = [eq(schema.students.classId, classId), eq(schema.students.isArchived, false)];
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
     return getDb().select().from(schema.students).where(and(...conditions));
@@ -910,6 +913,24 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
     const updated = await updateAndFetchFirst(schema.students, and(...conditions), s);
     return updated;
+  }
+
+  async archiveStudent(id: string, archivedBy: string, schoolId?: string | null): Promise<void> {
+    const conditions: any[] = [eq(schema.students.id, id)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    await getDb().update(schema.students)
+      .set({ isArchived: true, archivedAt: new Date(), archivedBy })
+      .where(and(...conditions));
+  }
+
+  async unarchiveStudent(id: string, schoolId?: string | null): Promise<void> {
+    const conditions: any[] = [eq(schema.students.id, id)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    await getDb().update(schema.students)
+      .set({ isArchived: false, archivedAt: null, archivedBy: null })
+      .where(and(...conditions));
   }
 
   async deleteStudent(id: string, schoolId?: string | null): Promise<void> {
@@ -1016,6 +1037,40 @@ class DatabaseStorage implements IStorage {
 
   async createLinkingCode(codeData: schema.InsertChildLinkingCode): Promise<schema.ChildLinkingCode> {
     const created = await insertAndFetchById(schema.childLinkingCodes, codeData);
+    return created;
+  }
+
+  // Look up a single link code by its code string — for preview (does not consume)
+  async getLinkingCodeByCode(code: string): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class }) | null> {
+    const [linkingCode] = await getDb().select().from(schema.childLinkingCodes)
+      .where(eq(schema.childLinkingCodes.code, code));
+    if (!linkingCode) return null;
+    const [student] = linkingCode.studentId
+      ? await getDb().select().from(schema.students).where(eq(schema.students.id, linkingCode.studentId))
+      : [undefined];
+    let cls: schema.Class | undefined;
+    if (student?.classId) {
+      [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+    }
+    return { ...linkingCode, student, class: cls };
+  }
+
+  // Rotate a student's link code — marks all existing codes used and creates a fresh one
+  async rotateLinkingCode(studentId: string, parentEmail: string, schoolId: string | null, expiresAt?: Date | null): Promise<schema.ChildLinkingCode> {
+    // Mark existing unused codes as used
+    await getDb().update(schema.childLinkingCodes)
+      .set({ isUsed: true })
+      .where(and(eq(schema.childLinkingCodes.studentId, studentId), eq(schema.childLinkingCodes.isUsed, false)));
+    // Generate new code
+    const newCode = `${Math.random().toString(36).substring(2, 5).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const created = await insertAndFetchById(schema.childLinkingCodes, {
+      studentId,
+      code: newCode,
+      parentEmail,
+      isUsed: false,
+      expiresAt: expiresAt ?? null,
+      schoolId,
+    });
     return created;
   }
 
