@@ -2557,7 +2557,14 @@ function StudentsSection() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [form, setForm] = useState({ name: "", classId: "" });
+
+  // CSV Import state
+  const [importOpen, setImportOpen] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [importPreview, setImportPreview] = useState<{ rows: any[]; summary: any } | null>(null);
+  const [importStep, setImportStep] = useState<"input" | "preview">("input");
 
   const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
@@ -2575,13 +2582,43 @@ function StudentsSection() {
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
-  const deleteMutation = useMutation({
+  // Archive (soft-delete) — preserves payment/allocation history
+  const archiveMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/students/${selectedStudent?.id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); setDeleteOpen(false); toast({ title: "Student deleted" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); setDeleteOpen(false); toast({ title: "Student archived", description: "Records preserved. Restore from Archived tab if needed." }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
-  const filtered = students.filter((s: any) =>
+  const unarchiveMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/students/${id}/unarchive`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); toast({ title: "Student restored" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const previewImportMutation = useMutation({
+    mutationFn: (csv: string) => apiRequest("POST", "/api/students/import/preview", { csv }),
+    onSuccess: (data: any) => { setImportPreview(data); setImportStep("preview"); },
+    onError: (err: any) => { toast({ title: "Import preview failed", description: err.message, variant: "destructive" }); },
+  });
+
+  const confirmImportMutation = useMutation({
+    mutationFn: (rows: any[]) => apiRequest("POST", "/api/students/import/confirm", { rows }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
+      setImportOpen(false);
+      setImportStep("input");
+      setCsvText("");
+      setImportPreview(null);
+      toast({ title: `Imported ${data.created} student${data.created !== 1 ? "s" : ""}`, description: data.errors?.length ? `${data.errors.length} row(s) skipped` : undefined });
+    },
+    onError: (err: any) => { toast({ title: "Import failed", description: err.message, variant: "destructive" }); },
+  });
+
+  const activeStudents = students.filter((s: any) => !s.isArchived);
+  const archivedStudents = students.filter((s: any) => s.isArchived);
+  const displayStudents = showArchived ? archivedStudents : activeStudents;
+
+  const filtered = displayStudents.filter((s: any) =>
     s.name?.toLowerCase().includes(search.toLowerCase()) ||
     s.studentCode?.toLowerCase().includes(search.toLowerCase())
   );
@@ -2593,14 +2630,24 @@ function StudentsSection() {
           <h1 className="text-2xl font-heading font-bold tracking-tight">Students</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage student records and class assignments.</p>
         </div>
-        <Button onClick={() => { setForm({ name: "", classId: "" }); setAddOpen(true); }}>
-          <Plus className="w-4 h-4 mr-2" /> Add Student
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setImportStep("input"); setCsvText(""); setImportPreview(null); setImportOpen(true); }}>
+            Import CSV
+          </Button>
+          <Button onClick={() => { setForm({ name: "", classId: "" }); setAddOpen(true); }}>
+            <Plus className="w-4 h-4 mr-2" /> Add Student
+          </Button>
+        </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input type="search" placeholder="Search students..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="flex gap-3 items-center flex-wrap">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input type="search" placeholder="Search students..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <Button variant={showArchived ? "default" : "outline"} size="sm" onClick={() => setShowArchived(!showArchived)}>
+          {showArchived ? "Active Students" : `Archived (${archivedStudents.length})`}
+        </Button>
       </div>
 
       <Card className="border-border/50 shadow-sm">
@@ -2610,27 +2657,37 @@ function StudentsSection() {
               <TableHead>Name</TableHead>
               <TableHead>Student Code</TableHead>
               <TableHead>Class</TableHead>
+              {showArchived && <TableHead>Archived</TableHead>}
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map((student: any) => (
-              <TableRow key={student.id}>
+              <TableRow key={student.id} className={student.isArchived ? "opacity-60" : ""}>
                 <TableCell className="font-medium">{student.name}</TableCell>
                 <TableCell className="text-muted-foreground font-mono text-sm">{student.studentCode || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{classMap[student.classId]?.name || "—"}</TableCell>
+                {showArchived && <TableCell className="text-muted-foreground text-sm">{student.archivedAt ? new Date(student.archivedAt).toLocaleDateString() : "—"}</TableCell>}
                 <TableCell className="text-right space-x-1">
-                  <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(student); setForm({ name: student.name || "", classId: student.classId || "" }); setEditOpen(true); }}>
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedStudent(student); setDeleteOpen(true); }}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {student.isArchived ? (
+                    <Button variant="outline" size="sm" onClick={() => unarchiveMutation.mutate(student.id)} disabled={unarchiveMutation.isPending}>
+                      Restore
+                    </Button>
+                  ) : (
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(student); setForm({ name: student.name || "", classId: student.classId || "" }); setEditOpen(true); }}>
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedStudent(student); setDeleteOpen(true); }}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
             {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">{search ? "No matching students" : "No students yet. Add your first student above."}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={showArchived ? 5 : 4} className="text-center text-muted-foreground py-8">{search ? "No matching students" : showArchived ? "No archived students." : "No students yet. Add your first student above."}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -2676,13 +2733,91 @@ function StudentsSection() {
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete Student</AlertDialogTitle><AlertDialogDescription>Are you sure you want to delete "{selectedStudent?.name}"?</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive Student</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{selectedStudent?.name}" will be archived. Their payment and allocation records are preserved and the student can be restored later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+            <AlertDialogAction onClick={() => archiveMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Archive Student</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={importOpen} onOpenChange={(o) => { setImportOpen(o); if (!o) { setImportStep("input"); setImportPreview(null); } }}>
+        <DialogContent className="sm:max-w-[600px]">
+          {importStep === "input" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Import Students from CSV</DialogTitle>
+                <DialogDescription>
+                  Paste a CSV with a <code className="font-mono text-xs bg-muted px-1 rounded">name</code> column and optional <code className="font-mono text-xs bg-muted px-1 rounded">class</code> column. First row must be headers.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <p className="text-xs text-muted-foreground font-mono bg-muted/50 rounded p-2">name,class{"\n"}Alice Smith,Year 7A{"\n"}Bob Jones,Year 7B</p>
+                <textarea
+                  className="w-full min-h-[160px] border border-border rounded-md p-2 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder={"name,class\nAlice Smith,Year 7A\nBob Jones,Year 7B"}
+                  value={csvText}
+                  onChange={(e) => setCsvText(e.target.value)}
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+                <Button onClick={() => previewImportMutation.mutate(csvText)} disabled={previewImportMutation.isPending || !csvText.trim()}>
+                  {previewImportMutation.isPending ? "Parsing..." : "Preview Import"}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Confirm Import</DialogTitle>
+                <DialogDescription>
+                  {importPreview?.summary.valid} of {importPreview?.summary.total} rows are valid and will be created.
+                  {importPreview?.summary.invalid > 0 && ` ${importPreview?.summary.invalid} row(s) have errors and will be skipped.`}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="max-h-72 overflow-y-auto border border-border rounded-md">
+                <Table>
+                  <TableHeader className="bg-muted/30">
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Class</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview?.rows.map((row: any, i: number) => (
+                      <TableRow key={i} className={row.error ? "opacity-60" : ""}>
+                        <TableCell className="font-medium">{row.name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">{row.className || "—"}</TableCell>
+                        <TableCell>
+                          {row.error
+                            ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-200 text-xs">{row.error}</Badge>
+                            : <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">OK</Badge>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setImportStep("input")}>Back</Button>
+                <Button
+                  onClick={() => confirmImportMutation.mutate(importPreview?.rows.filter((r: any) => !r.error) ?? [])}
+                  disabled={confirmImportMutation.isPending || (importPreview?.summary.valid ?? 0) === 0}
+                >
+                  {confirmImportMutation.isPending ? "Importing..." : `Import ${importPreview?.summary.valid} Students`}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -3218,9 +3353,18 @@ function LinkingCodesSection() {
   const { data: codes = [] } = useQuery<any[]>({ queryKey: ["/api/linking-codes"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
 
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotateForm, setRotateForm] = useState({ studentId: "", parentEmail: "" });
+
   const generateMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/students/${data.studentId}/linking-code`, { parentEmail: data.parentEmail }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/linking-codes"] }); setGenOpen(false); toast({ title: "Linking code generated" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const rotateMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", `/api/students/${data.studentId}/linking-code/rotate`, { parentEmail: data.parentEmail }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/linking-codes"] }); setRotateOpen(false); toast({ title: "Code rotated", description: "Previous codes invalidated. New code sent to parent." }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
@@ -3229,11 +3373,16 @@ function LinkingCodesSection() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-heading font-bold tracking-tight">Linking Codes</h1>
-          <p className="text-muted-foreground text-sm mt-1">Generate parent-student linking codes.</p>
+          <p className="text-muted-foreground text-sm mt-1">Generate and manage parent-student link codes. Rotate a code if it was shared incorrectly.</p>
         </div>
-        <Button onClick={() => { setGenForm({ studentId: "", parentEmail: "" }); setGenOpen(true); }}>
-          <Plus className="w-4 h-4 mr-2" /> Generate Code
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setRotateForm({ studentId: "", parentEmail: "" }); setRotateOpen(true); }}>
+            Rotate Code
+          </Button>
+          <Button onClick={() => { setGenForm({ studentId: "", parentEmail: "" }); setGenOpen(true); }}>
+            <Plus className="w-4 h-4 mr-2" /> Generate Code
+          </Button>
+        </div>
       </div>
 
       <Card className="border-border/50 shadow-sm">
@@ -3270,7 +3419,7 @@ function LinkingCodesSection() {
 
       <Dialog open={genOpen} onOpenChange={setGenOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader><DialogTitle>Generate Linking Code</DialogTitle><DialogDescription>Create a code for a parent to link to their child.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Generate Linking Code</DialogTitle><DialogDescription>Create a new code for a parent to link to their child.</DialogDescription></DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label>Student</Label>
@@ -3282,6 +3431,26 @@ function LinkingCodesSection() {
             <div className="grid gap-2"><Label>Parent Email</Label><Input type="email" value={genForm.parentEmail} onChange={(e) => setGenForm({ ...genForm, parentEmail: e.target.value })} placeholder="parent@example.com" /></div>
           </div>
           <DialogFooter><Button onClick={() => generateMutation.mutate(genForm)} disabled={generateMutation.isPending || !genForm.studentId || !genForm.parentEmail}>{generateMutation.isPending ? "Generating..." : "Generate Code"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Rotate Link Code</DialogTitle>
+            <DialogDescription>Invalidates all existing unused codes for this student and generates a new one. Use when a code has been leaked or shared incorrectly.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Student</Label>
+              <Select value={rotateForm.studentId} onValueChange={(v) => setRotateForm({ ...rotateForm, studentId: v })}>
+                <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
+                <SelectContent>{students.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2"><Label>Parent Email (for new code)</Label><Input type="email" value={rotateForm.parentEmail} onChange={(e) => setRotateForm({ ...rotateForm, parentEmail: e.target.value })} placeholder="parent@example.com" /></div>
+          </div>
+          <DialogFooter><Button onClick={() => rotateMutation.mutate(rotateForm)} disabled={rotateMutation.isPending || !rotateForm.studentId || !rotateForm.parentEmail} className="bg-amber-600 hover:bg-amber-700">{rotateMutation.isPending ? "Rotating..." : "Rotate Code"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

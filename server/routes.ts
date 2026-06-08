@@ -1927,10 +1927,29 @@ export async function registerRoutes(
     res.json(student);
   });
 
+  // Soft-delete (archive) a student — preserves allocation/payment history
   app.delete("/api/students/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
-    const sid = sessionSchoolId(req);
-    await storage.deleteStudent(routeParam(req.params.id), sid);
-    res.status(204).send();
+    try {
+      const sid = sessionSchoolId(req);
+      const user = await storage.getUserById(req.session.userId!);
+      await storage.archiveStudent(routeParam(req.params.id), user?.id ?? "system", sid);
+      await auditLog(req, "student_archived", `student:${req.params.id}`);
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Restore an archived student
+  app.post("/api/students/:id/unarchive", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      await storage.unarchiveStudent(routeParam(req.params.id), sid);
+      await auditLog(req, "student_unarchived", `student:${req.params.id}`);
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
   });
 
   // === BOOK LEVELS (school-scoped) ===
@@ -2070,7 +2089,164 @@ export async function registerRoutes(
     }
   });
 
+  // Rotate a student's link code — invalidates existing unused codes, generates a fresh one
+  // Spec §16.6: link code leaked / rotation
+  app.post("/api/students/:id/linking-code/rotate", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const studentId = routeParam(req.params.id);
+      const { parentEmail } = req.body;
+      if (!parentEmail?.trim()) return res.status(400).json({ message: "parentEmail is required for rotation" });
+
+      const student = await storage.getStudentById(studentId, sid);
+      if (!student) return res.status(404).json({ message: "Student not found" });
+
+      const expiresAt = new Date();
+      expiresAt.setMonth(expiresAt.getMonth() + 3);
+
+      const newCode = await storage.rotateLinkingCode(studentId, parentEmail.trim(), sid ?? null, expiresAt);
+
+      await auditLog(req, "linking_code_rotated", `student:${studentId}`, { parentEmail: parentEmail.trim() });
+
+      // Email the new code to the parent
+      if (parentEmail) {
+        const sent = await sendParentCodeEmail(parentEmail.trim(), student.name ?? "your child", newCode.code, expiresAt);
+        if (!sent) console.log(`[ROTATE CODE] New code for ${parentEmail}: ${newCode.code}`);
+      }
+
+      res.status(201).json(newCode);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // === STUDENT BULK IMPORT ===
+
+  // POST /api/students/import/preview — parse CSV and return rows without committing
+  app.post("/api/students/import/preview", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { csv } = req.body as { csv: string };
+      if (!csv?.trim()) return res.status(400).json({ message: "csv field is required" });
+
+      // Parse CSV lines (skip blank lines)
+      const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length < 2) return res.status(400).json({ message: "CSV must have a header row and at least one data row" });
+
+      const header = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/[^a-z_]/g, ""));
+      const nameIdx = header.indexOf("name");
+      const classIdx = header.indexOf("class") !== -1 ? header.indexOf("class") : header.indexOf("class_name");
+
+      if (nameIdx === -1) return res.status(400).json({ message: "CSV must have a 'name' column" });
+
+      // Load classes for name → id resolution
+      const classes = await storage.getClasses(sid);
+      const classMap = new Map(classes.map((c: any) => [c.name.trim().toLowerCase(), c.id]));
+
+      const rows: { name: string; className: string | null; classId: string | null; error: string | null }[] = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+        const name = cols[nameIdx]?.trim() ?? "";
+        if (!name) { rows.push({ name: "", className: null, classId: null, error: "Name is required" }); continue; }
+
+        const className = classIdx !== -1 ? (cols[classIdx]?.trim() ?? null) : null;
+        const classId = className ? (classMap.get(className.toLowerCase()) ?? null) : null;
+        const classError = className && !classId ? `Class "${className}" not found` : null;
+
+        rows.push({ name, className, classId, error: classError });
+      }
+
+      const valid = rows.filter((r) => !r.error).length;
+      const invalid = rows.length - valid;
+
+      res.json({ rows, summary: { total: rows.length, valid, invalid } });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // POST /api/students/import/confirm — commit parsed rows (valid only)
+  app.post("/api/students/import/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { rows } = req.body as { rows: { name: string; classId: string | null }[] };
+      if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ message: "rows array is required" });
+
+      const created: any[] = [];
+      const errors: { name: string; error: string }[] = [];
+
+      for (const row of rows) {
+        if (!row.name?.trim()) { errors.push({ name: row.name ?? "", error: "Name is required" }); continue; }
+        try {
+          const student = await storage.createStudent({ name: row.name.trim(), classId: row.classId ?? null, schoolId: sid ?? null });
+          created.push(student);
+        } catch (e: any) {
+          errors.push({ name: row.name, error: e.message });
+        }
+      }
+
+      await auditLog(req, "students_bulk_imported", `school:${sid}`, { count: created.length });
+
+      res.status(201).json({ created: created.length, errors, students: created });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   // === PARENT ENDPOINTS ===
+
+  // Preview a link code — returns student info without creating the link
+  // Spec §6.3: POST /api/parent/link-code/preview
+  app.post("/api/parent/link-code/preview", requireRole("parent"), async (req, res) => {
+    try {
+      const { code } = req.body;
+      if (!code?.trim()) return res.status(400).json({ message: "Link code is required" });
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+      // Look up without consuming the code
+      const linkingCode = await storage.getLinkingCodeByCode(code.trim().toUpperCase());
+      if (!linkingCode) return res.status(404).json({ message: "Invalid linking code" });
+      if (linkingCode.isUsed) return res.status(400).json({ message: "This linking code has already been used." });
+      if (linkingCode.expiresAt && new Date(linkingCode.expiresAt) < new Date()) {
+        return res.status(400).json({ message: "This linking code has expired. Please ask the school to generate a new one." });
+      }
+      if (linkingCode.parentEmail && linkingCode.parentEmail.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+        return res.status(403).json({ message: "This linking code is not assigned to your email address." });
+      }
+      // Return safe preview — no PII beyond name
+      const student = linkingCode.student;
+      res.json({
+        code: linkingCode.code,
+        studentId: linkingCode.studentId,
+        studentName: student?.name ?? "Unknown Student",
+        studentCode: student?.studentCode ?? null,
+        className: (linkingCode as any).class?.name ?? null,
+      });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Confirm a link code — creates the parent-student link
+  // Spec §6.4: POST /api/parent/link-code/confirm
+  app.post("/api/parent/link-code/confirm", requireRole("parent"), async (req, res) => {
+    try {
+      const { code } = req.body;
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+      const result = await storage.useLinkingCode(code, user.email);
+      if (!result) return res.status(404).json({ message: "Invalid linking code" });
+      await auditLog(req, "parent_child_linked", `student:${result.student.id}`);
+      res.json(result);
+    } catch (e: any) {
+      const msg = e.message || "Unknown error";
+      if (msg.includes("not assigned to your email")) return res.status(403).json({ message: msg });
+      res.status(400).json({ message: msg });
+    }
+  });
+
+  // Legacy single-step link (kept for backward compat)
   app.post("/api/parent/link-child", requireRole("parent"), async (req, res) => {
     try {
       const { code } = req.body;
@@ -2094,6 +2270,42 @@ export async function registerRoutes(
     if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
     const children = await storage.getParentChildren(user.email);
     res.json(children);
+  });
+
+  // GET /api/parent/children/:id/books — Spec §7: book allocations for a linked child
+  app.get("/api/parent/children/:id/books", requireRole("parent"), async (req, res) => {
+    try {
+      const user = await storage.getUserById(req.session.userId!);
+      if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
+
+      const studentId = routeParam(req.params.id);
+
+      // SECURITY: Verify the parent is linked to this student
+      const children = await storage.getParentChildren(user.email);
+      const isLinked = children.some((c) => c.studentId === studentId);
+      if (!isLinked) {
+        return res.status(403).json({ message: "You are not authorised to view books for this student" });
+      }
+
+      // Pull all allocations for this student (no schoolId filter — parent can see across any school they're linked to)
+      const allocs = await storage.getAllocations(undefined, undefined);
+      const studentAllocs = allocs.filter((a: any) => a.student?.id === studentId || a.studentId === studentId);
+
+      const books = studentAllocs.map((a: any) => ({
+        allocationId: a.id,
+        bookTitle: a.book?.title ?? "Unknown",
+        bookIsbn: a.book?.isbn ?? null,
+        quantity: a.quantity ?? 1,
+        unitPrice: a.book?.price ?? null,
+        status: a.status ?? "allocated",
+        paymentStatus: a.paymentStatus ?? null,
+        allocatedAt: a.createdAt ?? null,
+      }));
+
+      res.json(books);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
   });
 
   app.post("/api/parent/children/:id/basket", requireRole("parent"), async (req, res) => {
