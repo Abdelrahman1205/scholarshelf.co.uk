@@ -2144,7 +2144,7 @@ export async function registerRoutes(
       const classes = await storage.getClasses(sid);
       const classMap = new Map(classes.map((c: any) => [c.name.trim().toLowerCase(), c.id]));
 
-      const rows: { name: string; className: string | null; classId: string | null; error: string | null }[] = [];
+      const rows: { name: string; className: string | null; classId: string | null; error: string | null; valid: boolean }[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
@@ -2155,7 +2155,7 @@ export async function registerRoutes(
         const classId = className ? (classMap.get(className.toLowerCase()) ?? null) : null;
         const classError = className && !classId ? `Class "${className}" not found` : null;
 
-        rows.push({ name, className, classId, error: classError });
+        rows.push({ name, className, classId, error: classError, valid: !classError });
       }
 
       const valid = rows.filter((r) => !r.error).length;
@@ -5341,5 +5341,4 @@ export async function registerRoutes(
   });
 
   // ── API catch-all: return JSON 404 for unknown /api routes ──
-  app.all("/api/*path", (_req: Request, res: Response) => {
-    res.stat
+  app.all("/api/*path", (_req: Reque
