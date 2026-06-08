@@ -87,10 +87,6 @@ async function ensureBootstrapSchema() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS school_branding_school_id_idx ON school_branding(school_id)`);
-    // Student soft-delete columns
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_at timestamp`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_by varchar(36)`);
   } catch (error) {
     console.warn("Schema bootstrap warning:", error);
   } finally {

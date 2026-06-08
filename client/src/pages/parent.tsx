@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -142,121 +142,76 @@ function ParentLinkSection({
   children: any[];
   createBasketMutation: any;
 }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [preview, setPreview] = useState<any>(null); // result from /preview
-  const [previewError, setPreviewError] = useState<string | null>(null);
-
-  const previewMutation = useMutation({
-    mutationFn: async (code: string) => {
-      const res = await apiRequest("POST", "/api/parent/link-code/preview", { code });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.message || "Invalid code"); }
-      return res.json();
-    },
-    onSuccess: (data) => { setPreview(data); setPreviewError(null); },
-    onError: (err: any) => { setPreviewError(err.message); setPreview(null); },
-  });
-
-  const confirmMutation = useMutation({
-    mutationFn: async (code: string) => {
-      const res = await apiRequest("POST", "/api/parent/link-code/confirm", { code });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.message || "Failed to link"); }
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Child linked", description: `${preview?.studentName} has been linked to your account.` });
-      setPreview(null);
-      setPreviewError(null);
-      setLinkCode("");
-      queryClient.invalidateQueries({ queryKey: ["/api/parent/children"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/parent/baskets"] });
-    },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
-  });
-
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-3xl font-heading font-bold tracking-tight text-foreground">Link Child</h1>
-        <p className="text-muted-foreground mt-2">Connect your child&apos;s profile using the link code provided by the school.</p>
+        <p className="text-muted-foreground mt-2">Connect your child profile with a linking code or QR scanner.</p>
       </div>
 
       <Card className="border-border max-w-3xl">
         <CardHeader>
-          <CardTitle className="font-heading">Enter Child or Family Link Code</CardTitle>
+          <CardTitle className="font-heading">Link Your Child</CardTitle>
           <CardDescription>
-            Enter the link code sent by your school. You&apos;ll see a preview of the child before confirming.
+            Enter the linking code or scan the QR code provided by the school to connect your child&apos;s profile.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!preview ? (
-            <div className="space-y-3">
-              <label className="text-sm font-medium">Link Code</label>
-              <div className="flex gap-2">
-                <Input
-                  data-testid="input-link-code"
-                  placeholder="e.g., A7B-9X2Z"
-                  className="font-mono text-lg uppercase"
-                  maxLength={10}
-                  value={linkCode}
-                  onChange={(e) => { setLinkCode(e.target.value.toUpperCase()); setPreviewError(null); }}
-                />
-                <Button
-                  data-testid="button-link-child"
-                  onClick={() => previewMutation.mutate(linkCode.trim())}
-                  disabled={linkCode.length < 6 || previewMutation.isPending}
-                >
-                  {previewMutation.isPending ? "Checking..." : "Find Child"}
-                </Button>
-              </div>
-              {previewError && <p className="text-sm text-destructive">{previewError}</p>}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground">or</span>
-                <div className="flex-1 h-px bg-border" />
-              </div>
-              {!scannerOpen ? (
-                <Button data-testid="button-open-scanner" variant="outline" className="w-full gap-2" onClick={startScanner}>
-                  <Camera className="w-4 h-4" />
-                  Scan QR Code
-                </Button>
-              ) : (
-                <div className="space-y-3">
-                  <div className="relative rounded-lg overflow-hidden border border-border bg-black">
-                    <div id="qr-reader" className="w-full" />
-                    <Button data-testid="button-close-scanner" variant="ghost" size="sm" className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70 hover:text-white z-10" onClick={stopScanner}>
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground text-center">Point your camera at the QR code provided by the school.</p>
+          <div className="space-y-3">
+            <label className="text-sm font-medium">Linking Code</label>
+            <div className="flex gap-2">
+              <Input
+                data-testid="input-link-code"
+                placeholder="e.g., A7B-9X2Z"
+                className="font-mono text-lg uppercase"
+                maxLength={8}
+                value={linkCode}
+                onChange={(e) => setLinkCode(e.target.value.toUpperCase())}
+              />
+              <Button
+                data-testid="button-link-child"
+                onClick={() => linkChildMutation.mutate()}
+                disabled={linkCode.length < 8 || linkChildMutation.isPending}
+              >
+                Link Profile
+              </Button>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted-foreground">or</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+            {!scannerOpen ? (
+              <Button
+                data-testid="button-open-scanner"
+                variant="outline"
+                className="w-full gap-2"
+                onClick={startScanner}
+              >
+                <Camera className="w-4 h-4" />
+                Scan QR Code
+              </Button>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative rounded-lg overflow-hidden border border-border bg-black">
+                  <div id="qr-reader" className="w-full" />
+                  <Button
+                    data-testid="button-close-scanner"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute top-2 right-2 bg-black/50 text-white hover:bg-black/70 hover:text-white z-10"
+                    onClick={stopScanner}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
                 </div>
-              )}
-              {scannerError && <p className="text-sm text-destructive">{scannerError}</p>}
-            </div>
-          ) : (
-            // Step 2: preview — confirm before linking
-            <div className="space-y-4">
-              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
-                <p className="text-sm text-muted-foreground">The following child was found:</p>
-                <p className="text-lg font-semibold">{preview.studentName}</p>
-                {preview.className && <p className="text-sm text-muted-foreground">Class: {preview.className}</p>}
-                {preview.studentCode && <p className="text-xs text-muted-foreground font-mono">Code: {preview.studentCode}</p>}
+                <p className="text-xs text-muted-foreground text-center">
+                  Point your camera at the QR code provided by the school.
+                </p>
               </div>
-              <p className="text-sm text-muted-foreground">Is this your child? Click <strong>Yes, link this child</strong> to confirm.</p>
-              <div className="flex gap-2">
-                <Button
-                  data-testid="button-confirm-link"
-                  onClick={() => confirmMutation.mutate(linkCode.trim())}
-                  disabled={confirmMutation.isPending}
-                >
-                  {confirmMutation.isPending ? "Linking..." : "Yes, link this child"}
-                </Button>
-                <Button variant="outline" onClick={() => { setPreview(null); setPreviewError(null); }}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
+            )}
+            {scannerError && <p className="text-sm text-destructive">{scannerError}</p>}
+          </div>
 
           <div className="mt-8 pt-6 border-t border-border">
             <h3 className="font-medium mb-4">Currently Linked Children</h3>
@@ -265,7 +220,7 @@ function ParentLinkSection({
             ) : children.length === 0 ? (
               <Card className="border-dashed border-2 bg-transparent shadow-none">
                 <CardContent className="flex flex-col items-center justify-center h-[120px] text-center">
-                  <p className="text-muted-foreground text-sm">No children linked yet. Use a link code above.</p>
+                  <p className="text-muted-foreground text-sm">No children linked yet. Use a linking code above.</p>
                 </CardContent>
               </Card>
             ) : (

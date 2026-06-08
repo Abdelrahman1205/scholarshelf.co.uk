@@ -1,7 +1,9 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile, mkdir } from "fs/promises";
+import { rm, readFile } from "fs/promises";
 
+// server deps to bundle to reduce openat(2) syscalls
+// which helps cold start times
 const allowlist = [
   "@google/generative-ai",
   "axios",
@@ -31,13 +33,7 @@ const allowlist = [
 ];
 
 async function buildAll() {
-  // Skip rm if filesystem doesn't support unlink; ensure dist exists
-  try {
-    await rm("dist", { recursive: true, force: true });
-  } catch (_) {
-    // mounted fs may not support unlink — continue with overwrite
-  }
-  await mkdir("dist", { recursive: true }).catch(() => {});
+  await rm("dist", { recursive: true, force: true });
 
   console.log("building client...");
   await viteBuild();

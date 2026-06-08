@@ -263,9 +263,6 @@ export const students = pgTable("students", {
   classId: varchar("class_id", { length: 36 }).references(() => classes.id),
   studentCode: text("student_code").unique(),
   schoolId: varchar("school_id", { length: 36 }),
-  isArchived: boolean("is_archived").default(false).notNull(),
-  archivedAt: timestamp("archived_at"),
-  archivedBy: varchar("archived_by", { length: 36 }),
 });
 
 export const insertStudentSchema = createInsertSchema(students).omit({ id: true });
