@@ -1893,7 +1893,8 @@ export async function registerRoutes(
   // === STUDENTS (school-scoped) ===
   app.get("/api/students", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
-    const students = await storage.getStudents(sid);
+    const includeArchived = req.query.includeArchived === "true";
+    const students = await storage.getStudents(sid, includeArchived);
     if (getActiveRequestContext(req) === "teacher") {
       const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
       const assignedClassIds = new Set(classes.filter((cls) => cls.teacherId === req.session.userId).map((cls) => cls.id));
@@ -5341,8 +5342,4 @@ export async function registerRoutes(
 
   // ── API catch-all: return JSON 404 for unknown /api routes ──
   app.all("/api/*path", (_req: Request, res: Response) => {
-    res.status(404).json({ message: "API endpoint not found" });
-  });
-
-  return httpServer;
-}
+    res.stat
