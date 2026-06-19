@@ -74,7 +74,7 @@ function statusBadge(status: string) {
 
 function formatCurrency(amount: string | number) {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  return `${num.toFixed(2)} LYD`;
+  return `£${num.toFixed(2)}`;
 }
 
 function formatDate(d: string | null) {

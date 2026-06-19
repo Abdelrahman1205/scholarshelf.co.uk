@@ -2149,7 +2149,7 @@ export async function registerRoutes(
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
         const name = cols[nameIdx]?.trim() ?? "";
-        if (!name) { rows.push({ name: "", className: null, classId: null, error: "Name is required" }); continue; }
+        if (!name) { rows.push({ name: "", className: null, classId: null, error: "Name is required", valid: false }); continue; }
 
         const className = classIdx !== -1 ? (cols[classIdx]?.trim() ?? null) : null;
         const classId = className ? (classMap.get(className.toLowerCase()) ?? null) : null;
@@ -4685,9 +4685,10 @@ export async function registerRoutes(
           firstAdminInviteStatus,
           updatedAt: school.updatedAt,
           category:
-            firstAdminInviteStatus === "not_invited"
+            // Treat an existing active school admin as equivalent to "accepted"
+            (firstAdminInviteStatus === "not_invited" && !hasActiveSchoolAdmin)
               ? "school_created_no_admin_invite"
-              : firstAdminInviteStatus !== "accepted"
+              : (firstAdminInviteStatus !== "accepted" && !hasActiveSchoolAdmin)
                 ? "admin_invited_not_accepted"
                 : !COMPLETE_SETUP_STATUSES.has(setupStatus)
                   ? "admin_accepted_setup_not_complete"
@@ -4765,12 +4766,16 @@ export async function registerRoutes(
 
   app.get("/api/owner/activity", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
     try {
-      const [logs, schools] = await Promise.all([
+      const [logs, schools, allUsers] = await Promise.all([
         storage.getAuditLogs(200),
         storage.getSchools(),
+        storage.getUsers(),
       ]);
       const schoolById = new Map<string, { name: string; code: string }>(
         schools.map((school) => [school.id, { name: school.name, code: school.code }]),
+      );
+      const userById = new Map<string, { username: string; email: string }>(
+        allUsers.map((u) => [u.id, { username: u.username, email: u.email }]),
       );
       const ownerActions = new Set([
         "school_created",
@@ -4798,12 +4803,14 @@ export async function registerRoutes(
             }
           }
 
+          const actor = log.userId ? userById.get(log.userId) : null;
           return {
             id: log.id,
             action: log.action,
             target,
             targetLabel,
             actorUserId: log.userId,
+            actorName: actor?.username || actor?.email || log.userId || null,
             timestamp: log.createdAt,
             metadata: log.metadata ? JSON.parse(log.metadata) : null,
           };
@@ -5022,6 +5029,7 @@ export async function registerRoutes(
       const setupChecklist = setupState
         ? {
             schoolProfileComplete: setupState.checklist.schoolProfileComplete,
+            brandingDesignConfigured: setupState.checklist.brandingDesignConfigured,
             classesCreated: setupState.checklist.classesCreated,
             booksAdded: setupState.checklist.booksAdded,
             bookLevelsCreated: setupState.checklist.bookLevelsCreated,
@@ -5031,13 +5039,10 @@ export async function registerRoutes(
             parentsLinked: setupState.checklist.parentsLinked,
             paymentSetupReviewed: setupState.checklist.paymentSetupReviewed,
             operationalSetupComplete: setupState.checklist.operationalSetupComplete,
-            // Legacy aliases used by older UI labels
-            schoolProfileCompleted: setupState.checklist.schoolProfileComplete,
-            bookBundlesCreated: setupState.checklist.bookLevelsCreated,
-            bundlesAssignedToClasses: setupState.checklist.bookLevelsAssignedToClasses,
           }
         : {
             schoolProfileComplete: true,
+            brandingDesignConfigured: false,
             classesCreated: scopedClasses.length > 0,
             booksAdded: scopedBooks.length > 0,
             bookLevelsCreated: scopedBookLevels.length > 0,
@@ -5047,15 +5052,10 @@ export async function registerRoutes(
             parentsLinked: parentCodesUsed > 0,
             paymentSetupReviewed: paymentsVerified > 0 || paymentsSubmitted > 0,
             operationalSetupComplete: false,
-            schoolProfileCompleted: true,
-            bookBundlesCreated: scopedBookLevels.length > 0,
-            bundlesAssignedToClasses: scopedClassBookLevels.length > 0,
           };
 
-      const setupDoneCount = Object.values(setupChecklist)
-        .filter((value, index) => index < 10 && !!value)
-        .length;
-      const setupTotalCount = 10;
+      const setupDoneCount = Object.values(setupChecklist).filter(Boolean).length;
+      const setupTotalCount = 11;
       const setupPercent = Math.round((setupDoneCount / setupTotalCount) * 100);
 
       res.json({
@@ -5229,7 +5229,7 @@ export async function registerRoutes(
       // ── Allocation / distribution report ──
       const allocationsByStatus = {
         allocated: allocations.filter((a: any) => a.status === "allocated"),
-        confirmed: allocations.filter((a: any) => a.status === "confirmed"),
+        confirmed: allocations.filter((a: any) => a.status === "received"),
         absent: allocations.filter((a: any) => a.status === "absent"),
       };
 
@@ -5249,7 +5249,7 @@ export async function registerRoutes(
       const classReport = classes.map((cls) => {
         const clsStudents = students.filter((s) => s.classId === cls.id);
         const clsAllocations = allocations.filter((a: any) => a.classId === cls.id);
-        const clsConfirmed = clsAllocations.filter((a: any) => a.status === "confirmed");
+        const clsConfirmed = clsAllocations.filter((a: any) => a.status === "received");
         return {
           id: cls.id,
           name: cls.name,
@@ -5341,4 +5341,9 @@ export async function registerRoutes(
   });
 
   // ── API catch-all: return JSON 404 for unknown /api routes ──
-  app.all("/api/*path", (_req: Reque
+  app.all("/api/*path", (_req: Request, res: Response) => {
+    res.status(404).json({ message: "API endpoint not found" });
+  });
+
+  return httpServer;
+}

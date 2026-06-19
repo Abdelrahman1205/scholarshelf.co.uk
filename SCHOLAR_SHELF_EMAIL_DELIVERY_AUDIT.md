@@ -1,7 +1,7 @@
 # Scholar Shelf — Email Delivery Audit
 
 **Date:** 2026-05-25  
-**Auditor:** Claude (Cowork)
+**Auditor:** Internal QA
 
 ---
 

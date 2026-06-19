@@ -1,7 +1,7 @@
 # Scholar Shelf — Email Integration Investigation
 
 **Date:** 2026-05-25  
-**Auditor:** Claude (Cowork)  
+**Auditor:** Internal QA  
 **Scope:** Full audit of email infrastructure before implementation
 
 ---

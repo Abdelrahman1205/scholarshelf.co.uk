@@ -1272,7 +1272,7 @@ function OwnerActivitySection() {
               <TableRow key={item.id}>
                 <TableCell className="capitalize">{String(item.action || "").replace(/_/g, " ")}</TableCell>
                 <TableCell>{formatTarget(item)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{item.actorUserId || "System"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{item.actorName || item.actorUserId || "System"}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{formatDateTime(item.timestamp)}</TableCell>
               </TableRow>
             ))}
@@ -4345,7 +4345,7 @@ function ReportsSection() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div><span className="text-muted-foreground">Active titles:</span> <strong>{inv.activeBooks}</strong></div>
             <div><span className="text-muted-foreground">Total stock units:</span> <strong>{inv.totalStockUnits}</strong></div>
-            <div><span className="text-muted-foreground">Stock value:</span> <strong>${inv.totalStockValue.toLocaleString()}</strong></div>
+            <div><span className="text-muted-foreground">Stock value:</span> <strong>£{inv.totalStockValue.toLocaleString()}</strong></div>
             <div><span className="text-muted-foreground">Out of stock:</span> <strong className={inv.outOfStockCount > 0 ? "text-red-600" : ""}>{inv.outOfStockCount}</strong></div>
           </div>
           {inv.lowStockBooks.length > 0 && (
@@ -4392,11 +4392,11 @@ function ReportsSection() {
             </div>
             <div className="space-y-1">
               <span className="text-muted-foreground">Revenue (verified)</span>
-              <div className="text-xl font-bold text-green-600">${pay.totalRevenue.toLocaleString()}</div>
+              <div className="text-xl font-bold text-green-600">£{pay.totalRevenue.toLocaleString()}</div>
             </div>
             <div className="space-y-1">
               <span className="text-muted-foreground">Pending revenue</span>
-              <div className="text-xl font-bold text-yellow-600">${pay.pendingRevenue.toLocaleString()}</div>
+              <div className="text-xl font-bold text-yellow-600">£{pay.pendingRevenue.toLocaleString()}</div>
             </div>
           </div>
           <div className="flex flex-wrap gap-3 mt-4">
