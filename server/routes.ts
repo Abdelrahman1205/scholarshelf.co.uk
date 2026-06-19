@@ -343,6 +343,7 @@ const CONTEXT_DEFAULT_PATHS: Record<string, string> = {
   admin: "/admin",
   teacher: "/teacher",
   parent: "/parent",
+  finance: "/finance",
 };
 
 const brandingUpload = multer({

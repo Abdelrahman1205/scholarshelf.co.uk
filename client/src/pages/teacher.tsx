@@ -137,7 +137,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
               <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
                 <Package className="h-5 w-5 text-amber-600" />
                 <div>
-                  <p className="text-sm font-medium">{pending} books awaiting confirmation</p>
+                  <p className="text-sm font-medium">{pending} {pending === 1 ? "book" : "books"} awaiting confirmation</p>
                   <p className="text-xs text-muted-foreground">Go to Book Distribution to confirm receipt</p>
                 </div>
               </div>
