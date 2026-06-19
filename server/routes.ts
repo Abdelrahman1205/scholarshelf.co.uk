@@ -5248,7 +5248,7 @@ export async function registerRoutes(
       // ── Class distribution report ──
       const classReport = classes.map((cls) => {
         const clsStudents = students.filter((s) => s.classId === cls.id);
-        const clsAllocations = allocations.filter((a: any) => a.classId === cls.id);
+        const clsAllocations = allocations.filter((a: any) => a.student?.classId === cls.id);
         const clsConfirmed = clsAllocations.filter((a: any) => a.status === "received");
         return {
           id: cls.id,
