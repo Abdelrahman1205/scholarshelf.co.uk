@@ -345,11 +345,37 @@ export const parentChildren = pgTable("parent_children", {
   parentIdentifier: text("parent_identifier").notNull(),
   studentId: varchar("student_id", { length: 36 }).references(() => students.id, { onDelete: "cascade" }).notNull(),
   linkedAt: timestamp("linked_at").defaultNow(),
+  // Multi-role: optional metadata for admin-created links
+  relationship: text("relationship"), // Mother | Father | Guardian | Other
+  addedByAdminId: varchar("added_by_admin_id", { length: 36 }),
+  schoolId: varchar("school_id", { length: 36 }),
 });
 
 export const insertParentChildSchema = createInsertSchema(parentChildren).omit({ id: true, linkedAt: true });
 export type InsertParentChild = z.infer<typeof insertParentChildSchema>;
 export type ParentChild = typeof parentChildren.$inferSelect;
+
+// === TEACHER PROFILES ===
+export const teacherProfiles = pgTable(
+  "teacher_profiles",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+    schoolId: varchar("school_id", { length: 36 }).notNull(),
+    department: text("department"),
+    subjects: text("subjects"), // JSON array stored as text
+    createdAt: timestamp("created_at").defaultNow(),
+    createdByAdminId: varchar("created_by_admin_id", { length: 36 }),
+  },
+  (table) => ({
+    userSchoolUnique: uniqueIndex("teacher_profiles_user_school_unique").on(table.userId, table.schoolId),
+    userIdx: index("teacher_profiles_user_id_idx").on(table.userId),
+  }),
+);
+
+export const insertTeacherProfileSchema = createInsertSchema(teacherProfiles).omit({ id: true, createdAt: true });
+export type InsertTeacherProfile = z.infer<typeof insertTeacherProfileSchema>;
+export type TeacherProfile = typeof teacherProfiles.$inferSelect;
 
 export const childBookBaskets = pgTable("child_book_baskets", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),

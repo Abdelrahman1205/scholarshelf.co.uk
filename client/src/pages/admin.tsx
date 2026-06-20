@@ -1961,8 +1961,376 @@ function SchoolsSection() {
 }
 
 
+// ─── USER DETAIL PANEL ─────────────────────────────────────────
+function UserDetailPanel({ userId }: { userId: string }) {
+  const { toast } = useToast();
+  const { user: currentUser } = useAuth();
+
+  const [addParentOpen, setAddParentOpen] = useState(false);
+  const [addTeacherOpen, setAddTeacherOpen] = useState(false);
+  const [linkChildOpen, setLinkChildOpen] = useState(false);
+  const [removeRoleOpen, setRemoveRoleOpen] = useState(false);
+  const [roleToRemove, setRoleToRemove] = useState("");
+  const [studentSearch, setStudentSearch] = useState("");
+  const [selectedStudentId, setSelectedStudentId] = useState("");
+  const [relationship, setRelationship] = useState("");
+  const [department, setDepartment] = useState("");
+  const [subjects, setSubjects] = useState("");
+
+  const { data: detail, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/users", userId],
+    queryFn: () => fetch(`/api/admin/users/${userId}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: !!userId,
+  });
+
+  const { data: studentResults = [] } = useQuery<any[]>({
+    queryKey: ["/api/admin/students/search", studentSearch],
+    queryFn: () => fetch(`/api/admin/students/search?q=${encodeURIComponent(studentSearch)}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: studentSearch.length >= 2,
+  });
+
+  const addParentRoleMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", `/api/admin/users/${userId}/roles/parent`, data),
+    onSuccess: () => { refetch(); setAddParentOpen(false); toast({ title: "Parent role added" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const addTeacherRoleMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", `/api/admin/users/${userId}/roles/teacher`, data),
+    onSuccess: () => { refetch(); setAddTeacherOpen(false); toast({ title: "Teacher role added" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const linkChildMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", `/api/admin/users/${userId}/link-child`, data),
+    onSuccess: () => { refetch(); setLinkChildOpen(false); setStudentSearch(""); setSelectedStudentId(""); toast({ title: "Child linked" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const removeRoleMutation = useMutation({
+    mutationFn: (role: string) => apiRequest("DELETE", `/api/admin/users/${userId}/roles/${role}`),
+    onSuccess: () => { refetch(); setRemoveRoleOpen(false); toast({ title: "Role removed" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const suspendMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/admin/users/${userId}/suspend`),
+    onSuccess: () => { refetch(); toast({ title: "User suspended" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/admin/users/${userId}/reactivate`),
+    onSuccess: () => { refetch(); toast({ title: "User reactivated" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (!detail || detail.message) return <div className="text-center text-muted-foreground py-16">User not found.</div>;
+
+  const primaryRole = normalizeRole(detail.role);
+  const secondaryRoles: string[] = detail.secondaryRoles || [];
+  const allRoles = [primaryRole, ...secondaryRoles];
+  const isParent = allRoles.includes("parent");
+  const isTeacher = allRoles.includes("teacher");
+  const canAddParent = !isParent;
+  const canAddTeacher = !isTeacher;
+  const isSuspended = detail.status === "disabled";
+  const isCurrentUser = currentUser?.id === detail.id;
+
+  const ROLE_COLORS: Record<string, string> = {
+    parent: "bg-purple-100 text-purple-700 border-purple-200",
+    teacher: "bg-blue-100 text-blue-700 border-blue-200",
+    school_admin: "bg-orange-100 text-orange-700 border-orange-200",
+    finance: "bg-green-100 text-green-700 border-green-200",
+    platform_owner: "bg-red-100 text-red-700 border-red-200",
+  };
+
+  return (
+    <div className="space-y-5">
+      <button onClick={() => navigateTo("/admin/users")} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <ArrowLeft className="w-4 h-4" /> Back to Users
+      </button>
+
+      {/* Header card */}
+      <Card className="border-border/50 shadow-sm">
+        <CardContent className="pt-6">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h2 className="text-xl font-heading font-bold">{detail.name}</h2>
+                <Badge variant="outline" className={isSuspended ? "bg-red-100 text-red-700 border-red-200" : "bg-emerald-100 text-emerald-700 border-emerald-200"}>
+                  {isSuspended ? "Suspended" : "Active"}
+                </Badge>
+              </div>
+              <p className="text-muted-foreground text-sm">@{detail.username}{detail.email ? ` · ${detail.email}` : ""}</p>
+              {detail.schoolName && <p className="text-xs text-muted-foreground">{formatSchoolDisplay(detail)}</p>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge className={cn("border text-xs", ROLE_COLORS[primaryRole] || "bg-muted text-muted-foreground")}>
+                {roleLabel(detail.role)} (primary)
+              </Badge>
+              {secondaryRoles.map((r) => (
+                <Badge key={r} variant="outline" className={cn("border text-xs", ROLE_COLORS[r] || "")}>
+                  {roleLabel(r)} +secondary
+                </Badge>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border/50">
+            {canAddParent && (
+              <Button size="sm" variant="outline" onClick={() => { setStudentSearch(""); setSelectedStudentId(""); setRelationship(""); setAddParentOpen(true); }}>
+                <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Parent Role
+              </Button>
+            )}
+            {canAddTeacher && (
+              <Button size="sm" variant="outline" onClick={() => { setDepartment(""); setSubjects(""); setAddTeacherOpen(true); }}>
+                <GraduationCap className="w-3.5 h-3.5 mr-1.5" /> Add Teacher Role
+              </Button>
+            )}
+            {isParent && (
+              <Button size="sm" variant="outline" onClick={() => { setStudentSearch(""); setSelectedStudentId(""); setRelationship(""); setLinkChildOpen(true); }}>
+                <Users className="w-3.5 h-3.5 mr-1.5" /> Link Child
+              </Button>
+            )}
+            {secondaryRoles.length > 0 && (
+              <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => { setRoleToRemove(secondaryRoles[0]); setRemoveRoleOpen(true); }}>
+                <X className="w-3.5 h-3.5 mr-1.5" /> Remove {roleLabel(secondaryRoles[0])} Role
+              </Button>
+            )}
+            {!isCurrentUser && !isProtectedPlatformOwner(detail.role) && (
+              isSuspended
+                ? <Button size="sm" variant="outline" onClick={() => reactivateMutation.mutate()} disabled={reactivateMutation.isPending}>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Reactivate
+                  </Button>
+                : <Button size="sm" variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200"
+                    onClick={() => suspendMutation.mutate()} disabled={suspendMutation.isPending}>
+                    <Ban className="w-3.5 h-3.5 mr-1.5" /> Suspend
+                  </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Linked children */}
+      {isParent && (
+        <Card className="border-border/50 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><Users className="w-4 h-4" /> Linked Children</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {detail.parentLinks?.length > 0 ? (
+              <div className="divide-y divide-border/30">
+                {detail.parentLinks.map((link: any, i: number) => (
+                  <div key={link.id || i} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
+                    <div>
+                      <p className="text-sm font-medium">{link.student?.name || "Unknown Student"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {link.student?.studentCode || ""}
+                        {link.relationship ? ` · ${link.relationship}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-xs">{link.student?.className || "—"}</Badge>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No children linked yet. Use "Link Child" above.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Assigned classes (teacher) */}
+      {isTeacher && (
+        <Card className="border-border/50 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><GraduationCap className="w-4 h-4" /> Teacher Profile</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {detail.teacherProfile && (
+              <div className="text-sm space-y-1">
+                {detail.teacherProfile.department && <p><span className="text-muted-foreground">Department:</span> {detail.teacherProfile.department}</p>}
+                {detail.teacherProfile.subjects && (() => {
+                  try { const s = JSON.parse(detail.teacherProfile.subjects); return s.length > 0 ? <p><span className="text-muted-foreground">Subjects:</span> {s.join(", ")}</p> : null; } catch { return null; }
+                })()}
+              </div>
+            )}
+            {detail.assignedClasses?.length > 0 ? (
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Assigned classes</p>
+                <div className="flex flex-wrap gap-2">
+                  {detail.assignedClasses.map((cls: any) => <Badge key={cls.id} variant="secondary">{cls.name}</Badge>)}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No classes assigned yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Add Parent Role modal */}
+      <Dialog open={addParentOpen} onOpenChange={setAddParentOpen}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Add Parent Role</DialogTitle>
+            <DialogDescription>Grant {detail.name} parent-level access so they can view books and payments for their linked children.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Relationship (optional)</Label>
+              <Select value={relationship} onValueChange={setRelationship}>
+                <SelectTrigger><SelectValue placeholder="Select relationship..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Mother">Mother</SelectItem>
+                  <SelectItem value="Father">Father</SelectItem>
+                  <SelectItem value="Guardian">Guardian</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Link a child now (optional)</Label>
+              <Input placeholder="Type student name or code to search..." value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} />
+              {studentSearch.length >= 2 && studentResults.length > 0 && (
+                <div className="border rounded-md divide-y max-h-40 overflow-y-auto bg-background">
+                  {studentResults.map((s: any) => (
+                    <button key={s.id} type="button"
+                      className={cn("w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors", selectedStudentId === s.id && "bg-primary/10 font-medium")}
+                      onClick={() => setSelectedStudentId(s.id)}>
+                      {s.name} <span className="text-muted-foreground text-xs ml-1">{s.studentCode} · {s.className}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedStudentId && <p className="text-xs text-emerald-600">✓ {studentResults.find((s: any) => s.id === selectedStudentId)?.name} selected</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAddParentOpen(false)}>Cancel</Button>
+            <Button onClick={() => addParentRoleMutation.mutate({ relationship: relationship || undefined, studentId: selectedStudentId || undefined })} disabled={addParentRoleMutation.isPending}>
+              {addParentRoleMutation.isPending ? "Adding..." : "Add Parent Role"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Teacher Role modal */}
+      <Dialog open={addTeacherOpen} onOpenChange={setAddTeacherOpen}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Add Teacher Role</DialogTitle>
+            <DialogDescription>Grant {detail.name} teacher-level access so they can manage class allocations.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Department (optional)</Label>
+              <Input placeholder="e.g. Mathematics" value={department} onChange={(e) => setDepartment(e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label>Subjects (optional, comma-separated)</Label>
+              <Input placeholder="e.g. Maths, Physics" value={subjects} onChange={(e) => setSubjects(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAddTeacherOpen(false)}>Cancel</Button>
+            <Button onClick={() => addTeacherRoleMutation.mutate({
+              department: department || undefined,
+              subjects: subjects ? subjects.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+            })} disabled={addTeacherRoleMutation.isPending}>
+              {addTeacherRoleMutation.isPending ? "Adding..." : "Add Teacher Role"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Link Child modal */}
+      <Dialog open={linkChildOpen} onOpenChange={setLinkChildOpen}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Link Child</DialogTitle>
+            <DialogDescription>Search for a student and link them to {detail.name}.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Search student</Label>
+              <Input placeholder="Name or student code..." value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} />
+              {studentSearch.length >= 2 && studentResults.length > 0 && (
+                <div className="border rounded-md divide-y max-h-40 overflow-y-auto bg-background">
+                  {studentResults.map((s: any) => (
+                    <button key={s.id} type="button"
+                      className={cn("w-full text-left px-3 py-2 text-sm hover:bg-muted/50", selectedStudentId === s.id && "bg-primary/10 font-medium")}
+                      onClick={() => setSelectedStudentId(s.id)}>
+                      {s.name} <span className="text-muted-foreground text-xs ml-1">{s.studentCode} · {s.className}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedStudentId && <p className="text-xs text-emerald-600">✓ {studentResults.find((s: any) => s.id === selectedStudentId)?.name} selected</p>}
+            </div>
+            <div className="grid gap-2">
+              <Label>Relationship (optional)</Label>
+              <Select value={relationship} onValueChange={setRelationship}>
+                <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Mother">Mother</SelectItem>
+                  <SelectItem value="Father">Father</SelectItem>
+                  <SelectItem value="Guardian">Guardian</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setLinkChildOpen(false)}>Cancel</Button>
+            <Button onClick={() => linkChildMutation.mutate({ studentId: selectedStudentId, relationship: relationship || undefined })}
+              disabled={linkChildMutation.isPending || !selectedStudentId}>
+              {linkChildMutation.isPending ? "Linking..." : "Link Child"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Role dialog */}
+      <AlertDialog open={removeRoleOpen} onOpenChange={setRemoveRoleOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {roleLabel(roleToRemove)} Role</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove the {roleLabel(roleToRemove)} secondary role from {detail.name}?
+              Their primary role ({roleLabel(detail.role)}) remains unchanged.
+              {roleToRemove === "parent" && " Existing child links will be retained."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => removeRoleMutation.mutate(roleToRemove)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remove Role
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 // ─── USERS ─────────────────────────────────────────────────────
 function UsersSection() {
+  const [_path, setPath] = useState(window.location.search);
+  useEffect(() => {
+    const handler = () => setPath(window.location.search);
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
+  const detailUserId = new URLSearchParams(window.location.search).get("id");
+  if (detailUserId) return <UserDetailPanel userId={detailUserId} />;
+  return <UsersList />;
+}
+
+function UsersList() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
   const requesterIsOwner = normalizeRole(currentUser?.role) === "platform_owner";
@@ -2090,9 +2458,14 @@ function UsersSection() {
                 <TableCell className="text-muted-foreground">{u.username}</TableCell>
                 <TableCell className="text-muted-foreground">{u.email || "—"}</TableCell>
                 <TableCell>
-                  <Badge variant={isProtectedPlatformOwner(u.role) ? "default" : normalizeRole(u.role) === "teacher" ? "secondary" : "outline"}>
-                    {roleLabel(u.role)}
-                  </Badge>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant={isProtectedPlatformOwner(u.role) ? "default" : normalizeRole(u.role) === "teacher" ? "secondary" : "outline"}>
+                      {roleLabel(u.role)}
+                    </Badge>
+                    {(u.secondaryRoles || []).map((r: string) => (
+                      <Badge key={r} variant="outline" className="text-xs border-dashed opacity-80">{roleLabel(r)}</Badge>
+                    ))}
+                  </div>
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={u.status === "active" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : ""}>
@@ -2104,6 +2477,9 @@ function UsersSection() {
                 <TableCell className="text-muted-foreground text-xs">{formatDateTime(u.createdAt)}</TableCell>
                 <TableCell className="text-muted-foreground text-xs">{formatDateTime(u.lastLoginAt)}</TableCell>
                 <TableCell className="text-right space-x-1">
+                  <Button variant="ghost" size="sm" title="View details" onClick={() => navigateTo(`/admin/users?id=${u.id}`)}>
+                    <Eye className="w-4 h-4" />
+                  </Button>
                   {!isProtectedPlatformOwner(u.role) && (
                     <Button variant="ghost" size="sm" onClick={() => {
                       setSelectedUser(u);

@@ -330,6 +330,16 @@ export interface IStorage {
   adminConfirmDistribution(allocationId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
   updateOrderStatus(paymentId: string, orderStatus: string, schoolId?: string | null): Promise<schema.BookPayment>;
 
+  // Multi-role user management
+  getSecondaryRoles(userId: string): Promise<string[]>;
+  addSecondaryRole(userId: string, role: string): Promise<void>;
+  removeSecondaryRole(userId: string, role: string): Promise<void>;
+  getTeacherProfile(userId: string, schoolId: string): Promise<schema.TeacherProfile | undefined>;
+  upsertTeacherProfile(profile: schema.InsertTeacherProfile): Promise<schema.TeacherProfile>;
+  addParentStudentLink(opts: { parentIdentifier: string; studentId: string; relationship?: string; addedByAdminId?: string; schoolId?: string }): Promise<schema.ParentChild & { alreadyLinked: boolean }>;
+  getUserWithDetail(userId: string, schoolId: string): Promise<any>;
+  searchStudentsForAdmin(query: string, schoolId: string): Promise<any[]>;
+
   // Users (not school-scoped in interface — filtered in routes)
   getUsers(): Promise<schema.User[]>;
   getUserByUsername(username: string): Promise<schema.User | undefined>;
@@ -1860,6 +1870,155 @@ class DatabaseStorage implements IStorage {
       if (!existing) return;
       memoryUsers.set(id, { ...existing, lastLoginAt: now(), updatedAt: now() });
     }
+  }
+
+  // === MULTI-ROLE USER MANAGEMENT ===
+
+  async getSecondaryRoles(userId: string): Promise<string[]> {
+    const perms = await this.getUserPermissions(userId);
+    return perms
+      .filter((p) => p.startsWith("SECONDARY_ROLE:"))
+      .map((p) => p.replace("SECONDARY_ROLE:", ""));
+  }
+
+  async addSecondaryRole(userId: string, role: string): Promise<void> {
+    const permission = `SECONDARY_ROLE:${role}`;
+    try {
+      await getDb()
+        .insert(schema.userPermissions)
+        .values({ userId, permission } as any)
+        .onConflictDoNothing();
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const set = memoryUserPermissions.get(userId) || new Set<string>();
+      set.add(permission);
+      memoryUserPermissions.set(userId, set);
+    }
+  }
+
+  async removeSecondaryRole(userId: string, role: string): Promise<void> {
+    const permission = `SECONDARY_ROLE:${role}`;
+    try {
+      await getDb()
+        .delete(schema.userPermissions)
+        .where(and(eq(schema.userPermissions.userId, userId), eq(schema.userPermissions.permission, permission)));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const set = memoryUserPermissions.get(userId);
+      if (set) set.delete(permission);
+    }
+  }
+
+  async getTeacherProfile(userId: string, schoolId: string): Promise<schema.TeacherProfile | undefined> {
+    try {
+      const [profile] = await getDb()
+        .select()
+        .from(schema.teacherProfiles)
+        .where(and(eq(schema.teacherProfiles.userId, userId), eq(schema.teacherProfiles.schoolId, schoolId)));
+      return profile;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return undefined;
+    }
+  }
+
+  async upsertTeacherProfile(profile: schema.InsertTeacherProfile): Promise<schema.TeacherProfile> {
+    try {
+      const existing = await this.getTeacherProfile(profile.userId, profile.schoolId);
+      if (existing) {
+        const [updated] = await getDb()
+          .update(schema.teacherProfiles)
+          .set({ department: profile.department, subjects: profile.subjects })
+          .where(eq(schema.teacherProfiles.id, existing.id))
+          .returning();
+        return updated;
+      }
+      const [created] = await getDb()
+        .insert(schema.teacherProfiles)
+        .values(profile as any)
+        .returning();
+      return created;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      throw new Error("DB unavailable");
+    }
+  }
+
+  async addParentStudentLink(opts: {
+    parentIdentifier: string;
+    studentId: string;
+    relationship?: string;
+    addedByAdminId?: string;
+    schoolId?: string;
+  }): Promise<schema.ParentChild & { alreadyLinked: boolean }> {
+    try {
+      const existing = await getDb()
+        .select()
+        .from(schema.parentChildren)
+        .where(
+          and(
+            eq(schema.parentChildren.parentIdentifier, opts.parentIdentifier),
+            eq(schema.parentChildren.studentId, opts.studentId),
+          ),
+        );
+      if (existing.length > 0) {
+        return { ...existing[0], alreadyLinked: true };
+      }
+      const [created] = await getDb()
+        .insert(schema.parentChildren)
+        .values({
+          parentIdentifier: opts.parentIdentifier,
+          studentId: opts.studentId,
+          relationship: opts.relationship ?? null,
+          addedByAdminId: opts.addedByAdminId ?? null,
+          schoolId: opts.schoolId ?? null,
+        } as any)
+        .returning();
+      return { ...created, alreadyLinked: false };
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      throw new Error("DB unavailable");
+    }
+  }
+
+  async getUserWithDetail(userId: string, schoolId: string): Promise<any> {
+    const user = await this.getUserById(userId);
+    if (!user) return null;
+
+    const [secondaryRoles, teacherProfile, parentLinks, allClasses] = await Promise.all([
+      this.getSecondaryRoles(userId),
+      this.getTeacherProfile(userId, schoolId),
+      user.email ? this.getParentChildren(user.email) : Promise.resolve([]),
+      this.getClasses(schoolId),
+    ]);
+
+    const assignedClasses = allClasses.filter((c) => c.teacherId === userId);
+
+    // School-scoped parent links only
+    const schoolParentLinks = parentLinks.filter(
+      (link) => !link.student?.schoolId || link.student.schoolId === schoolId,
+    );
+
+    return {
+      ...user,
+      secondaryRoles,
+      teacherProfile: teacherProfile ?? null,
+      parentLinks: schoolParentLinks,
+      assignedClasses,
+    };
+  }
+
+  async searchStudentsForAdmin(query: string, schoolId: string): Promise<any[]> {
+    const students = await this.getStudents(schoolId);
+    const q = query.toLowerCase().trim();
+    if (!q) return students.slice(0, 20);
+    return students
+      .filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          (s.studentCode?.toLowerCase().includes(q) ?? false),
+      )
+      .slice(0, 20);
   }
 
   // === INVITES ===

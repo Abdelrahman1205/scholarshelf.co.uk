@@ -3077,6 +3077,32 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Role is not allowed for school-level administrators." });
       }
 
+      // Duplicate email detection: if email already exists with a compatible role, suggest merging
+      if (email) {
+        const emailUser = await storage.getUserByEmail(email.toLowerCase().trim());
+        if (emailUser) {
+          const existingRole = resolveRole(emailUser.role);
+          const secondaryRoles = await storage.getSecondaryRoles(emailUser.id);
+          const allRoles = [existingRole, ...secondaryRoles];
+          if (!allRoles.includes(normalizedRole as any)) {
+            const canMerge =
+              (normalizedRole === "teacher" && allRoles.includes("parent")) ||
+              (normalizedRole === "parent" && allRoles.includes("teacher")) ||
+              (normalizedRole === "teacher" && existingRole === "parent") ||
+              (normalizedRole === "parent" && existingRole === "teacher");
+            if (canMerge) {
+              return res.status(409).json({
+                message: `An account with email ${email} already exists as ${existingRole}. Add ${normalizedRole} role to this account?`,
+                existingUserId: emailUser.id,
+                existingUserName: emailUser.name,
+                existingRole,
+                suggestedAction: "merge_role",
+              });
+            }
+          }
+        }
+      }
+
       const hash = await bcrypt.hash(password, 12);
       const user = await storage.createUser({ username, passwordHash: hash, name, role: normalizedRole, email, status: "active", schoolId: sid });
       if (normalizedRole === "it_personnel" && Array.isArray(brandingPermissions)) {
@@ -3167,6 +3193,298 @@ export async function registerRoutes(
 
   app.delete("/api/users/:id", requireRole(...ADMIN_UI_ROLES), deleteAdminUser);
   app.delete("/api/admin/users/:id", requireRole(...ADMIN_UI_ROLES), deleteAdminUser);
+
+  // === MULTI-ROLE USER MANAGEMENT ===
+
+  // GET /api/admin/users/:userId — full user detail with roles, profiles, links, classes
+  app.get("/api/admin/users/:userId", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+      if (!(await canManageUser(req, { id: userId, schoolId: sid, role: "" }))) {
+        // Fallback: just get the user and check school
+        const u = await storage.getUserById(userId);
+        if (!u || u.schoolId !== sid) return res.status(404).json({ message: "User not found" });
+      }
+      const detail = await storage.getUserWithDetail(userId, sid);
+      if (!detail) return res.status(404).json({ message: "User not found" });
+      const { passwordHash: _ph, ...safe } = detail;
+      res.json(safe);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET /api/admin/students/search — search students for the admin's school
+  app.get("/api/admin/students/search", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      const results = await storage.searchStudentsForAdmin(q, sid);
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/admin/users/:userId/roles/parent — add parent role to an existing user
+  app.post("/api/admin/users/:userId/roles/parent", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+      const { relationship, studentId } = req.body as { relationship?: string; studentId?: string };
+
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId !== sid) return res.status(403).json({ message: "User belongs to a different school" });
+      if (!targetUser.email) return res.status(400).json({ message: "User must have an email address to receive a parent role" });
+
+      const primaryRole = resolveRole(targetUser.role);
+      const secondaryRoles = await storage.getSecondaryRoles(userId);
+
+      if (primaryRole === "parent" || secondaryRoles.includes("parent")) {
+        return res.status(409).json({ message: "User already has the parent role" });
+      }
+
+      // Add secondary role
+      await storage.addSecondaryRole(userId, "parent");
+
+      // If a student was specified, create the link immediately
+      let linkResult: any = null;
+      if (studentId) {
+        const validStudent = await storage.getStudentById(studentId, sid);
+        if (!validStudent) return res.status(400).json({ message: "Student not found in this school" });
+
+        linkResult = await storage.addParentStudentLink({
+          parentIdentifier: targetUser.email!,
+          studentId,
+          relationship: relationship || undefined,
+          addedByAdminId: req.session.userId,
+          schoolId: sid,
+        });
+      }
+
+      await storage.createAuditLog({
+        action: "USER_ROLE_ADDED",
+        userId: req.session.userId!,
+        target: `user:${userId}`,
+        metadata: JSON.stringify({ role: "parent", addedTo: targetUser.username, schoolId: sid }),
+      });
+      if (studentId && linkResult) {
+        await storage.createAuditLog({
+          action: "ADMIN_LINKED_TEACHER_AS_PARENT",
+          userId: req.session.userId!,
+          target: `user:${userId}`,
+          metadata: JSON.stringify({ studentId, relationship, schoolId: sid }),
+        });
+      }
+
+      const detail = await storage.getUserWithDetail(userId, sid);
+      const { passwordHash: _ph, ...safe } = detail;
+      res.json({ message: "Parent role added successfully", user: safe, link: linkResult });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/admin/users/:userId/roles/teacher — add teacher role to an existing user
+  app.post("/api/admin/users/:userId/roles/teacher", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+      const { department, subjects, classIds } = req.body as {
+        department?: string;
+        subjects?: string[];
+        classIds?: string[];
+      };
+
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId !== sid) return res.status(403).json({ message: "User belongs to a different school" });
+
+      const primaryRole = resolveRole(targetUser.role);
+      const secondaryRoles = await storage.getSecondaryRoles(userId);
+
+      if (primaryRole === "teacher" || secondaryRoles.includes("teacher")) {
+        return res.status(409).json({ message: "User already has the teacher role" });
+      }
+
+      // Add secondary role
+      await storage.addSecondaryRole(userId, "teacher");
+
+      // Create teacher profile
+      await storage.upsertTeacherProfile({
+        userId,
+        schoolId: sid,
+        department: department || null,
+        subjects: subjects ? JSON.stringify(subjects) : null,
+        createdByAdminId: req.session.userId,
+      });
+
+      // Assign to specified classes
+      if (classIds && classIds.length > 0) {
+        const allClasses = await storage.getClasses(sid);
+        for (const classId of classIds) {
+          const cls = allClasses.find((c) => c.id === classId);
+          if (cls && cls.schoolId === sid) {
+            await storage.updateClass(classId, { teacherId: userId });
+          }
+        }
+      }
+
+      await storage.createAuditLog({
+        action: "USER_ROLE_ADDED",
+        userId: req.session.userId!,
+        target: `user:${userId}`,
+        metadata: JSON.stringify({ role: "teacher", addedTo: targetUser.username, department, schoolId: sid }),
+      });
+      await storage.createAuditLog({
+        action: "TEACHER_PROFILE_CREATED",
+        userId: req.session.userId!,
+        target: `user:${userId}`,
+        metadata: JSON.stringify({ department, subjects, schoolId: sid }),
+      });
+
+      const detail = await storage.getUserWithDetail(userId, sid);
+      const { passwordHash: _ph, ...safe } = detail;
+      res.json({ message: "Teacher role added successfully", user: safe });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/admin/users/:userId/link-child — link a child to an existing parent/multi-role user
+  app.post("/api/admin/users/:userId/link-child", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+      const { studentId, relationship } = req.body as { studentId: string; relationship?: string };
+      if (!studentId) return res.status(400).json({ message: "studentId is required" });
+
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId !== sid) return res.status(403).json({ message: "User belongs to a different school" });
+      if (!targetUser.email) return res.status(400).json({ message: "User must have an email to be linked to a student" });
+
+      // Verify user has parent role (primary or secondary)
+      const primaryRole = resolveRole(targetUser.role);
+      const secondaryRoles = await storage.getSecondaryRoles(userId);
+      if (primaryRole !== "parent" && !secondaryRoles.includes("parent")) {
+        return res.status(400).json({ message: "User does not have a parent role. Add parent role first." });
+      }
+
+      // Verify student belongs to this school
+      const students = await storage.getStudents(sid);
+      const validStudent = students.find((s) => s.id === studentId);
+      if (!validStudent) return res.status(400).json({ message: "Student not found in this school" });
+
+      const link = await storage.addParentStudentLink({
+        parentIdentifier: targetUser.email!,
+        studentId,
+        relationship: relationship || undefined,
+        addedByAdminId: req.session.userId,
+        schoolId: sid,
+      });
+
+      await storage.createAuditLog({
+        action: "PARENT_STUDENT_LINK_CREATED",
+        userId: req.session.userId!,
+        target: `user:${userId}`,
+        metadata: JSON.stringify({ studentId, relationship, alreadyLinked: link.alreadyLinked, schoolId: sid }),
+      });
+
+      if (link.alreadyLinked) {
+        return res.status(200).json({ message: "Child was already linked to this parent", link });
+      }
+      res.status(201).json({ message: "Child linked successfully", link });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // DELETE /api/admin/users/:userId/roles/:role — remove a secondary role
+  app.delete("/api/admin/users/:userId/roles/:role", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+      const role = req.params.role as string;
+
+      if (!["parent", "teacher"].includes(role)) {
+        return res.status(400).json({ message: "Only parent and teacher secondary roles can be removed" });
+      }
+
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId !== sid) return res.status(403).json({ message: "User belongs to a different school" });
+
+      const secondaryRoles = await storage.getSecondaryRoles(userId);
+      if (!secondaryRoles.includes(role)) {
+        return res.status(404).json({ message: `User does not have ${role} as a secondary role` });
+      }
+
+      await storage.removeSecondaryRole(userId, role);
+
+      await storage.createAuditLog({
+        action: "USER_ROLE_REMOVED",
+        userId: req.session.userId!,
+        target: `user:${userId}`,
+        metadata: JSON.stringify({ role, removedFrom: targetUser.username, schoolId: sid }),
+      });
+
+      res.json({ message: `${role} role removed successfully` });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/admin/users/:userId/suspend — suspend a user
+  app.post("/api/admin/users/:userId/suspend", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId !== sid) return res.status(403).json({ message: "User belongs to a different school" });
+      if (req.session.userId === userId) return res.status(403).json({ message: "You cannot suspend your own account" });
+
+      const updated = await storage.updateUser(userId, { status: "disabled" });
+      await storage.createAuditLog({
+        action: "USER_SUSPENDED",
+        userId: req.session.userId!,
+        target: `user:${userId}`,
+        metadata: JSON.stringify({ username: targetUser.username, schoolId: sid }),
+      });
+      res.json({ message: "User suspended", user: updated });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // POST /api/admin/users/:userId/reactivate — reactivate a suspended user
+  app.post("/api/admin/users/:userId/reactivate", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const userId = routeParam(req.params.userId);
+
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId !== sid) return res.status(403).json({ message: "User belongs to a different school" });
+
+      const updated = await storage.updateUser(userId, { status: "active" });
+      res.json({ message: "User reactivated", user: updated });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
 
   // === INVITE MANAGEMENT (admin only, school-scoped) ===
   app.post("/api/invites", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
@@ -4776,7 +5094,7 @@ export async function registerRoutes(
         schools.map((school) => [school.id, { name: school.name, code: school.code }]),
       );
       const userById = new Map<string, { username: string; email: string }>(
-        allUsers.map((u) => [u.id, { username: u.username, email: u.email }]),
+        allUsers.map((u) => [u.id, { username: u.username, email: u.email ?? "" }]),
       );
       const ownerActions = new Set([
         "school_created",
