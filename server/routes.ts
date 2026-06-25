@@ -494,6 +494,12 @@ async function getUserAccessProfile(user: { id: string; role: string; email: str
 
   addContext(primaryRole);
 
+  // Check explicit secondary role grants (admin-assigned via user_permissions)
+  const secondaryRoles = await storage.getSecondaryRoles(user.id);
+  for (const role of secondaryRoles) {
+    addContext(role);
+  }
+
   if (normalizedEmail) {
     const parentLinks = await storage.getParentChildren(user.email!);
     for (const link of parentLinks) {
@@ -550,6 +556,7 @@ async function buildAuthUserResponse(req: Request, user: { id: string; username:
     assignedClassIds: profile.assignedClassIds,
     linkedStudentIds: profile.linkedStudentIds,
   };
+  base.secondaryRoles = await storage.getSecondaryRoles(user.id);
   if (isPlatformOwnerRole(user.role)) {
     base.supportMode = {
       active: !!req.session.supportSchoolId,
