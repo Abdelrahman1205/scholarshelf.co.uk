@@ -98,7 +98,7 @@ function FinanceDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Finance Dashboard</h1>
+        <h1 className="text-xl font-bold tracking-tight">Finance Dashboard</h1>
         <p className="text-muted-foreground mt-1">Payment overview and financial health of your school.</p>
       </div>
 
@@ -248,7 +248,7 @@ function PaymentReviewSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Payment Review</h1>
+        <h1 className="text-xl font-bold tracking-tight">Payment Review</h1>
         <p className="text-muted-foreground mt-1">Review, confirm, reject, or flag payment submissions.</p>
       </div>
 
@@ -279,7 +279,7 @@ function PaymentReviewSection() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <CreditCard className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Payments Found</h3>
+            <h3 className="text-base font-semibold text-muted-foreground">No Payments Found</h3>
             <p className="text-sm text-muted-foreground mt-1">
               {searchQuery || statusFilter !== "all" ? "Try adjusting your filters." : "No payment records yet."}
             </p>
@@ -451,7 +451,7 @@ function ReportsSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Financial Reports</h1>
+        <h1 className="text-xl font-bold tracking-tight">Financial Reports</h1>
         <p className="text-muted-foreground mt-1">Revenue analysis and payment performance.</p>
       </div>
 

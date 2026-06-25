@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
-  Link as LinkIcon, History, ClipboardList, Menu, ChevronRight,
+  Link as LinkIcon, History, ClipboardList, Menu, X,
   ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -38,12 +38,11 @@ interface NotificationSummary {
   items: NotificationItem[];
 }
 
-const roleConfig: Record<string, { label: string; color: string; navItems: NavItem[] }> = {
+const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
   owner: {
-    label: "BytHub Platform Owner",
-    color: "text-amber-600",
+    label: "Platform",
     navItems: [
-      { label: "Owner Dashboard", href: "/admin/owner", icon: LayoutDashboard },
+      { label: "Dashboard", href: "/admin/owner", icon: LayoutDashboard },
       { label: "Schools", href: "/admin/schools", icon: Settings },
       { label: "Pending Setups", href: "/admin/pending-setups", icon: ClipboardList },
       { label: "Admin Invites", href: "/admin/admin-invites", icon: UserPlus },
@@ -52,12 +51,10 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
       { label: "Settings", href: "/admin/owner-settings", icon: Settings },
     ],
   },
-  // Support mode: owner operating inside a specific school
   owner_support: {
-    label: "Support Mode",
-    color: "text-amber-600",
+    label: "School",
     navItems: [
-      { label: "School Dashboard", href: "/admin", icon: LayoutDashboard },
+      { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
       { label: "Books", href: "/admin/books", icon: BookOpen },
       { label: "Book Levels", href: "/admin/levels", icon: Layers },
       { label: "Classes", href: "/admin/classes", icon: GraduationCap },
@@ -75,7 +72,6 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
   },
   admin: {
     label: "School Admin",
-    color: "text-blue-600",
     navItems: [
       { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
       { label: "Books", href: "/admin/books", icon: BookOpen },
@@ -95,7 +91,6 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
   },
   teacher: {
     label: "Teacher",
-    color: "text-emerald-600",
     navItems: [
       { label: "Dashboard", href: "/teacher", icon: LayoutDashboard },
       { label: "Book Distribution", href: "/teacher/distribution", icon: Package },
@@ -105,7 +100,6 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
   },
   finance: {
     label: "Finance",
-    color: "text-cyan-600",
     navItems: [
       { label: "Dashboard", href: "/finance", icon: LayoutDashboard },
       { label: "Payment Review", href: "/finance/payments", icon: CreditCard },
@@ -113,8 +107,7 @@ const roleConfig: Record<string, { label: string; color: string; navItems: NavIt
     ],
   },
   parent: {
-    label: "Parent",
-    color: "text-violet-600",
+    label: "Parent Portal",
     navItems: [
       { label: "Dashboard", href: "/parent", icon: LayoutDashboard },
       { label: "Link Child", href: "/parent/link", icon: LinkIcon },
@@ -149,7 +142,6 @@ export default function Layout({ children }: LayoutProps) {
   const availableContexts = user?.availableContexts || [];
   const activeContext = user?.activeContext || user?.role;
 
-  // Determine effective role for nav config
   const effectiveRole = inSupportMode
     ? "owner_support"
     : isOwner
@@ -170,7 +162,6 @@ export default function Layout({ children }: LayoutProps) {
 
   const adminSetupComplete = !!setupStatus?.operationalSetupCompleted && !!setupStatus?.schoolActive;
 
-  // Fetch branding for any school-scoped role (admin, teacher, parent, owner_support)
   const shouldFetchBranding = effectiveRole === "admin" || effectiveRole === "owner_support" || effectiveRole === "teacher" || effectiveRole === "parent" || effectiveRole === "finance";
   const { data: schoolBranding } = useQuery<any>({
     queryKey: ["/api/school/branding"],
@@ -225,13 +216,12 @@ export default function Layout({ children }: LayoutProps) {
   })();
 
   const initials = user?.name
-    ? user.name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
+    ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : "??";
+
+  const totalNotifications = notificationSummary?.totalUnread || 0;
+  const notificationItems = notificationSummary?.items || [];
+  const primaryNotificationHref = notificationItems[0]?.href;
 
   async function handleLogout() {
     await logout();
@@ -248,136 +238,80 @@ export default function Layout({ children }: LayoutProps) {
     navigateTo(defaultPath);
   }
 
-  const totalNotifications = notificationSummary?.totalUnread || 0;
-  const notificationItems = notificationSummary?.items || [];
-  const primaryNotificationHref = notificationItems[0]?.href;
-
-  const SupportBanner = () => {
-    if (!inSupportMode) return null;
-    return (
-      <div className="bg-amber-500 text-white px-4 py-2.5 flex items-center justify-between gap-3 shadow-md z-50">
-        <div className="flex items-center gap-2 min-w-0">
-          <ShieldAlert className="h-4 w-4 flex-shrink-0" />
-          <span className="text-sm font-semibold truncate">
-            Support Mode: Viewing {user?.supportMode?.schoolName || "School"}
-          </span>
-        </div>
-        <Button
-          size="sm"
-          variant="secondary"
-          className="bg-white/20 hover:bg-white/30 text-white border-white/30 flex-shrink-0"
-          onClick={handleExitSupport}
-          disabled={isExitingSupport}
-        >
-          <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
-          {isExitingSupport ? "Exiting..." : "Exit Support Mode"}
-        </Button>
-      </div>
-    );
-  };
+  // Close mobile nav on location change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location]);
 
   const SidebarContent = () => (
-    <>
-      <div className="h-16 flex items-center px-5 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
+    <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
+      {/* Logo / School branding */}
+      <div className="flex items-center gap-3 h-16 px-5 border-b border-sidebar-border flex-shrink-0">
         {schoolBranding?.logoUrl ? (
-          <img src={schoolBranding.logoUrl} alt="School logo" className="h-9 w-9 rounded-lg object-contain mr-3 flex-shrink-0" />
+          <img
+            src={schoolBranding.logoUrl}
+            alt="School logo"
+            className="h-8 w-8 rounded-md object-contain flex-shrink-0 ring-1 ring-white/10"
+          />
         ) : (
-          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center mr-3 flex-shrink-0">
-            <BookOpen className="h-5 w-5 text-primary" />
+          <div className="h-8 w-8 rounded-md bg-sidebar-primary/20 flex items-center justify-center flex-shrink-0">
+            <BookOpen className="h-4 w-4 text-sidebar-primary" />
           </div>
         )}
-        <div className="min-w-0">
-          <span className="font-heading font-bold text-lg tracking-tight block leading-tight truncate">
-            {schoolBranding?.schoolName || "EduBook"}
-          </span>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">
-            {inSupportMode ? "Support Mode" : "School Books"}
-          </span>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-sm text-sidebar-accent-foreground truncate leading-tight">
+            {schoolBranding?.schoolName || "ScholarShelf"}
+          </div>
+          <div className="text-[10px] text-sidebar-foreground/50 uppercase tracking-widest leading-tight mt-0.5">
+            {inSupportMode ? "Support Mode" : "Book Management"}
+          </div>
         </div>
       </div>
 
-      {/* Support mode school indicator in sidebar */}
+      {/* Support mode indicator */}
       {inSupportMode && (
-        <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
-          <div className="text-[10px] uppercase tracking-widest text-amber-600 font-semibold">Supporting</div>
-          <div className="text-sm font-medium text-amber-800 truncate">{user?.supportMode?.schoolName}</div>
+        <div className="mx-3 mt-3 px-3 py-2 rounded-md bg-amber-500/15 border border-amber-500/25">
+          <div className="text-[10px] uppercase tracking-wider text-amber-400 font-medium">Supporting</div>
+          <div className="text-xs font-semibold text-amber-200 truncate mt-0.5">
+            {user?.supportMode?.schoolName}
+          </div>
         </div>
       )}
 
+      {/* Context switcher for multi-role users */}
       {!inSupportMode && availableContexts.length > 1 && (
-        <div className="mx-3 mt-3 px-3 py-3 rounded-lg bg-muted/40 border border-border/60 space-y-2">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Current view</div>
-          <div className="flex flex-wrap gap-2">
+        <div className="mx-3 mt-3 px-3 py-2.5 rounded-md bg-sidebar-accent border border-sidebar-border space-y-2">
+          <div className="text-[10px] uppercase tracking-wider text-sidebar-foreground/50 font-medium">View as</div>
+          <div className="flex flex-col gap-1">
             {availableContexts.map((context) => {
               const selected = context.key === activeContext;
               return (
-                <Button
+                <button
                   key={context.key}
-                  size="sm"
-                  variant={selected ? "default" : "outline"}
-                  className="h-8"
                   disabled={selected || isSwitchingContext}
                   onClick={() => void handleSwitchContext(context.key, context.defaultPath)}
+                  className={cn(
+                    "text-left text-xs px-2 py-1.5 rounded transition-colors",
+                    selected
+                      ? "bg-sidebar-primary/20 text-sidebar-primary font-semibold"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/80"
+                  )}
                 >
-                  {selected ? `${context.label}` : `Switch to ${context.label}`}
-                </Button>
+                  {selected ? `✓ ${context.label}` : context.label}
+                </button>
               );
             })}
           </div>
         </div>
       )}
 
-      <div className="mx-3 mt-3 px-3 py-3 rounded-lg border border-primary/20 bg-primary/5 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-[10px] uppercase tracking-widest text-primary/80 font-semibold flex items-center gap-1.5">
-            <Bell className="h-3.5 w-3.5" />
-            Notifications
-          </div>
-          <span className={cn(
-            "text-xs font-bold px-2 py-0.5 rounded-full",
-            totalNotifications > 0 ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-          )}>
-            {totalNotifications > 99 ? "99+" : totalNotifications}
-          </span>
-        </div>
-
-        {notificationItems.length === 0 ? (
-          <p className="text-xs text-muted-foreground">All caught up.</p>
-        ) : (
-          <div className="space-y-1">
-            {notificationItems.slice(0, 4).map((item) => (
-              <button
-                key={item.key}
-                onClick={() => {
-                  navigateTo(item.href);
-                  setMobileOpen(false);
-                }}
-                className="w-full text-left flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-primary/10 transition-colors"
-              >
-                <span className="text-xs text-foreground truncate">{item.label}</span>
-                <span className={cn(
-                  "text-[11px] font-semibold px-1.5 py-0.5 rounded",
-                  item.severity === "warning"
-                    ? "bg-amber-100 text-amber-700"
-                    : item.severity === "success"
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-blue-100 text-blue-700"
-                )}>
-                  {item.count}
-                </span>
-              </button>
-            ))}
-            {notificationItems.length > 4 && (
-              <p className="text-[11px] text-muted-foreground px-2">+{notificationItems.length - 4} more</p>
-            )}
+      {/* Navigation */}
+      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+        {config && (
+          <div className="px-3 mb-2 text-[10px] uppercase tracking-widest font-medium text-sidebar-foreground/40">
+            {config.label}
           </div>
         )}
-      </div>
-
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3 px-3">
-          {config?.label || "Navigation"}
-        </div>
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = isNavActive(item.href, location);
@@ -388,70 +322,128 @@ export default function Layout({ children }: LayoutProps) {
               onClick={(e) => {
                 e.preventDefault();
                 navigateTo(item.href);
-                setMobileOpen(false);
               }}
               className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
+                "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-100",
                 active
-                  ? "bg-primary/10 text-primary shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               )}
             >
-              <Icon className={cn("h-4 w-4 flex-shrink-0", active && "text-primary")} />
+              <Icon className="h-4 w-4 flex-shrink-0" />
               <span className="truncate">{item.label}</span>
-              {active && <ChevronRight className="h-3 w-3 ml-auto text-primary/50" />}
+              {active && totalNotifications > 0 && notificationItems.find(n => n.href === item.href) && (
+                <span className="ml-auto text-[10px] font-bold bg-sidebar-primary-foreground/20 text-sidebar-primary-foreground px-1.5 py-0.5 rounded-full">
+                  {notificationItems.find(n => n.href === item.href)?.count}
+                </span>
+              )}
             </a>
           );
         })}
 
-        {/* Exit support mode link at bottom of nav */}
+        {/* Back to platform (support mode) */}
         {inSupportMode && (
           <button
             onClick={handleExitSupport}
             disabled={isExitingSupport}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 text-amber-600 hover:bg-amber-50 w-full mt-4"
+            className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-amber-400 hover:bg-amber-500/10 w-full mt-4 transition-colors"
           >
             <ArrowLeft className="h-4 w-4 flex-shrink-0" />
-            <span className="truncate">{isExitingSupport ? "Exiting..." : "Back to Platform"}</span>
+            <span>{isExitingSupport ? "Exiting…" : "Back to Platform"}</span>
           </button>
         )}
       </nav>
 
-      <div className="p-3 border-t border-border/60 space-y-2">
-        <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted/30">
+      {/* Notification summary (if any) */}
+      {totalNotifications > 0 && (
+        <div className="mx-3 mb-2 px-3 py-2 rounded-md bg-sidebar-accent border border-sidebar-border">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/40 font-medium flex items-center gap-1">
+              <Bell className="h-3 w-3" /> Alerts
+            </span>
+            <span className="text-[10px] font-bold bg-sidebar-primary/30 text-sidebar-primary px-1.5 py-0.5 rounded-full">
+              {totalNotifications > 99 ? "99+" : totalNotifications}
+            </span>
+          </div>
+          {notificationItems.slice(0, 3).map((item) => (
+            <button
+              key={item.key}
+              onClick={() => navigateTo(item.href)}
+              className="w-full text-left flex items-center justify-between gap-2 py-1 text-xs text-sidebar-foreground hover:text-sidebar-accent-foreground transition-colors"
+            >
+              <span className="truncate">{item.label}</span>
+              <span className={cn(
+                "text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0",
+                item.severity === "warning" ? "bg-amber-500/20 text-amber-400"
+                  : item.severity === "success" ? "bg-emerald-500/20 text-emerald-400"
+                  : "bg-blue-500/20 text-blue-400"
+              )}>
+                {item.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* User footer */}
+      <div className="p-3 border-t border-sidebar-border flex-shrink-0">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-md group">
           <div className={cn(
-            "h-9 w-9 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0",
-            inSupportMode ? "bg-amber-100 text-amber-700" : "bg-primary/15 text-primary"
+            "h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0",
+            inSupportMode
+              ? "bg-amber-500/20 text-amber-400"
+              : "bg-sidebar-primary/25 text-sidebar-primary"
           )}>
             {initials}
           </div>
-          <div className="text-sm flex-1 min-w-0">
-            <div className="font-medium truncate" data-testid="text-user-name">{user?.name}</div>
-            <div className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">
-              {inSupportMode ? "Support Operator" : isOwner ? "owner (protected)" : activeContext}
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-sidebar-accent-foreground truncate" data-testid="text-user-name">
+              {user?.name}
+            </div>
+            <div className="text-[10px] text-sidebar-foreground/50 capitalize truncate" data-testid="text-user-role">
+              {inSupportMode ? "Support" : activeContext}
             </div>
           </div>
+          <button
+            onClick={handleLogout}
+            data-testid="button-logout"
+            className="h-7 w-7 flex items-center justify-center rounded text-sidebar-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors flex-shrink-0"
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-muted-foreground hover:text-destructive hover:bg-destructive/5"
-          onClick={handleLogout}
-          data-testid="button-logout"
-        >
-          <LogOut className="mr-2 h-4 w-4" />
-          Sign Out
-        </Button>
       </div>
-    </>
+    </div>
   );
 
   return (
     <div className="min-h-screen flex bg-background">
+      {/* Support mode banner */}
+      {inSupportMode && (
+        <div className="fixed top-0 inset-x-0 z-50 bg-amber-500 text-white px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 flex-shrink-0" />
+            <span className="text-sm font-medium">
+              Support Mode — {user?.supportMode?.schoolName || "School"}
+            </span>
+          </div>
+          <button
+            onClick={handleExitSupport}
+            disabled={isExitingSupport}
+            className="text-xs font-semibold bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md transition-colors flex items-center gap-1.5"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            {isExitingSupport ? "Exiting…" : "Exit"}
+          </button>
+        </div>
+      )}
+
       {/* Desktop sidebar */}
       <aside className={cn(
-        "w-64 bg-card border-r border-border/60 hidden md:flex flex-col fixed inset-y-0 left-0 z-30",
-        inSupportMode && "border-r-amber-300"
+        "w-60 hidden md:flex flex-col fixed inset-y-0 left-0 z-30",
+        inSupportMode && "top-9"
       )}>
         <SidebarContent />
       </aside>
@@ -459,66 +451,68 @@ export default function Layout({ children }: LayoutProps) {
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
-          <button aria-label="Close navigation menu" className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-72 bg-card border-r border-border flex flex-col shadow-2xl">
+          <button
+            aria-label="Close menu"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside className="absolute left-0 top-0 bottom-0 w-64 shadow-2xl">
             <SidebarContent />
           </aside>
         </div>
       )}
 
-      <main className="flex-1 flex flex-col min-h-screen md:ml-64">
-        {/* Support mode banner — always visible at top */}
-        <SupportBanner />
-
-        {/* Mobile header */}
-        <header className={cn(
-          "h-14 bg-card border-b border-border/60 flex items-center justify-between px-4 md:hidden sticky top-0 z-20",
-          inSupportMode && "border-b-amber-300"
-        )}>
+      {/* Main content */}
+      <main className={cn(
+        "flex-1 flex flex-col min-h-screen md:ml-60",
+        inSupportMode && "pt-9"
+      )}>
+        {/* Mobile top bar */}
+        <header className="h-14 bg-card border-b border-border flex items-center justify-between px-4 md:hidden sticky top-0 z-20">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)} className="h-9 w-9" aria-label="Open navigation menu">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="h-9 w-9 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
+              aria-label="Open menu"
+            >
               <Menu className="h-5 w-5" />
-            </Button>
+            </button>
             <div className="flex items-center gap-2">
               {schoolBranding?.logoUrl ? (
-                <img src={schoolBranding.logoUrl} alt="Logo" className="h-6 w-6 object-contain" />
+                <img src={schoolBranding.logoUrl} alt="Logo" className="h-6 w-6 object-contain rounded" />
               ) : (
                 <BookOpen className="h-5 w-5 text-primary" />
               )}
-              <span className="font-heading font-bold text-lg truncate max-w-[140px]">
-                {schoolBranding?.schoolName || "EduBook"}
+              <span className="font-semibold text-sm truncate max-w-[160px]">
+                {schoolBranding?.schoolName || "ScholarShelf"}
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground hidden sm:inline">{user?.name}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                if (primaryNotificationHref) {
-                  navigateTo(primaryNotificationHref);
-                  setMobileOpen(false);
-                }
-              }}
-              className="h-9 w-9 relative"
-              aria-label="Open latest notification"
+
+          <div className="flex items-center gap-1">
+            {totalNotifications > 0 && (
+              <button
+                onClick={() => primaryNotificationHref && navigateTo(primaryNotificationHref)}
+                className="h-9 w-9 flex items-center justify-center rounded-md hover:bg-muted transition-colors relative"
+                aria-label="Notifications"
+              >
+                <Bell className="h-4.5 w-4.5" />
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary" />
+              </button>
+            )}
+            <button
+              onClick={handleLogout}
+              data-testid="button-logout-mobile"
+              className="h-9 w-9 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-destructive transition-colors"
+              aria-label="Sign out"
             >
-              <Bell className="h-5 w-5" />
-              {totalNotifications > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[1rem] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 font-semibold text-center">
-                  {totalNotifications > 99 ? "99+" : totalNotifications}
-                </span>
-              )}
-            </Button>
-            <Button variant="ghost" size="icon" onClick={handleLogout} data-testid="button-logout-mobile" className="h-9 w-9" aria-label="Sign out">
-              <LogOut className="h-5 w-5" />
-            </Button>
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </header>
 
         {/* Page content */}
-        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto">
+        <div className="flex-1 p-4 md:p-6 lg:p-8">
           {children}
         </div>
       </main>

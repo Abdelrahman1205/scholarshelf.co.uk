@@ -347,22 +347,18 @@ function DashboardSection() {
     <div className="space-y-6">
 
       {/* ── 1. Welcome Header ── */}
-      <div className="rounded-xl bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/20 p-5 md:p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-heading font-bold tracking-tight">
-              {greeting}, {user?.name?.split(" ")[0] || "Admin"} 👋
-            </h1>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {user?.name || "School Admin"} · {schoolLabel} · {schoolRoleLabel}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
-              <div className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="font-medium">System operational</span>
-            </div>
-          </div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">
+            {greeting}, {user?.name?.split(" ")[0] || "Admin"}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {schoolLabel} &middot; {schoolRoleLabel}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1.5">
+          <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          Operational
         </div>
       </div>
 
@@ -378,11 +374,11 @@ function DashboardSection() {
 
       {/* ── 2. Setup Progress Checklist ── */}
       {setupTotal > 0 && (
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base font-heading flex items-center gap-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Settings className="h-4 w-4 text-primary" />
                   School Setup Progress
                 </CardTitle>
@@ -474,7 +470,7 @@ function DashboardSection() {
                 onClick={() => navigateTo(s.href)}
                 className="text-left group"
               >
-                <Card className="border-border/50 shadow-sm hover:shadow-md transition-all duration-150 group-hover:border-primary/25 cursor-pointer h-full">
+                <Card className="border-border shadow-none hover:shadow-md transition-all duration-150 group-hover:border-primary/25 cursor-pointer h-full">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
                       <div
@@ -487,7 +483,7 @@ function DashboardSection() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs text-muted-foreground font-medium truncate leading-tight">{s.label}</p>
-                        <p className={cn("text-xl font-bold font-heading leading-tight", s.color)}>{s.value}</p>
+                        <p className={cn("text-xl font-bold leading-tight", s.color)}>{s.value}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -513,7 +509,7 @@ function DashboardSection() {
                   title={a.disabledReason}
                   className="opacity-50 cursor-not-allowed"
                 >
-                  <Card className="border-border/50 border-dashed h-full">
+                  <Card className="border-border border-dashed h-full">
                     <CardContent className="p-4 flex items-center gap-3">
                       <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0", a.bg)}>
                         <Icon className={cn("h-5 w-5", a.color)} />
@@ -533,7 +529,7 @@ function DashboardSection() {
                 onClick={() => navigateTo(a.href)}
                 className="text-left group"
               >
-                <Card className="border-border/50 shadow-sm hover:shadow-md transition-all duration-150 group-hover:border-primary/25 cursor-pointer h-full">
+                <Card className="border-border shadow-none hover:shadow-md transition-all duration-150 group-hover:border-primary/25 cursor-pointer h-full">
                   <CardContent className="p-4 flex items-center gap-3">
                     <div
                       className={cn(
@@ -560,9 +556,9 @@ function DashboardSection() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* Warnings / Attention Panel */}
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-heading flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-500" />
               Attention Required
             </CardTitle>
@@ -603,9 +599,9 @@ function DashboardSection() {
         </Card>
 
         {/* Recent Activity */}
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-heading flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <History className="h-4 w-4 text-primary" />
               Recent Activity
             </CardTitle>
@@ -819,7 +815,7 @@ function SetupSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Continue School Setup</h1>
+          <h1 className="text-xl font-bold tracking-tight">Continue School Setup</h1>
           <p className="text-muted-foreground text-sm mt-1">Finish the remaining onboarding steps for your school tenant.</p>
         </div>
         {canGoDashboard && (
@@ -828,7 +824,7 @@ function SetupSection() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">School</p>
             <p className="text-lg font-semibold mt-1">{setup?.school?.name || "School setup"}</p>
@@ -836,14 +832,14 @@ function SetupSection() {
             <p className="text-sm text-muted-foreground mt-1 capitalize">Status: {(setup?.schoolStatus || setup?.school?.status || "pending_setup").replace(/_/g, " ")}</p>
           </CardContent>
         </Card>
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Setup status</p>
             <p className="text-lg font-semibold mt-1">{setupStatusLabel[setup?.setupStatus || ""] || "Pending"}</p>
             <p className="text-sm text-muted-foreground mt-1 capitalize">{(setup?.setupStatus || "pending_admin_invite").replace(/_/g, " ")}</p>
           </CardContent>
         </Card>
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">First admin invite</p>
             <p className="text-lg font-semibold mt-1">{setup?.firstAdminEmail || setup?.invite?.email || "Not invited"}</p>
@@ -870,7 +866,7 @@ function SetupSection() {
         </Alert>
       )}
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <CardHeader>
           <CardTitle>Setup checklist</CardTitle>
           <CardDescription>
@@ -954,7 +950,7 @@ function OwnerDashboardSection() {
   };
 
   if (isLoading) {
-    return <Card className="border-border/50 shadow-sm"><CardContent className="py-10 text-center text-muted-foreground">Loading owner dashboard...</CardContent></Card>;
+    return <Card className="border-border shadow-none"><CardContent className="py-10 text-center text-muted-foreground">Loading owner dashboard...</CardContent></Card>;
   }
 
   if (isError) {
@@ -984,7 +980,7 @@ function OwnerDashboardSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">BytHub Platform Owner</h1>
+          <h1 className="text-xl font-bold tracking-tight">BytHub Platform Owner</h1>
           <p className="text-muted-foreground text-sm mt-1">Platform onboarding and school lifecycle control center outside Support Mode.</p>
         </div>
         <Button variant="outline" onClick={() => navigateTo("/admin/schools")}>Manage Schools</Button>
@@ -992,7 +988,7 @@ function OwnerDashboardSection() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {cards.map((card) => (
-          <Card key={card.label} className="border-border/50 shadow-sm">
+          <Card key={card.label} className="border-border shadow-none">
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground">{card.label}</p>
               <p className="text-2xl font-bold mt-1">{card.value ?? "Not available"}</p>
@@ -1001,7 +997,7 @@ function OwnerDashboardSection() {
         ))}
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <CardHeader>
           <CardTitle>Recent setup and support activity</CardTitle>
           <CardDescription>Latest owner-level onboarding and support actions.</CardDescription>
@@ -1037,11 +1033,11 @@ function OwnerPendingSetupsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Pending Setups</h1>
+        <h1 className="text-xl font-bold tracking-tight">Pending Setups</h1>
         <p className="text-muted-foreground text-sm mt-1">Schools that are not fully onboarded yet.</p>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -1119,11 +1115,11 @@ function OwnerAdminInvitesSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Admin Invites</h1>
+        <h1 className="text-xl font-bold tracking-tight">Admin Invites</h1>
         <p className="text-muted-foreground text-sm mt-1">Monitor and manage first School Admin invites.</p>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -1184,7 +1180,7 @@ function OwnerEmailStatusSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Email Status</h1>
+        <h1 className="text-xl font-bold tracking-tight">Email Status</h1>
         <p className="text-muted-foreground text-sm mt-1">Invite delivery and manual fallback monitoring.</p>
       </div>
 
@@ -1194,7 +1190,7 @@ function OwnerEmailStatusSection() {
         <AlertDescription>{data?.message}</AlertDescription>
       </Alert>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <CardHeader>
           <CardTitle>Recent first-admin invites</CardTitle>
         </CardHeader>
@@ -1253,11 +1249,11 @@ function OwnerActivitySection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Activity Logs</h1>
+        <h1 className="text-xl font-bold tracking-tight">Activity Logs</h1>
         <p className="text-muted-foreground text-sm mt-1">Owner-level audit events for onboarding and support actions.</p>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -1295,11 +1291,11 @@ function OwnerSettingsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Owner Settings</h1>
+        <h1 className="text-xl font-bold tracking-tight">Owner Settings</h1>
         <p className="text-muted-foreground text-sm mt-1">Platform-level owner controls and protected account state.</p>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <CardHeader>
           <CardTitle>Platform profile</CardTitle>
           <CardDescription>Read-only owner-level settings in this build.</CardDescription>
@@ -1340,7 +1336,7 @@ function OwnerSchoolDetailsSection() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">{data.name}</h1>
+          <h1 className="text-xl font-bold tracking-tight">{data.name}</h1>
           <p className="text-muted-foreground text-sm mt-1">School details, setup lifecycle, and first admin status.</p>
         </div>
         <Button variant="outline" onClick={() => navigateTo("/admin/schools")}>Back to Schools</Button>
@@ -1646,7 +1642,7 @@ function SchoolsSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Schools</h1>
+          <h1 className="text-xl font-bold tracking-tight">Schools</h1>
           <p className="text-muted-foreground text-sm mt-1">Create and manage school tenants, lifecycle status, and contact details.</p>
         </div>
         <Button onClick={() => { resetForm(); setAddOpen(true); }}>
@@ -1699,7 +1695,7 @@ function SchoolsSection() {
         </Select>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -2053,12 +2049,12 @@ function UserDetailPanel({ userId }: { userId: string }) {
       </button>
 
       {/* Header card */}
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-3 flex-wrap">
-                <h2 className="text-xl font-heading font-bold">{detail.name}</h2>
+                <h2 className="text-lg font-bold">{detail.name}</h2>
                 <Badge variant="outline" className={isSuspended ? "bg-red-100 text-red-700 border-red-200" : "bg-emerald-100 text-emerald-700 border-emerald-200"}>
                   {isSuspended ? "Suspended" : "Active"}
                 </Badge>
@@ -2116,7 +2112,7 @@ function UserDetailPanel({ userId }: { userId: string }) {
 
       {/* Linked children */}
       {isParent && (
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><Users className="w-4 h-4" /> Linked Children</CardTitle>
           </CardHeader>
@@ -2145,7 +2141,7 @@ function UserDetailPanel({ userId }: { userId: string }) {
 
       {/* Assigned classes (teacher) */}
       {isTeacher && (
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><GraduationCap className="w-4 h-4" /> Teacher Profile</CardTitle>
           </CardHeader>
@@ -2409,7 +2405,7 @@ function UsersList() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Users</h1>
+          <h1 className="text-xl font-bold tracking-tight">Users</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage admin, teacher, and parent accounts.</p>
         </div>
         <Button data-testid="button-add-user" onClick={() => { resetForm(); setAddOpen(true); }}>
@@ -2435,7 +2431,7 @@ function UsersList() {
         )}
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -2672,7 +2668,7 @@ function ParentsSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Parents</h1>
+          <h1 className="text-xl font-bold tracking-tight">Parents</h1>
           <p className="text-muted-foreground text-sm mt-1">Monitor parent accounts, child links, and payment readiness.</p>
         </div>
         <div className="flex gap-2">
@@ -2715,7 +2711,7 @@ function ParentsSection() {
       </div>
 
       {isLoading && (
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardContent className="py-10 text-center text-muted-foreground">Loading parent accounts...</CardContent>
         </Card>
       )}
@@ -2729,7 +2725,7 @@ function ParentsSection() {
       )}
 
       {!isLoading && !isError && (
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <Table>
             <TableHeader className="bg-muted/30">
               <TableRow>
@@ -2818,7 +2814,7 @@ function ClassesSection() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Classes</h1>
+          <h1 className="text-xl font-bold tracking-tight">Classes</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage school classes and teacher assignments.</p>
         </div>
         <Button onClick={() => { setForm({ name: "", academicYear: "2025-2026", teacherId: "" }); setAddOpen(true); }}>
@@ -2826,7 +2822,7 @@ function ClassesSection() {
         </Button>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -3003,7 +2999,7 @@ function StudentsSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Students</h1>
+          <h1 className="text-xl font-bold tracking-tight">Students</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage student records and class assignments.</p>
         </div>
         <div className="flex gap-2">
@@ -3026,7 +3022,7 @@ function StudentsSection() {
         </Button>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -3345,7 +3341,7 @@ function BooksSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Books</h1>
+          <h1 className="text-xl font-bold tracking-tight">Books</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage your book catalogue and stock levels.</p>
         </div>
         <div className="flex gap-2">
@@ -3382,7 +3378,7 @@ function BooksSection() {
         </Alert>
       )}
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -3569,7 +3565,7 @@ function BookLevelsSection() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Book Levels</h1>
+          <h1 className="text-xl font-bold tracking-tight">Book Levels</h1>
           <p className="text-muted-foreground text-sm mt-1">Create book levels and assign them to classes.</p>
         </div>
         <div className="flex gap-2">
@@ -3580,7 +3576,7 @@ function BookLevelsSection() {
 
       {/* Assigned classes */}
       {classBookLevels.length > 0 && (
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border shadow-none">
           <CardHeader className="pb-2"><CardTitle className="text-sm font-heading">Class Assignments</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-2">
@@ -3598,7 +3594,7 @@ function BookLevelsSection() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Layers className="h-12 w-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Book Levels</h3>
+            <h3 className="text-base font-semibold text-muted-foreground">No Book Levels</h3>
             <p className="text-sm text-muted-foreground mt-1">Create a book level to group books into bundles for classes.</p>
             <Button className="mt-4" onClick={() => setAddOpen(true)}><Plus className="w-4 h-4 mr-2" /> Create First Level</Button>
           </CardContent>
@@ -3659,7 +3655,7 @@ function LevelCard({ level, expanded, onToggle, books, addItemForm, setAddItemFo
   });
 
   return (
-    <Card className="border-border/50 shadow-sm">
+    <Card className="border-border shadow-none">
       <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors" onClick={onToggle}>
         <div className="flex items-center justify-between">
           <div>
@@ -3748,7 +3744,7 @@ function LinkingCodesSection() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Linking Codes</h1>
+          <h1 className="text-xl font-bold tracking-tight">Linking Codes</h1>
           <p className="text-muted-foreground text-sm mt-1">Generate and manage parent-student link codes. Rotate a code if it was shared incorrectly.</p>
         </div>
         <div className="flex gap-2">
@@ -3761,7 +3757,7 @@ function LinkingCodesSection() {
         </div>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -3891,7 +3887,7 @@ function PaymentsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Payment Review</h1>
+        <h1 className="text-xl font-bold tracking-tight">Payment Review</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Review parent payment references submitted via external payment apps.
           {actionableCount > 0 && <span className="ml-2 text-blue-600 font-medium">{actionableCount} awaiting review</span>}
@@ -3917,7 +3913,7 @@ function PaymentsSection() {
         </Select>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -4074,11 +4070,11 @@ function AllocationsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Allocations</h1>
+        <h1 className="text-xl font-bold tracking-tight">Allocations</h1>
         <p className="text-muted-foreground text-sm mt-1">Track book allocations and teacher confirmations.</p>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
@@ -4137,11 +4133,11 @@ function ExtraRequestsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Extra Copy Requests</h1>
+        <h1 className="text-xl font-bold tracking-tight">Extra Copy Requests</h1>
         <p className="text-muted-foreground text-sm mt-1">Review teacher requests for additional book copies.</p>
       </div>
 
-      <Card className="border-border/50 shadow-sm">
+      <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>

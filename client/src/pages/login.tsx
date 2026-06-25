@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { BookOpen, Eye, EyeOff, LogIn, UserPlus, KeyRound } from "lucide-react";
+import { BookOpen, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
 
@@ -48,29 +47,18 @@ export default function LoginPage() {
       try {
         const res = await fetch(`/api/public/schools/${encodeURIComponent(code)}/branding`);
         if (!res.ok) {
-          if (!cancelled) {
-            setBranding(null);
-            applyBrandingToDocument(null);
-          }
+          if (!cancelled) { setBranding(null); applyBrandingToDocument(null); }
           return;
         }
         const data = await res.json();
-        if (!cancelled) {
-          setBranding(data);
-          applyBrandingToDocument(data);
-        }
+        if (!cancelled) { setBranding(data); applyBrandingToDocument(data); }
       } catch {
-        if (!cancelled) {
-          setBranding(null);
-          applyBrandingToDocument(null);
-        }
+        if (!cancelled) { setBranding(null); applyBrandingToDocument(null); }
       }
     }
 
     loadBranding();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [schoolCode]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -93,152 +81,209 @@ export default function LoginPage() {
     } catch {}
   }
 
+  const errorMessage = loginError
+    ? loginError.message.includes("401")
+      ? loginError.message.toLowerCase().includes("school code")
+        ? "Invalid school code for this account."
+        : "Incorrect username or password."
+      : loginError.message.includes("429")
+        ? "Too many attempts. Please wait a moment."
+        : "Sign in failed. Please try again."
+    : null;
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary/10 mb-4">
-            {branding?.logoUrl ? (
-              <img src={branding.logoUrl} alt={`${branding?.schoolName || "School"} logo`} className="h-10 w-10 object-contain" />
-            ) : (
-              <BookOpen className="h-8 w-8 text-primary" />
-            )}
-          </div>
-          <h1 className="font-heading text-3xl font-bold tracking-tight">{branding?.schoolName || "EduBook"}</h1>
-          <p className="text-muted-foreground mt-1">School Book Management System</p>
+    <div className="min-h-screen flex">
+      {/* Left branding panel */}
+      <div className="hidden lg:flex lg:w-[420px] xl:w-[480px] flex-col bg-sidebar text-sidebar-foreground p-10 relative overflow-hidden flex-shrink-0">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-32 -left-16 h-72 w-72 rounded-full bg-sidebar-primary opacity-10 blur-3xl" />
+          <div className="absolute bottom-24 -right-10 h-56 w-56 rounded-full bg-sidebar-primary opacity-8 blur-3xl" />
         </div>
 
-        {window.__schoolBlockedMessage && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <p className="font-medium">School Access Blocked</p>
-            <p className="mt-1">{window.__schoolBlockedMessage}</p>
+        <div className="relative z-10 flex items-center gap-3">
+          {branding?.logoUrl ? (
+            <img src={branding.logoUrl} alt="Logo" className="h-9 w-9 rounded-lg object-contain" />
+          ) : (
+            <div className="h-9 w-9 rounded-lg bg-sidebar-primary/20 flex items-center justify-center">
+              <BookOpen className="h-5 w-5 text-sidebar-primary" />
+            </div>
+          )}
+          <span className="font-semibold text-sm text-sidebar-accent-foreground">
+            {branding?.schoolName || "ScholarShelf"}
+          </span>
+        </div>
+
+        <div className="relative z-10 mt-auto">
+          <div className="mb-6">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-sidebar-primary/15 border border-sidebar-primary/25 mb-5">
+              <div className="h-1.5 w-1.5 rounded-full bg-sidebar-primary animate-pulse" />
+              <span className="text-xs font-medium text-sidebar-primary">School Book Management</span>
+            </div>
+            <h1 className="text-2xl font-bold text-sidebar-accent-foreground leading-snug">
+              Manage books across your entire school
+            </h1>
+            <p className="mt-3 text-sm text-sidebar-foreground/70 leading-relaxed">
+              Distribute, track, and manage books across classes, students, and parents — all in one place.
+            </p>
           </div>
-        )}
 
-        <Card>
-          <CardHeader className="text-center pb-4">
-            <CardTitle className="text-lg">Sign In</CardTitle>
-            <CardDescription>Enter your credentials to access the system</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
+          <div className="grid grid-cols-3 gap-2.5">
+            {[
+              { label: "Books tracked", value: "100%" },
+              { label: "Roles", value: "5+" },
+              { label: "Real-time", value: "Live" },
+            ].map((stat) => (
+              <div key={stat.label} className="bg-sidebar-accent/80 border border-sidebar-border rounded-lg p-3">
+                <div className="text-base font-bold text-sidebar-primary">{stat.value}</div>
+                <div className="text-[10px] text-sidebar-foreground/50 mt-0.5 leading-tight">{stat.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Right form panel */}
+      <div className="flex-1 flex items-center justify-center p-6 bg-background">
+        <div className="w-full max-w-[340px]">
+          {/* Mobile logo */}
+          <div className="lg:hidden flex items-center gap-3 mb-8">
+            {branding?.logoUrl ? (
+              <img src={branding.logoUrl} alt="Logo" className="h-8 w-8 rounded-lg object-contain" />
+            ) : (
+              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                <BookOpen className="h-4 w-4 text-primary" />
+              </div>
+            )}
+            <span className="font-semibold text-sm text-foreground">{branding?.schoolName || "ScholarShelf"}</span>
+          </div>
+
+          <div className="mb-7">
+            <h2 className="text-2xl font-bold text-foreground tracking-tight">Sign in</h2>
+            <p className="text-sm text-muted-foreground mt-1">Enter your credentials to continue</p>
+          </div>
+
+          {window.__schoolBlockedMessage && (
+            <div className="mb-4 p-3 rounded-md bg-destructive/8 border border-destructive/20 text-sm">
+              <p className="font-medium text-destructive">School Access Blocked</p>
+              <p className="mt-0.5 text-destructive/80 text-xs">{window.__schoolBlockedMessage}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="username" className="text-sm font-medium">Username</Label>
+              <Input
+                id="username"
+                data-testid="input-username"
+                type="text"
+                placeholder="your.username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                autoFocus
+                className="h-10 bg-card"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+              <div className="relative">
                 <Input
-                  id="username"
-                  data-testid="input-username"
-                  type="text"
-                  placeholder="Enter your username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  id="password"
+                  data-testid="input-password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   required
-                  autoFocus
+                  className="h-10 bg-card pr-10"
                 />
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => setShowPassword(!showPassword)}
+                  data-testid="button-toggle-password"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    data-testid="input-password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                    onClick={() => setShowPassword(!showPassword)}
-                    data-testid="button-toggle-password"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="school-code">School Code</Label>
-                <Input
-                  id="school-code"
-                  data-testid="input-school-code"
-                  type="text"
-                  placeholder="Enter your school code"
-                  value={schoolCode}
-                  onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Required for school-linked accounts (School Admin, Teacher, Parent, Student).
-                </p>
-              </div>
-
-              {loginError && (
-                <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md" data-testid="text-login-error">
-                  {loginError.message.includes("401")
-                    ? loginError.message.toLowerCase().includes("school code")
-                      ? "Invalid school code for this account"
-                      : "Invalid username or password"
-                    : loginError.message.includes("429")
-                    ? "Too many login attempts. Please try again later."
-                    : "Login failed. Please try again."}
-                </div>
-              )}
-
-              <Button type="submit" className="w-full" disabled={isLoggingIn} data-testid="button-login">
-                <LogIn className="mr-2 h-4 w-4" />
-                {isLoggingIn ? "Signing in..." : "Sign In"}
-              </Button>
-            </form>
-
-            <div className="mt-4 flex items-center justify-between text-sm">
-              <a
-                href="/forgot-password"
-                className="text-primary hover:underline cursor-pointer"
-                onClick={(e) => { e.preventDefault(); setLocation("/forgot-password"); }}
-              >
-                <KeyRound className="inline h-3 w-3 mr-1" />
-                Forgot password?
-              </a>
-              <a
-                href="/register"
-                className="text-primary hover:underline cursor-pointer"
-                onClick={(e) => { e.preventDefault(); setLocation("/register"); }}
-              >
-                <UserPlus className="inline h-3 w-3 mr-1" />
-                Parent sign up
-              </a>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-border">
-              <p className="text-xs text-muted-foreground text-center mb-3">Demo Accounts</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {[
-                  { label: "BytHub", username: "bythub", password: "bythub123" },
-                  { label: "Admin", username: "admin", password: "admin123", schoolCode: "DEMO-001" },
-                  { label: "Teacher", username: "teacher", password: "teacher123", schoolCode: "DEMO-001" },
-                  { label: "Parent", username: "parent", password: "parent123", schoolCode: "DEMO-001" },
-                  { label: "Finance", username: "finance", password: "finance123", schoolCode: "DEMO-001" },
-                ].map((demo) => (
-                  <Button
-                    key={demo.username}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="text-xs"
-                    data-testid={`button-demo-${demo.username}`}
-                    onClick={() => void loginWithDemo(demo.username, demo.password, demo.schoolCode)}
-                  >
-                    {demo.label}
-                  </Button>
-                ))}
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="school-code" className="text-sm font-medium">
+                School Code
+                <span className="ml-1 text-[11px] font-normal text-muted-foreground">optional for platform admin</span>
+              </Label>
+              <Input
+                id="school-code"
+                data-testid="input-school-code"
+                type="text"
+                placeholder="DEMO-001"
+                value={schoolCode}
+                onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
+                className="h-10 bg-card font-mono tracking-wider"
+              />
             </div>
-          </CardContent>
-        </Card>
+
+            {errorMessage && (
+              <p
+                className="text-sm text-destructive bg-destructive/8 border border-destructive/15 px-3 py-2.5 rounded-md"
+                data-testid="text-login-error"
+                role="alert"
+              >
+                {errorMessage}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full h-10 font-medium mt-2"
+              disabled={isLoggingIn}
+              data-testid="button-login"
+            >
+              {isLoggingIn ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+
+          <div className="mt-4 flex items-center justify-between">
+            <button
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setLocation("/forgot-password")}
+            >
+              Forgot password?
+            </button>
+            <button
+              className="text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+              onClick={() => setLocation("/register")}
+            >
+              Parent sign up →
+            </button>
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-border">
+            <p className="text-xs font-medium text-muted-foreground mb-2.5">Demo accounts</p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { label: "BytHub", username: "bythub", password: "bythub123" },
+                { label: "Admin", username: "admin", password: "admin123", schoolCode: "DEMO-001" },
+                { label: "Teacher", username: "teacher", password: "teacher123", schoolCode: "DEMO-001" },
+                { label: "Parent", username: "parent", password: "parent123", schoolCode: "DEMO-001" },
+                { label: "Finance", username: "finance", password: "finance123", schoolCode: "DEMO-001" },
+              ].map((demo) => (
+                <button
+                  key={demo.username}
+                  type="button"
+                  data-testid={`button-demo-${demo.username}`}
+                  onClick={() => void loginWithDemo(demo.username, demo.password, demo.schoolCode)}
+                  className="text-xs px-2 py-2 rounded-md border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-medium"
+                >
+                  {demo.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

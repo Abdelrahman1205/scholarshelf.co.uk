@@ -78,76 +78,68 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground mt-1">Overview of your classes and book distribution progress.</p>
+        <h1 className="text-xl font-bold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Overview of your classes and book distribution.</p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="bg-primary/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-              <LayoutDashboard className="w-5 h-5" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card className="border-border shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-medium text-muted-foreground">Classes</span>
+              <LayoutDashboard className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">My Classes</div>
-              <div className="text-2xl font-bold font-heading text-primary">{isLoading ? "..." : classes.length}</div>
-            </div>
+            <div className="text-2xl font-bold tracking-tight">{isLoading ? "—" : classes.length}</div>
           </CardContent>
         </Card>
-        <Card className="bg-blue-500/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-600">
-              <Users className="w-5 h-5" />
+        <Card className="border-border shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-medium text-muted-foreground">Students</span>
+              <Users className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Students</div>
-              <div className="text-2xl font-bold font-heading text-blue-600">{isLoading ? "..." : totalStudents}</div>
-            </div>
+            <div className="text-2xl font-bold tracking-tight">{isLoading ? "—" : totalStudents}</div>
           </CardContent>
         </Card>
-        <Card className="bg-emerald-500/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-600">
-              <CheckCircle2 className="w-5 h-5" />
+        <Card className="border-border shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-medium text-muted-foreground">Distributed</span>
+              <CheckCircle2 className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Distributed</div>
-              <div className="text-2xl font-bold font-heading text-emerald-600">{isLoading ? "..." : `${pct}%`}</div>
-            </div>
+            <div className="text-2xl font-bold tracking-tight text-emerald-600">{isLoading ? "—" : `${pct}%`}</div>
           </CardContent>
         </Card>
-        <Card className="bg-amber-500/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600">
-              <Package className="w-5 h-5" />
+        <Card className="border-border shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-medium text-muted-foreground">Pending</span>
+              <Package className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pending</div>
-              <div className="text-2xl font-bold font-heading text-amber-600">{isLoading ? "..." : pending}</div>
-            </div>
+            <div className="text-2xl font-bold tracking-tight text-amber-600">{isLoading ? "—" : pending}</div>
           </CardContent>
         </Card>
       </div>
       {(pending > 0 || pendingReqs > 0) && (
-        <Card className="border-border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-heading">Pending Actions</CardTitle>
+        <Card className="border-border shadow-none">
+          <CardHeader className="pb-3 pt-4 px-4">
+            <CardTitle className="text-sm font-semibold">Action Required</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="px-4 pb-4 space-y-2">
             {pending > 0 && (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
-                <Package className="h-5 w-5 text-amber-600" />
+              <div className="flex items-start gap-3 p-3 rounded-md bg-amber-50 border border-amber-200/70">
+                <Package className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">{pending} {pending === 1 ? "book" : "books"} awaiting confirmation</p>
-                  <p className="text-xs text-muted-foreground">Go to Book Distribution to confirm receipt</p>
+                  <p className="text-sm font-medium text-amber-900">{pending} {pending === 1 ? "book" : "books"} awaiting confirmation</p>
+                  <p className="text-xs text-amber-700/70 mt-0.5">Go to Book Distribution to confirm receipt</p>
                 </div>
               </div>
             )}
             {pendingReqs > 0 && (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-                <ClipboardList className="h-5 w-5 text-blue-600" />
+              <div className="flex items-start gap-3 p-3 rounded-md bg-blue-50 border border-blue-200/70">
+                <ClipboardList className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">{pendingReqs} extra copy request{pendingReqs !== 1 ? "s" : ""} pending</p>
-                  <p className="text-xs text-muted-foreground">Awaiting admin approval</p>
+                  <p className="text-sm font-medium text-blue-900">{pendingReqs} extra request{pendingReqs !== 1 ? "s" : ""} pending approval</p>
+                  <p className="text-xs text-blue-700/70 mt-0.5">Awaiting admin approval</p>
                 </div>
               </div>
             )}
@@ -261,7 +253,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Book Distribution</h1>
+          <h1 className="text-xl font-bold tracking-tight">Book Distribution</h1>
           <p className="text-muted-foreground mt-1">Confirm textbook receipt and track absent students.</p>
         </div>
         {classes.length > 0 && (
@@ -286,38 +278,38 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Package className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Classes Assigned</h3>
+            <h3 className="text-base font-semibold text-muted-foreground">No Classes Assigned</h3>
             <p className="text-sm text-muted-foreground mt-1">Contact the administrator to be assigned to a class.</p>
           </CardContent>
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="bg-primary/5 border-none shadow-none">
-              <CardContent className="p-5 flex items-center gap-4">
-                <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary"><Users className="w-5 h-5" /></div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Class Size</div>
-                  <div className="text-2xl font-bold font-heading text-primary">{allocLoading ? "..." : groups.length}</div>
+          <div className="grid grid-cols-3 gap-3">
+            <Card className="border-border shadow-none">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-medium text-muted-foreground">Class Size</span>
+                  <Users className="h-4 w-4 text-muted-foreground/50" />
                 </div>
+                <div className="text-2xl font-bold tracking-tight">{allocLoading ? "—" : groups.length}</div>
               </CardContent>
             </Card>
-            <Card className="bg-emerald-500/5 border-none shadow-none">
-              <CardContent className="p-5 flex items-center gap-4">
-                <div className="h-11 w-11 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-600"><CheckCircle2 className="w-5 h-5" /></div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Distributed</div>
-                  <div className="text-2xl font-bold font-heading text-emerald-600">{allocLoading ? "..." : `${pct}%`}</div>
+            <Card className="border-border shadow-none">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-medium text-muted-foreground">Distributed</span>
+                  <CheckCircle2 className="h-4 w-4 text-muted-foreground/50" />
                 </div>
+                <div className="text-2xl font-bold tracking-tight text-emerald-600">{allocLoading ? "—" : `${pct}%`}</div>
               </CardContent>
             </Card>
-            <Card className="bg-amber-500/5 border-none shadow-none">
-              <CardContent className="p-5 flex items-center gap-4">
-                <div className="h-11 w-11 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600"><BookOpen className="w-5 h-5" /></div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pending</div>
-                  <div className="text-2xl font-bold font-heading text-amber-600">{allocLoading ? "..." : pend}</div>
+            <Card className="border-border shadow-none">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-medium text-muted-foreground">Pending</span>
+                  <BookOpen className="h-4 w-4 text-muted-foreground/50" />
                 </div>
+                <div className="text-2xl font-bold tracking-tight text-amber-600">{allocLoading ? "—" : pend}</div>
               </CardContent>
             </Card>
           </div>
@@ -333,7 +325,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-16 text-center">
                 <Package className="w-12 h-12 text-muted-foreground/50 mb-4" />
-                <h3 className="text-lg font-heading font-semibold text-muted-foreground">
+                <h3 className="text-base font-semibold text-muted-foreground">
                   {searchQuery ? "No Students Found" : "No Allocations"}
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -344,19 +336,19 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
           ) : (
             <div className="space-y-4">
               {filtered.map((g) => (
-                <Card key={g.student.id} className="overflow-hidden border-border hover:shadow-md transition-all">
-                  <CardHeader className="bg-muted/30 pb-4 border-b border-border flex flex-row items-center justify-between">
+                <Card key={g.student.id} className="overflow-hidden border-border shadow-none">
+                  <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between bg-card">
                     <div>
-                      <CardTitle className="text-lg flex items-center gap-2">
+                      <CardTitle className="text-sm font-semibold flex items-center gap-2">
                         {g.student.name}
-                        {g.allReceived && <Badge className="bg-emerald-500/10 text-emerald-600 ml-2">All Received</Badge>}
+                        {g.allReceived && <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-medium">Complete</Badge>}
                       </CardTitle>
-                      <CardDescription>
-                        {g.student.studentCode || "No code"}{g.student.class ? ` • ${g.student.class.name}` : ""}
+                      <CardDescription className="text-xs mt-0.5">
+                        {g.student.studentCode || "No code"}{g.student.class ? ` · ${g.student.class.name}` : ""}
                       </CardDescription>
                     </div>
-                    <div className="text-sm font-medium bg-card px-3 py-1 rounded-full border border-border">
-                      {g.receivedCount} / {g.totalCount} Books
+                    <div className="text-xs font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-md">
+                      {g.receivedCount}/{g.totalCount}
                     </div>
                   </CardHeader>
                   <CardContent className="p-0">
@@ -488,7 +480,7 @@ function ExtraRequestsSection({ classes }: { classes: ClassItem[] }) {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-heading font-bold tracking-tight">Extra Copy Requests</h1>
+          <h1 className="text-xl font-bold tracking-tight">Extra Copy Requests</h1>
           <p className="text-muted-foreground mt-1">Request additional book copies from the school admin.</p>
         </div>
         <Button onClick={() => setOpen(true)} className="gap-2">
@@ -504,7 +496,7 @@ function ExtraRequestsSection({ classes }: { classes: ClassItem[] }) {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <ClipboardList className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-heading font-semibold text-muted-foreground">No Requests Yet</h3>
+            <h3 className="text-base font-semibold text-muted-foreground">No Requests Yet</h3>
             <p className="text-sm text-muted-foreground mt-1 max-w-sm">
               Submit your first extra copy request when you need additional books.
             </p>
@@ -863,7 +855,7 @@ function TeacherMessagesSection() {
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <MessageSquare className="w-12 h-12 text-muted-foreground/50 mb-4" />
-              <h3 className="text-lg font-heading font-semibold text-muted-foreground">Thread Not Found</h3>
+              <h3 className="text-base font-semibold text-muted-foreground">Thread Not Found</h3>
             </CardContent>
           </Card>
         )}
@@ -875,7 +867,7 @@ function TeacherMessagesSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-heading font-bold tracking-tight">Parent Messages</h1>
+        <h1 className="text-xl font-bold tracking-tight">Parent Messages</h1>
         <p className="text-muted-foreground mt-1">Secure communication with parents regarding their children.</p>
       </div>
 
@@ -898,7 +890,7 @@ function TeacherMessagesSection() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Mail className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-heading font-semibold text-muted-foreground">
+            <h3 className="text-base font-semibold text-muted-foreground">
               {searchQuery ? "No Matching Conversations" : "No Messages Yet"}
             </h3>
             <p className="text-sm text-muted-foreground mt-1 max-w-sm">
