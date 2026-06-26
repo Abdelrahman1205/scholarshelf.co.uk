@@ -9,10 +9,13 @@ import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
 
 function getRoleRoute(role: string): string {
+  if (role === "owner" || role === "platform_admin") return "/admin/owner";
   if (role === "school_admin") return "/admin/setup";
   if (role === "admin") return "/admin";
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
+  if (role === "finance") return "/finance";
+  if (role === "it_personnel") return "/admin";
   return "/login";
 }
 
@@ -183,12 +186,4 @@ export default function AcceptInvitePage() {
             <div className="mt-4 text-center">
               <a href="/login" className="text-sm text-primary hover:underline cursor-pointer inline-flex items-center gap-1"
                 onClick={(e) => { e.preventDefault(); setLocation("/login"); }}>
-                <ArrowLeft className="h-3 w-3" /> Already have an account? Sign in
-              </a>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
+                <ArrowLe

@@ -25,6 +25,7 @@ function getRoleRoute(role: string) {
   if (role === "teacher") return "/teacher";
   if (role === "parent") return "/parent";
   if (role === "finance") return "/finance";
+  if (role === "it_personnel") return "/admin";
   return "/login";
 }
 
@@ -98,7 +99,7 @@ function Router() {
       {/* Admin routes */}
       <Route path="/admin/:section?">
         {(params) => (
-          <AuthGuard allowedRoles={["admin", "school_admin", "owner", "platform_admin"]}>
+          <AuthGuard allowedRoles={["admin", "school_admin", "owner", "platform_admin", "it_personnel"]}>
             <Layout>
               <AdminPage section={params.section || "dashboard"} />
             </Layout>
@@ -150,9 +151,4 @@ function App() {
       <TooltipProvider>
         <Router />
         <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
-  );
-}
-
-export default App;
+      </TooltipP
