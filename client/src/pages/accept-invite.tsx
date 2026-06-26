@@ -186,4 +186,12 @@ export default function AcceptInvitePage() {
             <div className="mt-4 text-center">
               <a href="/login" className="text-sm text-primary hover:underline cursor-pointer inline-flex items-center gap-1"
                 onClick={(e) => { e.preventDefault(); setLocation("/login"); }}>
-                <ArrowLe
+                <ArrowLeft className="h-3 w-3" /> Already have an account? Sign in
+              </a>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

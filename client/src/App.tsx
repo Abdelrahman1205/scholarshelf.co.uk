@@ -151,4 +151,9 @@ function App() {
       <TooltipProvider>
         <Router />
         <Toaster />
-      </TooltipP
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+}
+
+export default App;

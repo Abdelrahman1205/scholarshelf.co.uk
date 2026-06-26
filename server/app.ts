@@ -91,7 +91,7 @@ async function ensureBootstrapSchema() {
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_at timestamp`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_by varchar(36)`);
-    // Multi-role: teacher profiles
+    // teacher_profiles table (used by getUserWithDetail and getTeacherProfile)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS teacher_profiles (
         id varchar(36) PRIMARY KEY,
@@ -105,10 +105,6 @@ async function ensureBootstrapSchema() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS teacher_profiles_user_id_idx ON teacher_profiles(user_id)`);
-    // Multi-role: parent_children extra columns (relationship, addedByAdminId, schoolId)
-    await pool.query(`ALTER TABLE parent_children ADD COLUMN IF NOT EXISTS relationship text`);
-    await pool.query(`ALTER TABLE parent_children ADD COLUMN IF NOT EXISTS added_by_admin_id varchar(36)`);
-    await pool.query(`ALTER TABLE parent_children ADD COLUMN IF NOT EXISTS school_id varchar(36)`);
   } catch (error) {
     console.warn("Schema bootstrap warning:", error);
   } finally {
@@ -190,4 +186,43 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.use(
     session({
       store: sessionStore,
-      secret: process.env.SESSION_SECRET || "edubo
+      secret: process.env.SESSION_SECRET || "edubook-session-secret-dev",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+      },
+    }),
+  );
+
+  await ensureBootstrapSchema();
+
+  await registerRoutes(httpServer, app);
+
+  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+
+    console.error("Internal Server Error:", err);
+
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    return res.status(status).json({ message });
+  });
+
+  if (!options.serverless) {
+    if (process.env.NODE_ENV === "production") {
+      serveStatic(app);
+    } else {
+      const { setupVite } = await import("./vite.js");
+      await setupVite(httpServer, app);
+    }
+  }
+
+  return { app, httpServer };
+}
