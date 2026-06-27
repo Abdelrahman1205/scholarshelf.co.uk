@@ -6,8 +6,32 @@ import type { SchoolBranding } from "../shared/schema.js";
 
 export const BRANDING_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
 
+// SECURITY: extensions AND MIME types accepted for branding uploads.
+// SVG is intentionally excluded — it can contain <script> tags (stored XSS).
 const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const ALLOWED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+// Magic bytes (file signatures) for each allowed MIME type.
+// Checking actual file bytes prevents MIME spoofing via the Content-Type header.
+const MAGIC_BYTES: Array<{ mime: string; bytes: number[]; offset?: number }> = [
+  { mime: "image/png",  bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { mime: "image/jpeg", bytes: [0xff, 0xd8, 0xff] },
+  { mime: "image/webp", bytes: [0x57, 0x45, 0x42, 0x50], offset: 8 }, // "WEBP" at byte 8
+];
+
+/**
+ * Returns the detected MIME type from the file's actual bytes, or null if
+ * the content does not match any allowed format.
+ */
+export function detectImageMimeType(buffer: Buffer): string | null {
+  for (const sig of MAGIC_BYTES) {
+    const offset = sig.offset ?? 0;
+    if (buffer.length < offset + sig.bytes.length) continue;
+    const match = sig.bytes.every((byte, i) => buffer[offset + i] === byte);
+    if (match) return sig.mime;
+  }
+  return null;
+}
 
 export type BrandingUploadField = "logo" | "banner" | "favicon" | "emailLogo" | "pdfLogo";
 
@@ -79,6 +103,12 @@ export function buildBrandingResponse(branding: Partial<SchoolBranding> | null |
   };
 }
 
+/**
+ * Multer fileFilter — first-pass check on extension and declared MIME type.
+ * A second check on actual magic bytes is performed in validateUploadedImage()
+ * AFTER multer has buffered the file, because fileFilter runs before we have
+ * access to the buffer.
+ */
 export function brandingFileFilter(_req: Request, file: Express.Multer.File, cb: FileFilterCallback) {
   const extension = path.extname(file.originalname || "").toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(extension)) {
@@ -90,6 +120,39 @@ export function brandingFileFilter(_req: Request, file: Express.Multer.File, cb:
     return;
   }
   cb(null, true);
+}
+
+/**
+ * Post-upload validation — checks actual file bytes against known magic numbers.
+ * Call this AFTER multer has processed the upload and file.buffer is populated.
+ *
+ * Returns the validated MIME type, or throws an Error if the content is invalid.
+ *
+ * This prevents MIME-type spoofing: a client claiming Content-Type: image/png
+ * while uploading an SVG or other payload is rejected here.
+ */
+export function validateUploadedImage(file: Express.Multer.File): string {
+  if (!file.buffer || file.buffer.length < 12) {
+    throw new Error("Uploaded file is empty or too small to be a valid image.");
+  }
+
+  const detectedMime = detectImageMimeType(file.buffer);
+  if (!detectedMime) {
+    throw new Error(
+      "File content does not match a supported image format (PNG, JPG, or WEBP). " +
+      "SVG and other formats are not accepted.",
+    );
+  }
+
+  // Ensure the detected type matches what was declared — defence-in-depth.
+  if (detectedMime !== file.mimetype) {
+    throw new Error(
+      `File content (${detectedMime}) does not match the declared type (${file.mimetype}). ` +
+      "Upload rejected.",
+    );
+  }
+
+  return detectedMime;
 }
 
 function extensionForMime(mimeType: string): string {
@@ -104,14 +167,18 @@ export async function storeBrandingImage(
   file: Express.Multer.File,
   _previousFileId?: string | null,
 ) {
-  const extension = extensionForMime(file.mimetype);
+  // SECURITY: Validate actual file bytes before accepting the upload.
+  const validatedMime = validateUploadedImage(file);
+
+  const extension = extensionForMime(validatedMime);
   const fileId = `${field}-${Date.now()}-${crypto.randomUUID()}${extension}`;
 
-  // Use data URLs for persistence across serverless deployments where local
-  // filesystem storage is not durable.
+  // NOTE: Images are currently stored as base64 data URIs in the database for
+  // serverless compatibility. This causes DB bloat and large API responses.
+  // TODO: Migrate to Vercel Blob / S3 object storage and store only the URL.
   const base64 = file.buffer.toString("base64");
   return {
     fileId,
-    url: `data:${file.mimetype};base64,${base64}`,
+    url: `data:${validatedMime};base64,${base64}`,
   };
 }

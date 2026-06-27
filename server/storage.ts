@@ -340,8 +340,8 @@ export interface IStorage {
   getUserWithDetail(userId: string, schoolId: string): Promise<any>;
   searchStudentsForAdmin(query: string, schoolId: string): Promise<any[]>;
 
-  // Users (not school-scoped in interface — filtered in routes)
-  getUsers(): Promise<schema.User[]>;
+  // Users — optional schoolId filters at the query layer to avoid full table scans.
+  getUsers(schoolId?: string | null): Promise<schema.User[]>;
   getUserByUsername(username: string): Promise<schema.User | undefined>;
   getUserByEmail(email: string): Promise<schema.User | undefined>;
   getUserById(id: string): Promise<schema.User | undefined>;
@@ -1757,13 +1757,20 @@ class DatabaseStorage implements IStorage {
 
   // === USERS ===
 
-  async getUsers(): Promise<schema.User[]> {
+  async getUsers(schoolId?: string | null): Promise<schema.User[]> {
     try {
-      return await getDb().select().from(schema.users);
+      const db = getDb();
+      if (schoolId) {
+        // Scoped query — avoids a full platform-wide user table scan.
+        return await db.select().from(schema.users).where(eq(schema.users.schoolId, schoolId));
+      }
+      return await db.select().from(schema.users);
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       ensureDemoUsersInMemory();
-      return Array.from(memoryUsers.values());
+      const all = Array.from(memoryUsers.values());
+      if (schoolId) return all.filter((u) => u.schoolId === schoolId);
+      return all;
     }
   }
 

@@ -34,7 +34,7 @@ import nodeCrypto from "crypto";
 import {
   sendInviteEmail, sendParentCodeEmail, isResendConfigured,
 } from "../email.js";
-import { BRANDING_PERMISSIONS } from "../../shared/schema.js";
+import { BRANDING_PERMISSIONS, USER_ROLES } from "../../shared/schema.js";
 
 export function registerUserRoutes(app: Express): void {
   // === USERS (admin-scoped; includes school-linked parents) ===

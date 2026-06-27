@@ -10,7 +10,8 @@ import type { Express, Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import multer from "multer";
-import { storage } from "../storage.js";
+import { storage, getStorageMode } from "../storage.js";
+export { getStorageMode };
 import {
   BRANDING_UPLOAD_MAX_BYTES,
   brandingFileFilter,

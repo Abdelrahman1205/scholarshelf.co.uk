@@ -22,6 +22,7 @@ import { registerMessageRoutes } from "./message.routes.js";
 import { registerNotificationRoutes } from "./notification.routes.js";
 import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
+import bcrypt from "bcryptjs";
 
 export async function registerRoutes(
   httpServer: Server,

@@ -16,9 +16,23 @@
  * - The webhook secret (WEBHOOK_SECRET) should be set as an env variable for HMAC verification.
  */
 
+// ── Security: use ESM import, never require() ──────────────────────────────
+import crypto from "crypto";
+
 const EXTERNAL_API_BASE_URL = process.env.EXTERNAL_PAYMENT_API_URL || "";
 const EXTERNAL_API_KEY = process.env.EXTERNAL_PAYMENT_API_KEY || "";
 export const WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET || "";
+
+// ── Startup assertion ──────────────────────────────────────────────────────
+// In production, a missing webhook secret means every webhook call is accepted
+// without verification — a critical payment-manipulation vulnerability.
+if (process.env.NODE_ENV === "production" && !WEBHOOK_SECRET) {
+  throw new Error(
+    "[SECURITY] PAYMENT_WEBHOOK_SECRET must be set in production. " +
+    "Without it, any unauthenticated request can confirm or cancel payments. " +
+    "Generate a secret with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+  );
+}
 
 export const isExternalIntegrationEnabled = (): boolean => {
   return !!(EXTERNAL_API_BASE_URL && EXTERNAL_API_KEY);
@@ -53,7 +67,7 @@ export interface ExternalWebhookPayload {
  * Replace the body of this function with the actual API call once credentials are provided.
  */
 export async function createExternalPayment(
-  request: ExternalPaymentRequest
+  request: ExternalPaymentRequest,
 ): Promise<ExternalPaymentResponse | null> {
   if (!isExternalIntegrationEnabled()) {
     return null;
@@ -101,24 +115,32 @@ export async function createExternalPayment(
 }
 
 /**
- * Verifies the HMAC signature on incoming webhook calls from the external system.
- * The external system must sign the payload with the shared WEBHOOK_SECRET.
+ * Verifies the HMAC-SHA256 signature on incoming webhook calls.
+ *
+ * SECURITY: Fails CLOSED — returns false if the secret is not configured rather
+ * than accepting all traffic. In production the startup assertion above ensures
+ * the secret is always set, so this branch is a defence-in-depth safety net.
  */
 export function verifyWebhookSignature(
   rawBody: string,
-  receivedSignature: string
+  receivedSignature: string,
 ): boolean {
-  if (!WEBHOOK_SECRET) return true;
+  // Fail closed: no secret → reject all webhook calls.
+  if (!WEBHOOK_SECRET) {
+    console.error("[PaymentIntegration][SECURITY] PAYMENT_WEBHOOK_SECRET is not set — rejecting webhook.");
+    return false;
+  }
   try {
-    const crypto = require("crypto");
     const expected = crypto
       .createHmac("sha256", WEBHOOK_SECRET)
       .update(rawBody)
       .digest("hex");
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, "hex"),
-      Buffer.from(receivedSignature.replace("sha256=", ""), "hex")
-    );
+    const received = receivedSignature.replace(/^sha256=/i, "");
+    // timingSafeEqual requires equal-length buffers.
+    const expectedBuf = Buffer.from(expected, "hex");
+    const receivedBuf = Buffer.from(received, "hex");
+    if (expectedBuf.length !== receivedBuf.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, receivedBuf);
   } catch {
     return false;
   }
