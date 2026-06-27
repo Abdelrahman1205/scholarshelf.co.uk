@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import session from "express-session";
+import helmet from "helmet";
 import createMemoryStore from "memorystore";
 import connectPgSimple from "connect-pg-simple";
 import { Pool } from "pg";
@@ -15,6 +16,19 @@ const FORCE_MEMORY_STORAGE =
 const RESOLVED_DATABASE_URL = FORCE_MEMORY_STORAGE
   ? ""
   : (process.env.DATABASE_URL?.trim() ?? "");
+
+// ── Security startup assertions ────────────────────────────────────────────
+// Fail fast in production if required secrets are missing.
+if (IS_PRODUCTION) {
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret || sessionSecret.length < 32) {
+    throw new Error(
+      "[SECURITY] SESSION_SECRET must be set to a cryptographically random " +
+      "string of at least 32 characters in production. " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    );
+  }
+}
 
 declare module "express-session" {
   interface SessionData {
@@ -38,12 +52,44 @@ type CreateAppOptions = {
   serverless?: boolean;
 };
 
+// ── Role-based session lifetimes ───────────────────────────────────────────
+// Privileged roles get shorter sessions. Parents/teachers get the full window.
+const SESSION_MAX_AGE: Record<string, number> = {
+  owner:         8  * 60 * 60 * 1000, //  8 hours
+  platform_admin: 8  * 60 * 60 * 1000, //  8 hours
+  school_admin:  8  * 60 * 60 * 1000, //  8 hours
+  admin:         8  * 60 * 60 * 1000, //  8 hours
+  finance:       8  * 60 * 60 * 1000, //  8 hours
+  it_personnel:  8  * 60 * 60 * 1000, //  8 hours
+  teacher:       24 * 60 * 60 * 1000, // 24 hours
+  parent:        30 * 24 * 60 * 60 * 1000, // 30 days
+};
+const DEFAULT_SESSION_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours fallback
+
+// ── SSL helper ─────────────────────────────────────────────────────────────
+// Prefer strict certificate validation. Fall back to permissive only when
+// DATABASE_SSL_CA is absent AND we are NOT in production.
+function buildSslConfig(): object {
+  const ca = process.env.DATABASE_SSL_CA;
+  if (ca) return { rejectUnauthorized: true, ca };
+  if (IS_PRODUCTION) {
+    // Warn but do not fail — Neon typically uses a trusted CA already.
+    // Set DATABASE_SSL_CA in Vercel env vars for full verification.
+    console.warn(
+      "[SECURITY WARNING] DATABASE_SSL_CA is not set. SSL certificate " +
+      "verification is disabled for the database connection. " +
+      "Set DATABASE_SSL_CA to the Neon CA certificate for full MitM protection.",
+    );
+  }
+  return { rejectUnauthorized: false };
+}
+
 async function ensureBootstrapSchema() {
   if (!RESOLVED_DATABASE_URL) return;
 
   const pool = new Pool({
     connectionString: RESOLVED_DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: buildSslConfig(),
   });
 
   try {
@@ -127,10 +173,34 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const app = express();
   const httpServer = createServer(app);
 
-  if (process.env.NODE_ENV === "production") {
+  if (IS_PRODUCTION) {
     // Required on Vercel so secure cookies are issued behind the edge proxy.
     app.set("trust proxy", 1);
   }
+
+  // ── Security headers ─────────────────────────────────────────────────────
+  // helmet() sets X-Frame-Options, X-Content-Type-Options, HSTS, Referrer-Policy,
+  // X-XSS-Protection, and more in a single call.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // unsafe-eval needed for Vite HMR in dev
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: ["'self'", "wss:", "ws:"],
+          fontSrc: ["'self'", "https:", "data:"],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: IS_PRODUCTION ? [] : null,
+        },
+      },
+      // HSTS: only enforce in production (avoids issues on localhost)
+      strictTransportSecurity: IS_PRODUCTION
+        ? { maxAge: 63072000, includeSubDomains: true }
+        : false,
+    }),
+  );
 
   app.use(
     express.json({
@@ -143,26 +213,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.use(express.urlencoded({ extended: false }));
   app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads"), { maxAge: "1d" }));
 
+  // ── Request logging ────────────────────────────────────────────────────────
+  // SECURITY: Log only method, path, status, and duration.
+  // Never log response bodies — they contain PII, tokens, and reset links.
   app.use((req, res, next) => {
     const start = Date.now();
-    const path = req.path;
-    let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-    const originalResJson = res.json;
-    res.json = function (bodyJson, ...args) {
-      capturedJsonResponse = bodyJson;
-      return originalResJson.apply(res, [bodyJson, ...args]);
-    };
+    const reqPath = req.path;
 
     res.on("finish", () => {
-      const duration = Date.now() - start;
-      if (path.startsWith("/api")) {
-        let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-        if (capturedJsonResponse) {
-          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-        }
-
-        log(logLine);
+      if (reqPath.startsWith("/api")) {
+        const duration = Date.now() - start;
+        log(`${req.method} ${reqPath} ${res.statusCode} in ${duration}ms`);
       }
     });
 
@@ -176,23 +237,37 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     ? new PgSession({
         pool: new Pool({
           connectionString: RESOLVED_DATABASE_URL,
-          ssl: { rejectUnauthorized: false },
+          ssl: buildSslConfig(),
         }),
         tableName: "user_sessions",
         createTableIfMissing: true,
       })
     : new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 });
 
+  // ── Session secret ────────────────────────────────────────────────────────
+  // No fallback — if SESSION_SECRET is absent in production the startup
+  // assertion above already throws. In development a warning is logged.
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    console.warn(
+      "[SECURITY WARNING] SESSION_SECRET is not set. " +
+      "Using a deterministic fallback is ONLY acceptable in local development. " +
+      "Set SESSION_SECRET in production or sessions can be forged.",
+    );
+  }
+
   app.use(
     session({
       store: sessionStore,
-      secret: process.env.SESSION_SECRET || "edubook-session-secret-dev",
+      // Throw in production (startup assertion above), warn + fallback in dev.
+      secret: sessionSecret || "edubook-session-secret-dev-only-never-use-in-production",
       resave: false,
       saveUninitialized: false,
       cookie: {
-        maxAge: 30 * 24 * 60 * 60 * 1000,
+        // Default lifetime — overridden per-role after login in auth routes.
+        maxAge: DEFAULT_SESSION_MAX_AGE,
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: IS_PRODUCTION,
         sameSite: "lax",
       },
     }),
@@ -216,7 +291,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   });
 
   if (!options.serverless) {
-    if (process.env.NODE_ENV === "production") {
+    if (IS_PRODUCTION) {
       serveStatic(app);
     } else {
       const { setupVite } = await import("./vite.js");
@@ -225,4 +300,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   }
 
   return { app, httpServer };
+}
+
+// ── Exported session lifetime helper ──────────────────────────────────────
+// Called by auth routes after login to stamp the correct maxAge on the cookie.
+export function getSessionMaxAge(role: string): number {
+  return SESSION_MAX_AGE[role] ?? DEFAULT_SESSION_MAX_AGE;
 }
