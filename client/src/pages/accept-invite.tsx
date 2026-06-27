@@ -7,17 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
-
-function getRoleRoute(role: string): string {
-  if (role === "owner" || role === "platform_admin") return "/admin/owner";
-  if (role === "school_admin") return "/admin/setup";
-  if (role === "admin") return "/admin";
-  if (role === "teacher") return "/teacher";
-  if (role === "parent") return "/parent";
-  if (role === "finance") return "/finance";
-  if (role === "it_personnel") return "/admin";
-  return "/login";
-}
+import { getRoleRoute } from "@/lib/role-routes";
 
 export default function AcceptInvitePage() {
   const search = useSearch();
@@ -65,7 +55,7 @@ export default function AcceptInvitePage() {
   useEffect(() => {
     if (token) return;
     if (isAuthenticated && user) {
-      setLocation(getRoleRoute(user.role));
+      setLocation(getRoleRoute(user.role, { isNewAccount: true }));
     }
   }, [token, isAuthenticated, user, setLocation]);
 
@@ -102,7 +92,7 @@ export default function AcceptInvitePage() {
     }
     try {
       const loggedInUser = await acceptInvite({ token, name, username, password });
-      setLocation(getRoleRoute(loggedInUser.role));
+      setLocation(getRoleRoute(loggedInUser.role, { isNewAccount: true }));
     } catch {}
   }
 

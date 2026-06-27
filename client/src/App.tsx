@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/use-auth";
+import { getRoleRoute } from "@/lib/role-routes";
 
 import Layout from "@/components/layout";
 import AdminPage from "@/pages/admin";
@@ -17,17 +18,6 @@ import RegisterPage from "@/pages/register";
 import AcceptInvitePage from "@/pages/accept-invite";
 import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
-
-function getRoleRoute(role: string) {
-  if (role === "owner" || role === "platform_admin") return "/admin/owner";
-  if (role === "school_admin") return "/admin";
-  if (role === "admin") return "/admin";
-  if (role === "teacher") return "/teacher";
-  if (role === "parent") return "/parent";
-  if (role === "finance") return "/finance";
-  if (role === "it_personnel") return "/admin";
-  return "/login";
-}
 
 function AuthGuard({ children, allowedRoles }: { children: React.ReactNode; allowedRoles: string[] }) {
   const { user, isLoading, isAuthenticated } = useAuth();

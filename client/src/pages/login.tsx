@@ -6,17 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
-
-function getRoleRoute(role: string): string {
-  if (role === "owner" || role === "platform_admin") return "/admin/owner";
-  if (role === "school_admin") return "/admin";
-  if (role === "admin") return "/admin";
-  if (role === "teacher") return "/teacher";
-  if (role === "parent") return "/parent";
-  if (role === "finance") return "/finance";
-  if (role === "it_personnel") return "/admin";
-  return "/login";
-}
+import { getRoleRoute } from "@/lib/role-routes";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
