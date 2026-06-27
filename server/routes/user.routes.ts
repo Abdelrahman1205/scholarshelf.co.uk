@@ -30,6 +30,7 @@ import {
 } from "../middleware/auth.js";
 
 import bcrypt from "bcryptjs";
+import nodeCrypto from "crypto";
 import {
   sendInviteEmail, sendParentCodeEmail, isResendConfigured,
 } from "../email.js";
@@ -618,7 +619,7 @@ export function registerUserRoutes(app: Express): void {
         return res.status(409).json({ message: "A pending invite for this email already exists" });
       }
 
-      const rawToken = crypto.randomBytes(32).toString("hex");
+      const rawToken = nodeCrypto.randomBytes(32).toString("hex");
       const tokenHash = await bcrypt.hash(rawToken, 10);
 
       const invite = await storage.createInvite({

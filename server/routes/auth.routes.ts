@@ -27,8 +27,12 @@ import {
   brandingUpload, runSingleBrandingUpload,
   canViewBranding, canManageBranding, canManageBrandingOperation, resolveTenantBranding,
   getBrandingPermissionSet,
+  getStorageMode,
+  ensureSessionSchoolIsActive,
 } from "../middleware/auth.js";
+import type { EmailBrandingPayload } from "../middleware/auth.js";
 import { buildBrandingResponse } from "../branding.js";
+import { getSessionMaxAge } from "../app.js";
 
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -126,6 +130,10 @@ export function registerAuthRoutes(app: Express): void {
         req.session.role = user.role;
         req.session.activeContext = resolveRole(user.role);
         req.session.schoolId = user.schoolId;
+        // Apply role-based session lifetime (privileged roles get 8h, parents 30d).
+        if (req.session.cookie) {
+          req.session.cookie.maxAge = getSessionMaxAge(resolveRole(user.role));
+        }
 
         storage.updateLastLogin(user.id).catch(() => {});
         auditLog(req, "login_success", `user:${user.id}`).catch(() => {});
@@ -190,6 +198,10 @@ export function registerAuthRoutes(app: Express): void {
         req.session.role = user.role;
         req.session.activeContext = "parent";
         req.session.schoolId = null;
+        // Parents get a longer session; apply the role-based lifetime.
+        if (req.session.cookie) {
+          req.session.cookie.maxAge = getSessionMaxAge("parent");
+        }
         buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
       });
     } catch (e: any) {
@@ -259,6 +271,10 @@ export function registerAuthRoutes(app: Express): void {
 
   app.get("/api/invites/:token", async (req, res) => {
     try {
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      if (rateLimit(`invite-lookup:${ip}`, 20, 15 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many requests. Please try again later." });
+      }
       const token = routeParam(req.params.token);
       const resolved = await resolveInviteByToken(token);
       if ("error" in resolved) {
@@ -289,6 +305,10 @@ export function registerAuthRoutes(app: Express): void {
 
   app.post("/api/invites/:token/accept", async (req, res) => {
     try {
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      if (rateLimit(`invite-accept:${ip}`, 10, 15 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many requests. Please try again later." });
+      }
       const token = routeParam(req.params.token);
       const parsed = acceptInviteSchema.omit({ token: true }).safeParse(req.body);
       if (!parsed.success) {
@@ -374,6 +394,10 @@ export function registerAuthRoutes(app: Express): void {
   // POST /api/auth/reset-password
   app.post("/api/auth/reset-password", async (req, res) => {
     try {
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      if (rateLimit(`reset-password:${ip}`, 5, 15 * 60 * 1000)) {
+        return res.status(429).json({ message: "Too many requests. Please try again later." });
+      }
       const parsed = resetPasswordSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid reset data" });

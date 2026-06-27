@@ -27,6 +27,7 @@ import {
   brandingUpload, runSingleBrandingUpload,
   canViewBranding, canManageBranding, canManageBrandingOperation, resolveTenantBranding,
   getBrandingPermissionSet,
+  getTeacherAssignedClasses,
 } from "../middleware/auth.js";
 
 

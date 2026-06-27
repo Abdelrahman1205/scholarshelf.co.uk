@@ -30,6 +30,7 @@ import {
 } from "../middleware/auth.js";
 
 import bcrypt from "bcryptjs";
+import nodeCrypto from "crypto";
 import {
   sendInviteEmail, sendSchoolSetupInviteEmail, isResendConfigured,
 } from "../email.js";
@@ -613,7 +614,7 @@ export function registerOwnerRoutes(app: Express): void {
         return res.status(404).json({ message: "School not found" });
       }
 
-      const rawToken = crypto.randomBytes(32).toString("hex");
+      const rawToken = nodeCrypto.randomBytes(32).toString("hex");
       const tokenHash = await bcrypt.hash(rawToken, 10);
 
       const invite = await storage.createInvite({
@@ -689,7 +690,7 @@ export function registerOwnerRoutes(app: Express): void {
         await storage.revokeInvite(invite.id);
       }
 
-      const rawToken = crypto.randomBytes(32).toString("hex");
+      const rawToken = nodeCrypto.randomBytes(32).toString("hex");
       const tokenHash = await bcrypt.hash(rawToken, 10);
 
       const replacement = await storage.createInvite({

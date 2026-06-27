@@ -27,6 +27,7 @@ import {
   brandingUpload, runSingleBrandingUpload,
   canViewBranding, canManageBranding, canManageBrandingOperation, resolveTenantBranding,
   getBrandingPermissionSet,
+  isDbUnavailableError,
 } from "../middleware/auth.js";
 
 

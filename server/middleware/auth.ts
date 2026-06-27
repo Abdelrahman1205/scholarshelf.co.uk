@@ -8,17 +8,18 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import multer from "multer";
-import { storage } from "./storage.js";
+import { storage } from "../storage.js";
 import {
   BRANDING_UPLOAD_MAX_BYTES,
   brandingFileFilter,
   buildBrandingResponse,
-} from "./branding.js";
+} from "../branding.js";
 import {
   LEGACY_ROLE_MAP,
   BRANDING_PERMISSIONS,
-} from "../shared/schema.js";
+} from "../../shared/schema.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -65,18 +66,23 @@ export function runSingleBrandingUpload(req: Request, res: Response): Promise<vo
 // ─── Utility helpers ───────────────────────────────────────────────────────────
 
 export function generateLinkingCode(): string {
+  // SECURITY: use crypto.randomBytes() — Math.random() is predictable.
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.randomBytes(6); // 6 random bytes → 6 character positions
   let code = "";
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 6; i++) {
     if (i === 3) code += "-";
-    code += chars[Math.floor(Math.random() * chars.length)];
+    code += chars[bytes[i] % chars.length];
   }
   return code;
 }
 
 export function generatePaymentReference(): string {
+  // SECURITY: use crypto.randomBytes() — Math.random() is predictable.
+  // Format: EDU-<timestamp>-<8 random hex chars> — timestamp for traceability,
+  // random suffix for uniqueness and unpredictability.
   const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const rand = crypto.randomBytes(4).toString("hex").toUpperCase();
   return `EDU-${ts}-${rand}`;
 }
 
@@ -154,9 +160,29 @@ export function isInSupportMode(req: Request): boolean {
   return isPlatformOwnerRole(req.session.role) && !!req.session.supportSchoolId;
 }
 
-// ─── Rate limiting (in-memory — dev/single-instance only) ─────────────────────
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+//
+// IMPORTANT — PRODUCTION LIMITATION:
+// This implementation stores counters in process memory (a Map). On serverless
+// platforms (Vercel), each cold start creates a fresh process with an empty Map,
+// making the limit effectively useless under concurrent invocations.
+//
+// For production: replace rateLimitStore with a shared store backed by
+// PostgreSQL or Redis (e.g., Upstash Redis + ioredis). Until then, this
+// provides rate-limiting only on single-instance / local deployments.
+// The startup warning below alerts operators in production.
 
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+// Warn on startup so this limitation is visible in production logs.
+if (process.env.NODE_ENV === "production") {
+  console.warn(
+    "[SECURITY WARNING] In-memory rate limiter is active. " +
+    "On serverless deployments (Vercel), rate limits are NOT enforced across " +
+    "concurrent function instances. Replace rateLimitStore with a distributed " +
+    "store (Redis/PostgreSQL) before deploying at scale.",
+  );
+}
 export function rateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
   const now = Date.now();
   const entry = rateLimitStore.get(key);
@@ -612,7 +638,7 @@ export const SCHOOL_SETUP_STEP_LABELS: Record<string, string> = {
 export async function getSchoolSetupState(schoolId: string) {
   const [school, users, classes, books, bookLevels, classBookLevels, students, linkingCodes, payments, branding] = await Promise.all([
     storage.getSchoolById(schoolId),
-    storage.getUsers(),
+    storage.getUsers(schoolId), // scoped: avoids full platform user table scan
     storage.getClasses(schoolId),
     storage.getBooks(schoolId),
     storage.getBookLevels(schoolId),
@@ -688,21 +714,59 @@ export async function getSchoolSetupState(schoolId: string) {
   };
 }
 
+
+// ─── Teacher class helper ─────────────────────────────────────────────────────
+// Shared between book.routes.ts and allocation.routes.ts.
+export async function getTeacherAssignedClasses(
+  teacherUserId: string,
+  schoolId?: string | null,
+) {
+  if (!schoolId) return [];
+  const scopedClasses = await storage.getClasses(schoolId);
+  const assignedById = new Map(
+    scopedClasses
+      .filter((cls) => cls.teacherId === teacherUserId)
+      .map((cls) => [cls.id, cls]),
+  );
+  const schoolStudents = await storage.getStudents(schoolId);
+  const schoolStudentClassIds = new Set(
+    schoolStudents
+      .map((student) => student.classId)
+      .filter((classId): classId is string => !!classId),
+  );
+  const missingClassIds = Array.from(schoolStudentClassIds).filter((classId) => !assignedById.has(classId));
+  if (missingClassIds.length > 0) {
+    const allClasses = await storage.getClasses();
+    for (const cls of allClasses) {
+      if (!schoolStudentClassIds.has(cls.id)) continue;
+      if (cls.teacherId !== teacherUserId) continue;
+      assignedById.set(cls.id, cls);
+    }
+  }
+  return Array.from(assignedById.values());
+}
+
 // ─── Scoped user helpers ───────────────────────────────────────────────────────
 
 export async function getScopedAdminUsers(req: Request): Promise<any[]> {
   if (isPlatformOwnerRequest(req)) {
     const schoolFilter = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
-    const users = await storage.getUsers();
-    if (!schoolFilter) return users;
-    return users.filter((u) => u.schoolId === schoolFilter);
+    // Pass schoolFilter to getUsers() so the DB does the filtering, not JS.
+    const users = await storage.getUsers(schoolFilter ?? undefined);
+    return users;
   }
   const sid = sessionSchoolId(req);
-  const allUsers = await storage.getUsers();
-  if (!sid) return allUsers.filter((u) => !isPlatformOwnerRole(u.role) && !u.schoolId);
+  if (!sid) {
+    // No school context — return unassigned non-platform users only.
+    const allUsers = await storage.getUsers();
+    return allUsers.filter((u) => !isPlatformOwnerRole(u.role) && !u.schoolId);
+  }
 
-  const scoped = allUsers.filter((u) => u.schoolId === sid);
-  const parentUsers = allUsers.filter((u) => resolveRole(u.role) === "parent" && !!u.email);
+  // Scoped query: only fetch users belonging to this school.
+  const scoped = await storage.getUsers(sid);
+  // Additionally pull parent users from other schools who are linked to this school.
+  const allUsers = await storage.getUsers();
+  const parentUsers = allUsers.filter((u) => resolveRole(u.role) === "parent" && !!u.email && u.schoolId !== sid);
   const linkingCodes = await storage.getLinkingCodes(sid);
   const linkedParentEmails = new Set(
     linkingCodes.map((c) => normalizeEmail(c.parentEmail)).filter((e): e is string => !!e),
