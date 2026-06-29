@@ -655,7 +655,7 @@ function DashboardSection() {
             { label: "Classes", href: "/admin/classes" },
             { label: "Students", href: "/admin/students" },
             { label: "Parents", href: "/admin/parents" },
-            { label: "Parent Codes", href: "/admin/codes" },
+            { label: "Parent Invites", href: "/admin/codes" },
             { label: "Payments", href: "/admin/payments" },
             { label: "Allocations", href: "/admin/allocations" },
             { label: "Teacher Requests", href: "/admin/requests" },
