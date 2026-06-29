@@ -31,7 +31,7 @@ export default function ForgotPasswordPage() {
           <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary/10 mb-4">
             <BookOpen className="h-8 w-8 text-primary" />
           </div>
-          <h1 className="font-heading text-3xl font-bold tracking-tight">EduBook</h1>
+          <h1 className="font-heading text-3xl font-bold tracking-tight">Scholar Shelf</h1>
           <p className="text-muted-foreground mt-1">Password Recovery</p>
         </div>
 

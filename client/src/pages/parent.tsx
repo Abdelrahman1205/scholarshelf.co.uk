@@ -1179,7 +1179,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
                 <Label htmlFor="ref-number">Payment Reference Number *</Label>
                 <Input
                   id="ref-number"
-                  placeholder="Enter reference from your school's payment app App"
+                  placeholder="Enter reference from your school's payment app"
                   value={refNumber}
                   onChange={(e) => setRefNumber(e.target.value)}
                   className="font-mono"

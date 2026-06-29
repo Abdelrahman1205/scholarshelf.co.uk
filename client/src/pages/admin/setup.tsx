@@ -81,7 +81,7 @@ function SetupSection() {
     { key: "bookLevelsCreated", label: "Book levels created" },
     { key: "bookLevelsAssignedToClasses", label: "Book levels assigned to classes" },
     { key: "studentsAdded", label: "Students added" },
-    { key: "parentCodesGenerated", label: "Parent codes generated" },
+    { key: "parentCodesGenerated", label: "Parent invites sent" },
     { key: "parentsLinked", label: "Parents linked" },
     { key: "paymentSetupReviewed", label: "Payment setup reviewed" },
     { key: "operationalSetupComplete", label: "Operational setup complete" },

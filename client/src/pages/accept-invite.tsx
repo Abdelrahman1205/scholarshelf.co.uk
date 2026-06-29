@@ -119,7 +119,7 @@ export default function AcceptInvitePage() {
               <BookOpen className="h-8 w-8 text-primary" />
             )}
           </div>
-          <h1 className="font-heading text-3xl font-bold tracking-tight">{inviteInfo?.schoolName || "EduBook"}</h1>
+          <h1 className="font-heading text-3xl font-bold tracking-tight">{inviteInfo?.schoolName || "Scholar Shelf"}</h1>
           <p className="text-muted-foreground mt-1">Accept Your Invitation</p>
         </div>
 
@@ -131,7 +131,7 @@ export default function AcceptInvitePage() {
                 ? "Checking your secure invite..."
                 : inviteInfo?.schoolName
                   ? `You've been invited to join ${inviteInfo.schoolName}. Complete your profile below.`
-                  : "You've been invited to join EduBook. Complete your profile below."}
+                  : "You've been invited to join Scholar Shelf. Complete your profile below."}
             </CardDescription>
           </CardHeader>
           <CardContent>

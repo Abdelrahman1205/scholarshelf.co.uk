@@ -35,7 +35,7 @@ function ClassesSection() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<any>(null);
-  const [form, setForm] = useState({ name: "", academicYear: "2025-2026", teacherId: "" });
+  const [form, setForm] = useState({ name: "", academicYear: "2026-2027", teacherId: "" });
 
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], queryFn: getQueryFn({ on401: "throw" }) });
@@ -43,7 +43,7 @@ function ClassesSection() {
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/classes", data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/classes"] }); setAddOpen(false); toast({ title: "Class created" }); setForm({ name: "", academicYear: "2025-2026", teacherId: "" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/classes"] }); setAddOpen(false); toast({ title: "Class created" }); setForm({ name: "", academicYear: "2026-2027", teacherId: "" }); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
@@ -66,7 +66,7 @@ function ClassesSection() {
           <h1 className="text-xl font-bold tracking-tight">Classes</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage school classes and teacher assignments.</p>
         </div>
-        <Button onClick={() => { setForm({ name: "", academicYear: "2025-2026", teacherId: "" }); setAddOpen(true); }}>
+        <Button onClick={() => { setForm({ name: "", academicYear: "2026-2027", teacherId: "" }); setAddOpen(true); }}>
           <Plus className="w-4 h-4 mr-2" /> Add Class
         </Button>
       </div>
@@ -88,7 +88,7 @@ function ClassesSection() {
                 <TableCell className="text-muted-foreground">{cls.academicYear || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{users.find((u: any) => u.id === cls.teacherId)?.name || "Not assigned"}</TableCell>
                 <TableCell className="text-right space-x-1">
-                  <Button variant="ghost" size="sm" onClick={() => { setSelectedClass(cls); setForm({ name: cls.name || "", academicYear: cls.academicYear || "2025-2026", teacherId: cls.teacherId || "none" }); setEditOpen(true); }}>
+                  <Button variant="ghost" size="sm" onClick={() => { setSelectedClass(cls); setForm({ name: cls.name || "", academicYear: cls.academicYear || "2026-2027", teacherId: cls.teacherId || "none" }); setEditOpen(true); }}>
                     <Pencil className="w-4 h-4" />
                   </Button>
                   <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }}>
