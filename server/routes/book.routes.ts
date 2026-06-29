@@ -310,5 +310,15 @@ export function registerBookRoutes(app: Express): void {
     }
   });
 
+  app.delete("/api/class-book-levels/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      await storage.removeClassBookLevel(routeParam(req.params.id), sid);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   // === LINKING CODES (school-scoped) ===
 }

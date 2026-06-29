@@ -81,7 +81,7 @@ export function registerPaymentRoutes(app: Express): void {
         const setupState = await getSchoolSetupState(sid);
         if (!setupState) return res.status(404).json({ message: "School not found" });
         if (!setupState.operationalSetupComplete) {
-          return res.status(409).json({ message: "Complete school setup before confirming payments.", missingSteps: setupState.missingSteps });
+          return res.status(409).json({ message: "School setup is incomplete. Please finish the setup checklist before confirming payments.", missingSteps: setupState.missingSteps });
         }
       }
       const { reviewNote } = req.body || {};

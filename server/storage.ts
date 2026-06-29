@@ -280,6 +280,7 @@ export interface IStorage {
   // Class Book Levels
   getClassBookLevels(schoolId?: string | null): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]>;
   assignClassBookLevel(cbl: schema.InsertClassBookLevel): Promise<schema.ClassBookLevel>;
+  removeClassBookLevel(id: string, schoolId?: string | null): Promise<void>;
 
   // Linking Codes
   getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]>;
@@ -1017,6 +1018,17 @@ class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async removeClassBookLevel(id: string, schoolId?: string | null): Promise<void> {
+    const [cbl] = await getDb().select().from(schema.classBookLevels).where(eq(schema.classBookLevels.id, id));
+    if (!cbl) throw new Error("Assignment not found");
+    // Verify school ownership via the linked class
+    if (schoolId) {
+      const [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, cbl.classId));
+      if (cls?.schoolId !== schoolId) throw new Error("Access denied");
+    }
+    await getDb().delete(schema.classBookLevels).where(eq(schema.classBookLevels.id, id));
+  }
+
   // === LINKING CODES ===
 
   async getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]> {
@@ -1147,10 +1159,10 @@ class DatabaseStorage implements IStorage {
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
     const [student] = await getDb().select().from(schema.students).where(and(...conditions));
-    if (!student || !student.classId) throw new Error("Student or class not found");
+    if (!student || !student.classId) throw new Error("Your child's details couldn't be found. Please contact the school.");
 
     const classLevels = await getDb().select().from(schema.classBookLevels).where(eq(schema.classBookLevels.classId, student.classId));
-    if (classLevels.length === 0) throw new Error("No book level assigned to this class");
+    if (classLevels.length === 0) throw new Error("Your child's book list isn't ready yet. Please contact the school to let them know.");
 
     const allItems: { bookId: string; quantity: number; unitPrice: string }[] = [];
     for (const cl of classLevels) {
@@ -1166,7 +1178,7 @@ class DatabaseStorage implements IStorage {
       }
     }
 
-    if (allItems.length === 0) throw new Error("No books found in the assigned level");
+    if (allItems.length === 0) throw new Error("No books have been added to your child's level yet. Please check back soon or contact the school.");
 
     let total = 0;
     for (const item of allItems) {

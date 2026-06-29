@@ -67,6 +67,12 @@ function BookLevelsSection() {
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
+  const removeAssignmentMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/class-book-levels/${id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/class-book-levels"] }); toast({ title: "Assignment removed" }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -87,8 +93,16 @@ function BookLevelsSection() {
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-2">
               {classBookLevels.map((cbl: any) => (
-                <Badge key={cbl.id} variant="outline" className="py-1 px-3">
+                <Badge key={cbl.id} variant="outline" className="py-1 px-3 flex items-center gap-1.5">
                   {cbl.class?.name || "?"} → {cbl.bookLevel?.name || "?"}
+                  <button
+                    onClick={() => removeAssignmentMutation.mutate(cbl.id)}
+                    disabled={removeAssignmentMutation.isPending}
+                    className="ml-0.5 rounded-full hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                    aria-label="Remove assignment"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </Badge>
               ))}
             </div>
