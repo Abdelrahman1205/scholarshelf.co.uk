@@ -508,7 +508,7 @@ function ParentBasketsSection({
             </DialogTitle>
             <DialogDescription>
               {paymentResult
-                ? "Your order has been created. Please pay using the Paragon App, then submit your payment reference."
+                ? "Your order has been created. Please pay using your school's payment app, then submit your payment reference."
                 : "Review the order details below and proceed to create your order."}
             </DialogDescription>
           </DialogHeader>
@@ -533,8 +533,8 @@ function ParentBasketsSection({
                 <p className="font-semibold text-blue-700">How to Pay</p>
                 <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
                   <li>Create your order below</li>
-                  <li>Pay using the <strong>Paragon App</strong> (your school&apos;s official payment system)</li>
-                  <li>Come back to the <strong>Payments</strong> section and enter the reference number from Paragon</li>
+                  <li>Pay using your school's payment app (your school&apos;s official payment system)</li>
+                  <li>Come back to the <strong>Payments</strong> section and enter the reference number from your school's payment app</li>
                   <li>The school will verify your payment and allocate the books</li>
                 </ol>
               </div>
@@ -561,7 +561,7 @@ function ParentBasketsSection({
               </div>
               <div className="rounded-lg border border-amber-500/30 p-3 bg-amber-500/5 text-sm text-amber-700">
                 <p className="font-medium">Next Step:</p>
-                <p>Pay using the <strong>Paragon App</strong>, then go to the <strong>Payments</strong> section to submit your payment reference number.</p>
+                <p>Pay using your school's payment app, then go to the <strong>Payments</strong> section to submit your payment reference number.</p>
               </div>
             </div>
           )}
@@ -628,7 +628,7 @@ function ParentPaymentsSection({
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-3xl font-heading font-bold tracking-tight text-foreground">Payments</h1>
-        <p className="text-muted-foreground mt-2">Submit your Paragon payment reference and track payment statuses.</p>
+        <p className="text-muted-foreground mt-2">Submit your payment reference and track payment statuses.</p>
       </div>
 
       {paymentsQuery.isLoading ? (
@@ -1159,7 +1159,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
           <DialogHeader>
             <DialogTitle className="font-heading">Submit Payment Reference</DialogTitle>
             <DialogDescription>
-              Enter the payment reference number from the Paragon App after completing your payment.
+              Enter the payment reference number from your school's payment app after completing your payment.
             </DialogDescription>
           </DialogHeader>
           {referenceDialogPayment && (
@@ -1179,7 +1179,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
                 <Label htmlFor="ref-number">Payment Reference Number *</Label>
                 <Input
                   id="ref-number"
-                  placeholder="Enter reference from Paragon App"
+                  placeholder="Enter reference from your school's payment app App"
                   value={refNumber}
                   onChange={(e) => setRefNumber(e.target.value)}
                   className="font-mono"
@@ -1208,7 +1208,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
                   data-testid="checkbox-confirm-payment"
                 />
                 <Label htmlFor="ref-confirmed" className="text-sm font-normal leading-snug cursor-pointer">
-                  I confirm I have paid using the school&apos;s official payment system (Paragon App).
+                  I confirm I have paid using the school&apos;s official payment system.
                 </Label>
               </div>
             </div>

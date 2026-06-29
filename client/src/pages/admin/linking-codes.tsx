@@ -31,116 +31,77 @@ import {
 // ─── LINKING CODES ────────────────────────────────────────────────────────────
 function LinkingCodesSection() {
   const { toast } = useToast();
-  const [genOpen, setGenOpen] = useState(false);
-  const [genForm, setGenForm] = useState({ studentId: "", parentEmail: "" });
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   const { data: codes = [] } = useQuery<any[]>({ queryKey: ["/api/linking-codes"], queryFn: getQueryFn({ on401: "throw" }) });
-  const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
 
-  const [rotateOpen, setRotateOpen] = useState(false);
-  const [rotateForm, setRotateForm] = useState({ studentId: "", parentEmail: "" });
-
-  const generateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/students/${data.studentId}/linking-code`, { parentEmail: data.parentEmail }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/linking-codes"] }); setGenOpen(false); toast({ title: "Linking code generated" }); },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
-  });
-
-  const rotateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/students/${data.studentId}/linking-code/rotate`, { parentEmail: data.parentEmail }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/linking-codes"] }); setRotateOpen(false); toast({ title: "Code rotated", description: "Previous codes invalidated. New code sent to parent." }); },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  const resendMutation = useMutation({
+    mutationFn: (code: any) => apiRequest("POST", `/api/students/${code.studentId}/linking-code/rotate`, { parentEmail: code.parentEmail }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/linking-codes"] });
+      setResendingId(null);
+      toast({ title: "Invite resent", description: "A fresh code has been sent to the parent." });
+    },
+    onError: (err: any) => { setResendingId(null); toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">Linking Codes</h1>
-          <p className="text-muted-foreground text-sm mt-1">Generate and manage parent-student link codes. Rotate a code if it was shared incorrectly.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setRotateForm({ studentId: "", parentEmail: "" }); setRotateOpen(true); }}>
-            Rotate Code
-          </Button>
-          <Button onClick={() => { setGenForm({ studentId: "", parentEmail: "" }); setGenOpen(true); }}>
-            <Plus className="w-4 h-4 mr-2" /> Generate Code
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-xl font-bold tracking-tight">Parent Invites</h1>
+        <p className="text-muted-foreground text-sm mt-1">
+          Invites are sent automatically when a student is added with a parent email. Use <strong>Resend</strong> if a parent lost or didn't receive their email.
+        </p>
       </div>
 
       <Card className="border-border shadow-none">
         <Table>
           <TableHeader className="bg-muted/30">
             <TableRow>
-              <TableHead>Code</TableHead>
               <TableHead>Student</TableHead>
               <TableHead>Parent Email</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Expires</TableHead>
+              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {codes.map((code: any) => (
               <TableRow key={code.id}>
-                <TableCell className="font-mono font-semibold text-primary">{code.code}</TableCell>
-                <TableCell>{code.student?.name || "Unknown"}</TableCell>
+                <TableCell className="font-medium">{code.student?.name || "Unknown"}</TableCell>
                 <TableCell className="text-muted-foreground">{code.parentEmail}</TableCell>
                 <TableCell>
                   <Badge variant="outline" className={code.isUsed ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-amber-100 text-amber-700 border-amber-200"}>
-                    {code.isUsed ? "Used" : "Available"}
+                    {code.isUsed ? "Linked" : "Pending"}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-muted-foreground text-sm">{code.expiresAt ? new Date(code.expiresAt).toLocaleDateString() : "—"}</TableCell>
+                <TableCell className="text-right">
+                  {!code.isUsed && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={resendingId === code.id || resendMutation.isPending}
+                      onClick={() => { setResendingId(code.id); resendMutation.mutate(code); }}
+                    >
+                      {resendingId === code.id ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Mail className="w-4 h-4 mr-1" />}
+                      Resend
+                    </Button>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {codes.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No linking codes generated yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No invites sent yet. Add a student with a parent email to get started.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </Card>
-
-      <Dialog open={genOpen} onOpenChange={setGenOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader><DialogTitle>Generate Linking Code</DialogTitle><DialogDescription>Create a new code for a parent to link to their child.</DialogDescription></DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label>Student</Label>
-              <Select value={genForm.studentId} onValueChange={(v) => setGenForm({ ...genForm, studentId: v })}>
-                <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
-                <SelectContent>{students.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2"><Label>Parent Email</Label><Input type="email" value={genForm.parentEmail} onChange={(e) => setGenForm({ ...genForm, parentEmail: e.target.value })} placeholder="parent@example.com" /></div>
-          </div>
-          <DialogFooter><Button onClick={() => generateMutation.mutate(genForm)} disabled={generateMutation.isPending || !genForm.studentId || !genForm.parentEmail}>{generateMutation.isPending ? "Generating..." : "Generate Code"}</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Rotate Link Code</DialogTitle>
-            <DialogDescription>Invalidates all existing unused codes for this student and generates a new one. Use when a code has been leaked or shared incorrectly.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label>Student</Label>
-              <Select value={rotateForm.studentId} onValueChange={(v) => setRotateForm({ ...rotateForm, studentId: v })}>
-                <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
-                <SelectContent>{students.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2"><Label>Parent Email (for new code)</Label><Input type="email" value={rotateForm.parentEmail} onChange={(e) => setRotateForm({ ...rotateForm, parentEmail: e.target.value })} placeholder="parent@example.com" /></div>
-          </div>
-          <DialogFooter><Button onClick={() => rotateMutation.mutate(rotateForm)} disabled={rotateMutation.isPending || !rotateForm.studentId || !rotateForm.parentEmail} className="bg-amber-600 hover:bg-amber-700">{rotateMutation.isPending ? "Rotating..." : "Rotate Code"}</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
 
 // ─── PAYMENTS ──────────────────────────────────────────────────
+
 
 export { LinkingCodesSection };

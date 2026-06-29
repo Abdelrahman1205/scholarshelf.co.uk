@@ -60,7 +60,7 @@ function DashboardSection() {
         { key: "bookLevelsCreated", label: "Book levels created", done: summary.setupChecklist.bookLevelsCreated, href: "/admin/levels", count: summary.totalBookLevels },
         { key: "bookLevelsAssignedToClasses", label: "Book levels assigned to classes", done: summary.setupChecklist.bookLevelsAssignedToClasses, href: "/admin/levels?tab=assignments" },
         { key: "studentsAdded", label: "Students added", done: summary.setupChecklist.studentsAdded, href: "/admin/students", count: summary.totalStudents },
-        { key: "parentCodesGenerated", label: "Parent codes generated", done: summary.setupChecklist.parentCodesGenerated, href: "/admin/codes", count: summary.totalLinkingCodes },
+        { key: "parentCodesGenerated", label: "Parent invites sent", done: summary.setupChecklist.parentCodesGenerated, href: "/admin/codes", count: summary.totalLinkingCodes },
         { key: "parentsLinked", label: "Parents linked", done: summary.setupChecklist.parentsLinked, href: "/admin/parents" },
         { key: "brandingDesignConfigured", label: "Branding & design configured", done: summary.setupChecklist.brandingDesignConfigured, href: "/admin/branding" },
         { key: "paymentSetupReviewed", label: "Payment setup reviewed", done: summary.setupChecklist.paymentSetupReviewed, href: "/admin/payments" },
@@ -120,7 +120,7 @@ function DashboardSection() {
           icon: UserPlus, color: "text-violet-600", bg: "bg-violet-50", href: "/admin/codes",
         },
         {
-          label: "Parent Codes Not Sent", value: summary.parentCodesNotSent,
+          label: "Students Without Invites", value: summary.parentCodesNotSent,
           icon: Key,
           color: summary.parentCodesNotSent > 0 ? "text-orange-600" : "text-emerald-600",
           bg: summary.parentCodesNotSent > 0 ? "bg-orange-50" : "bg-emerald-50",
@@ -205,8 +205,8 @@ function DashboardSection() {
       disabledReason: "Create classes before adding students.",
     },
     {
-      label: "Generate Parent Codes",
-      description: "Create linking codes for parents to connect",
+      label: "Manage Parent Invites",
+      description: "Resend parent email invites to link their children",
       icon: Key,
       href: "/admin/codes",
       color: "text-orange-600",
@@ -267,7 +267,7 @@ function DashboardSection() {
           ? [{ type: "info" as const, msg: `${summary.extraCopyRequestsPending} extra copy request${summary.extraCopyRequestsPending !== 1 ? "s" : ""} from teachers pending review`, href: "/admin/requests" }]
           : []),
         ...(summary.parentCodesNotSent > 0
-          ? [{ type: "info" as const, msg: `${summary.parentCodesNotSent} parent linking code${summary.parentCodesNotSent !== 1 ? "s" : ""} generated but not yet used`, href: "/admin/codes" }]
+          ? [{ type: "info" as const, msg: `${summary.parentCodesNotSent} student${summary.parentCodesNotSent !== 1 ? "s" : ""} without a parent invite — go to Parent Invites to send`, href: "/admin/codes" }]
           : []),
         ...(summary.teacherConfirmationsPending > 0
           ? [{ type: "info" as const, msg: `${summary.teacherConfirmationsPending} book allocation${summary.teacherConfirmationsPending !== 1 ? "s" : ""} awaiting teacher confirmation of receipt`, href: "/admin/allocations" }]

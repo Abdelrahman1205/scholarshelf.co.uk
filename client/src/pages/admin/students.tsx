@@ -38,7 +38,7 @@ function StudentsSection() {
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const [form, setForm] = useState({ name: "", classId: "" });
+  const [form, setForm] = useState({ name: "", classId: "", parentEmail: "" });
 
   // CSV Import state
   const [importOpen, setImportOpen] = useState(false);
@@ -51,8 +51,25 @@ function StudentsSection() {
   const classMap = Object.fromEntries(classes.map((c: any) => [c.id, c]));
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/students", data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/students"] }); setAddOpen(false); setForm({ name: "", classId: "" }); toast({ title: "Student added" }); },
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/students", { name: data.name, classId: data.classId });
+      return { student: await res.json(), parentEmail: data.parentEmail };
+    },
+    onSuccess: async ({ student, parentEmail }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
+      setAddOpen(false);
+      setForm({ name: "", classId: "", parentEmail: "" });
+      if (parentEmail?.trim() && student?.id) {
+        try {
+          await apiRequest("POST", `/api/students/${student.id}/linking-code`, { parentEmail: parentEmail.trim() });
+          toast({ title: "Student added", description: "Invite sent to parent's email." });
+        } catch {
+          toast({ title: "Student added", description: "Couldn't send parent invite — try resending from Linking Codes.", variant: "destructive" });
+        }
+      } else {
+        toast({ title: "Student added" });
+      }
+    },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
@@ -114,7 +131,7 @@ function StudentsSection() {
           <Button variant="outline" onClick={() => { setImportStep("input"); setCsvText(""); setImportPreview(null); setImportOpen(true); }}>
             Import CSV
           </Button>
-          <Button onClick={() => { setForm({ name: "", classId: "" }); setAddOpen(true); }}>
+          <Button onClick={() => { setForm({ name: "", classId: "", parentEmail: "" }); setAddOpen(true); }}>
             <Plus className="w-4 h-4 mr-2" /> Add Student
           </Button>
         </div>
@@ -155,7 +172,7 @@ function StudentsSection() {
                     </Button>
                   ) : (
                     <>
-                      <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(student); setForm({ name: student.name || "", classId: student.classId || "" }); setEditOpen(true); }}>
+                      <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(student); setForm({ name: student.name || "", classId: student.classId || "", parentEmail: "" }); setEditOpen(true); }}>
                         <Pencil className="w-4 h-4" />
                       </Button>
                       <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedStudent(student); setDeleteOpen(true); }}>
@@ -186,6 +203,11 @@ function StudentsSection() {
               </Select>
             </div>
           </div>
+            <div className="grid gap-2">
+              <Label>Parent Email <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input type="email" value={form.parentEmail} onChange={(e) => setForm({ ...form, parentEmail: e.target.value })} placeholder="parent@example.com" />
+              <p className="text-xs text-muted-foreground">If provided, an invite email with the linking code is sent automatically.</p>
+            </div>
           <DialogFooter>
             <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>{createMutation.isPending ? "Adding..." : "Add Student"}</Button>
           </DialogFooter>
