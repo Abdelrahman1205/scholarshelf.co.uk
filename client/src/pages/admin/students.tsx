@@ -29,6 +29,7 @@ import {
 } from "./shared";
 
 import JsBarcode from "jsbarcode";
+import * as XLSX from "xlsx";
 // ─── STUDENTS ─────────────────────────────────────────────────────────────────
 function StudentsSection() {
   const { toast } = useToast();
@@ -45,6 +46,7 @@ function StudentsSection() {
   const [csvText, setCsvText] = useState("");
   const [importPreview, setImportPreview] = useState<{ rows: any[]; summary: any } | null>(null);
   const [importStep, setImportStep] = useState<"input" | "preview">("input");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
@@ -261,9 +263,50 @@ function StudentsSection() {
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
+                {/* File upload */}
+                <div className="flex items-center gap-3">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+                      const reader = new FileReader();
+                      if (isExcel) {
+                        reader.onload = (ev) => {
+                          const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+                          const wb = XLSX.read(data, { type: "array" });
+                          const ws = wb.Sheets[wb.SheetNames[0]];
+                          const csv = XLSX.utils.sheet_to_csv(ws);
+                          setCsvText(csv);
+                        };
+                        reader.readAsArrayBuffer(file);
+                      } else {
+                        reader.onload = (ev) => {
+                          let text = ev.target?.result as string;
+                          if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+                          setCsvText(text);
+                        };
+                        reader.readAsText(file, "utf-8");
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                  <Button variant="outline" className="w-full" type="button" onClick={() => fileInputRef.current?.click()}>
+                    <Download className="w-4 h-4 mr-2" /> Upload CSV or Excel file
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="flex-1 h-px bg-border" />
+                  <span>or paste CSV below</span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
                 <p className="text-xs text-muted-foreground font-mono bg-muted/50 rounded p-2">name,class,parent_email{"\n"}Alice Smith,Year 7A,mum@example.com{"\n"}Bob Jones,Year 7B,</p>
                 <textarea
-                  className="w-full min-h-[160px] border border-border rounded-md p-2 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full min-h-[120px] border border-border rounded-md p-2 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
                   placeholder={"name,class,parent_email\nAlice Smith,Year 7A,mum@example.com\nBob Jones,Year 7B,"}
                   value={csvText}
                   onChange={(e) => setCsvText(e.target.value)}
