@@ -95,13 +95,13 @@ function StudentsSection() {
   });
 
   const previewImportMutation = useMutation({
-    mutationFn: (csv: string) => apiRequest("POST", "/api/students/import/preview", { csv }),
+    mutationFn: async (csv: string) => { const res = await apiRequest("POST", "/api/students/import/preview", { csv }); return res.json(); },
     onSuccess: (data: any) => { setImportPreview(data); setImportStep("preview"); },
     onError: (err: any) => { toast({ title: "Import preview failed", description: err.message, variant: "destructive" }); },
   });
 
   const confirmImportMutation = useMutation({
-    mutationFn: (rows: any[]) => apiRequest("POST", "/api/students/import/confirm", { rows }),
+    mutationFn: async (rows: any[]) => { const res = await apiRequest("POST", "/api/students/import/confirm", { rows }); return res.json(); },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/students"] });
       setImportOpen(false);
