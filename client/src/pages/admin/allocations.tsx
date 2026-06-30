@@ -30,13 +30,25 @@ import {
 
 // ─── ALLOCATIONS ──────────────────────────────────────────────────────────────
 function AllocationsSection() {
+  const { toast } = useToast();
   const { data: allocations = [] } = useQuery<any[]>({ queryKey: ["/api/allocations"], queryFn: getQueryFn({ on401: "throw" }) });
+
+  const confirmReceiptMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("POST", `/api/allocations/${id}/confirm`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/allocations"] }); toast({ title: "Receipt confirmed", description: "Books marked as received by student." }); },
+    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
+  });
+
+  const pendingAllocations = allocations.filter((a: any) => !["received"].includes(a.status));
+  const receivedAllocations = allocations.filter((a: any) => a.status === "received");
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold tracking-tight">Allocations</h1>
-        <p className="text-muted-foreground text-sm mt-1">Track book allocations and teacher confirmations.</p>
+        <p className="text-muted-foreground text-sm mt-1">
+          Track book allocations and confirm receipt. Use <strong>Confirm Receipt</strong> for any student — including a teacher's own child.
+        </p>
       </div>
 
       <Card className="border-border shadow-none">
@@ -48,6 +60,7 @@ function AllocationsSection() {
               <TableHead>Status</TableHead>
               <TableHead>Allocated</TableHead>
               <TableHead>Received</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -58,10 +71,23 @@ function AllocationsSection() {
                 <TableCell><StatusBadge status={a.status} /></TableCell>
                 <TableCell className="text-muted-foreground text-sm">{a.allocatedAt ? new Date(a.allocatedAt).toLocaleDateString() : "—"}</TableCell>
                 <TableCell className="text-muted-foreground text-sm">{a.receivedAt ? new Date(a.receivedAt).toLocaleDateString() : "—"}</TableCell>
+                <TableCell className="text-right">
+                  {a.status !== "received" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                      onClick={() => confirmReceiptMutation.mutate(a.id)}
+                      disabled={confirmReceiptMutation.isPending}
+                    >
+                      <CheckCircle2 className="w-4 h-4 mr-1" /> Confirm Receipt
+                    </Button>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {allocations.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No allocations yet. Confirm a payment to create allocations.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No allocations yet. Confirm a payment to create allocations.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
