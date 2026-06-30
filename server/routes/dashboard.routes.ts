@@ -261,7 +261,7 @@ export function registerDashboardRoutes(app: Express): void {
             studentsAdded: scopedStudents.length > 0,
             parentCodesGenerated: parentCodesGenerated > 0,
             parentsLinked: parentCodesUsed > 0,
-            paymentSetupReviewed: paymentsVerified > 0 || paymentsSubmitted > 0,
+            paymentSetupReviewed: scopedClasses.length > 0 && scopedBooks.length > 0 && scopedClassBookLevels.length > 0 && scopedStudents.length > 0 && parentCodesGenerated > 0,
             operationalSetupComplete: false,
           };
 

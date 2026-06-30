@@ -666,8 +666,10 @@ export async function getSchoolSetupState(schoolId: string) {
   const studentsAdded = students.length > 0;
   const parentCodesGenerated = linkingCodes.length > 0;
   const parentsLinked = linkingCodes.some((code) => code.isUsed);
-  const paymentSetupReviewed = payments.length > 0;
-  const readyForOperationalCompletion = paymentSetupReviewed;
+  // Payment setup reviewed: true once core setup is done (classes, books, students, invites sent)
+  // Does NOT require an actual payment — that would block new schools from ever completing setup
+  const paymentSetupReviewed = classesCreated && booksAdded && bookLevelsAssignedToClasses && studentsAdded && parentCodesGenerated;
+  const readyForOperationalCompletion = classesCreated && booksAdded && bookLevelsAssignedToClasses && studentsAdded && parentCodesGenerated;
   const operationalSetupComplete =
     readyForOperationalCompletion && COMPLETE_SETUP_STATUSES.has(setupStatus) && school.status === "active";
 
