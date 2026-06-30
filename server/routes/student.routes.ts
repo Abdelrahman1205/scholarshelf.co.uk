@@ -131,6 +131,7 @@ export function registerStudentRoutes(app: Express): void {
       const header = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/[^a-z_]/g, ""));
       const nameIdx = header.indexOf("name");
       const classIdx = header.indexOf("class") !== -1 ? header.indexOf("class") : header.indexOf("class_name");
+      const emailIdx = header.indexOf("parent_email") !== -1 ? header.indexOf("parent_email") : header.indexOf("parentemail") !== -1 ? header.indexOf("parentemail") : header.indexOf("email");
 
       if (nameIdx === -1) return res.status(400).json({ message: "CSV must have a 'name' column" });
 
@@ -138,24 +139,27 @@ export function registerStudentRoutes(app: Express): void {
       const classes = await storage.getClasses(sid);
       const classMap = new Map(classes.map((c: any) => [c.name.trim().toLowerCase(), c.id]));
 
-      const rows: { name: string; className: string | null; classId: string | null; error: string | null; valid: boolean }[] = [];
+      const rows: { name: string; className: string | null; classId: string | null; parentEmail: string | null; error: string | null; valid: boolean }[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
         const name = cols[nameIdx]?.trim() ?? "";
-        if (!name) { rows.push({ name: "", className: null, classId: null, error: "Name is required", valid: false }); continue; }
+        if (!name) { rows.push({ name: "", className: null, classId: null, parentEmail: null, error: "Name is required", valid: false }); continue; }
 
         const className = classIdx !== -1 ? (cols[classIdx]?.trim() ?? null) : null;
         const classId = className ? (classMap.get(className.toLowerCase()) ?? null) : null;
         const classError = className && !classId ? `Class "${className}" not found` : null;
 
-        rows.push({ name, className, classId, error: classError, valid: !classError });
+        const parentEmail = emailIdx !== -1 ? (cols[emailIdx]?.trim() || null) : null;
+
+        rows.push({ name, className, classId, parentEmail, error: classError, valid: !classError });
       }
 
       const valid = rows.filter((r) => !r.error).length;
       const invalid = rows.length - valid;
+      const withEmail = rows.filter((r) => r.parentEmail).length;
 
-      res.json({ rows, summary: { total: rows.length, valid, invalid } });
+      res.json({ rows, summary: { total: rows.length, valid, invalid, withEmail } });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
@@ -165,25 +169,40 @@ export function registerStudentRoutes(app: Express): void {
   app.post("/api/students/import/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
-      const { rows } = req.body as { rows: { name: string; classId: string | null }[] };
+      const { rows } = req.body as { rows: { name: string; classId: string | null; parentEmail?: string | null }[] };
       if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ message: "rows array is required" });
 
       const created: any[] = [];
       const errors: { name: string; error: string }[] = [];
+      let invitesSent = 0;
 
       for (const row of rows) {
         if (!row.name?.trim()) { errors.push({ name: row.name ?? "", error: "Name is required" }); continue; }
         try {
           const student = await storage.createStudent({ name: row.name.trim(), classId: row.classId ?? null, schoolId: sid ?? null });
           created.push(student);
+
+          // Auto-send parent invite if email provided
+          if (row.parentEmail?.trim()) {
+            try {
+              const code = generateLinkingCode();
+              const expiresAt = new Date();
+              expiresAt.setMonth(expiresAt.getMonth() + 3);
+              await storage.createLinkingCode({ studentId: student.id, code, parentEmail: row.parentEmail.trim(), expiresAt, schoolId: sid });
+              const sent = await sendParentCodeEmail(row.parentEmail.trim(), student.name ?? "your child", code, expiresAt);
+              if (sent) invitesSent++;
+            } catch (_) {
+              // Don't fail the import if invite sending fails
+            }
+          }
         } catch (e: any) {
           errors.push({ name: row.name, error: e.message });
         }
       }
 
-      await auditLog(req, "students_bulk_imported", `school:${sid}`, { count: created.length });
+      await auditLog(req, "students_bulk_imported", `school:${sid}`, { count: created.length, invitesSent });
 
-      res.status(201).json({ created: created.length, errors, students: created });
+      res.status(201).json({ created: created.length, invitesSent, errors, students: created });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }

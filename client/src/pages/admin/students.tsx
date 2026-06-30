@@ -106,7 +106,9 @@ function StudentsSection() {
       setImportStep("input");
       setCsvText("");
       setImportPreview(null);
-      toast({ title: `Imported ${data.created} student${data.created !== 1 ? "s" : ""}`, description: data.errors?.length ? `${data.errors.length} row(s) skipped` : undefined });
+      const inviteMsg = data.invitesSent > 0 ? ` · ${data.invitesSent} parent invite${data.invitesSent !== 1 ? "s" : ""} sent` : "";
+      const skipMsg = data.errors?.length ? ` · ${data.errors.length} row(s) skipped` : "";
+      toast({ title: `Imported ${data.created} student${data.created !== 1 ? "s" : ""}`, description: `${inviteMsg}${skipMsg}`.trim().replace(/^·\s*/, "") || undefined });
     },
     onError: (err: any) => { toast({ title: "Import failed", description: err.message, variant: "destructive" }); },
   });
@@ -255,14 +257,14 @@ function StudentsSection() {
               <DialogHeader>
                 <DialogTitle>Import Students from CSV</DialogTitle>
                 <DialogDescription>
-                  Paste a CSV with a <code className="font-mono text-xs bg-muted px-1 rounded">name</code> column and optional <code className="font-mono text-xs bg-muted px-1 rounded">class</code> column. First row must be headers.
+                  Paste a CSV with columns: <code className="font-mono text-xs bg-muted px-1 rounded">name</code>, <code className="font-mono text-xs bg-muted px-1 rounded">class</code> (optional), <code className="font-mono text-xs bg-muted px-1 rounded">parent_email</code> (optional — auto-sends invite). First row must be headers.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
-                <p className="text-xs text-muted-foreground font-mono bg-muted/50 rounded p-2">name,class{"\n"}Alice Smith,Year 7A{"\n"}Bob Jones,Year 7B</p>
+                <p className="text-xs text-muted-foreground font-mono bg-muted/50 rounded p-2">name,class,parent_email{"\n"}Alice Smith,Year 7A,mum@example.com{"\n"}Bob Jones,Year 7B,</p>
                 <textarea
                   className="w-full min-h-[160px] border border-border rounded-md p-2 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={"name,class\nAlice Smith,Year 7A\nBob Jones,Year 7B"}
+                  placeholder={"name,class,parent_email\nAlice Smith,Year 7A,mum@example.com\nBob Jones,Year 7B,"}
                   value={csvText}
                   onChange={(e) => setCsvText(e.target.value)}
                 />
@@ -280,6 +282,7 @@ function StudentsSection() {
                 <DialogTitle>Confirm Import</DialogTitle>
                 <DialogDescription>
                   {importPreview?.summary.valid} of {importPreview?.summary.total} rows are valid and will be created.
+                  {importPreview?.summary.withEmail > 0 && ` ${importPreview?.summary.withEmail} parent invite${importPreview?.summary.withEmail !== 1 ? "s" : ""} will be sent automatically.`}
                   {importPreview?.summary.invalid > 0 && ` ${importPreview?.summary.invalid} row(s) have errors and will be skipped.`}
                 </DialogDescription>
               </DialogHeader>
@@ -289,6 +292,7 @@ function StudentsSection() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Class</TableHead>
+                      <TableHead>Parent Email</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -297,6 +301,7 @@ function StudentsSection() {
                       <TableRow key={i} className={row.error ? "opacity-60" : ""}>
                         <TableCell className="font-medium">{row.name || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{row.className || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{row.parentEmail || <span className="italic text-muted-foreground/50">none</span>}</TableCell>
                         <TableCell>
                           {row.error
                             ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-200 text-xs">{row.error}</Badge>
