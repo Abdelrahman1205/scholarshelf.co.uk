@@ -152,6 +152,7 @@ export default function Layout({ children }: LayoutProps) {
       : activeContext === "school_admin" || activeContext === "admin" || activeContext === "it_personnel"
         ? "admin"
         : activeContext;
+  const isItPersonnelContext = activeContext === "it_personnel";
 
   const config = effectiveRole ? roleConfig[effectiveRole] : null;
 
@@ -165,7 +166,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const adminSetupComplete = !!setupStatus?.operationalSetupCompleted && !!setupStatus?.schoolActive;
 
-  const shouldFetchBranding = effectiveRole === "admin" || effectiveRole === "owner_support" || effectiveRole === "teacher" || effectiveRole === "parent" || effectiveRole === "finance";
+  const shouldFetchBranding = !isItPersonnelContext && (effectiveRole === "admin" || effectiveRole === "owner_support" || effectiveRole === "teacher" || effectiveRole === "parent" || effectiveRole === "finance");
   const { data: schoolBranding } = useQuery<any>({
     queryKey: ["/api/school/branding"],
     queryFn: getQueryFn({ on401: "returnNull" }),
