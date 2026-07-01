@@ -53,17 +53,17 @@ function SchoolPublicPage() {
   const bannerUrl = school.branding?.bannerImageUrl;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen" style={{ background: `linear-gradient(160deg, ${primary}10 0%, transparent 40%)` }}>
       {/* Banner / hero */}
       <div
-        className="relative w-full h-48 md:h-64 flex items-end"
+        className="relative w-full h-56 md:h-72 flex items-end overflow-hidden"
         style={{
           background: bannerUrl
             ? `url(${bannerUrl}) center/cover no-repeat`
-            : `linear-gradient(135deg, ${primary}22 0%, ${primary}44 100%)`,
+            : `linear-gradient(135deg, ${primary}33 0%, ${primary}66 100%)`,
         }}
       >
-        <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
       </div>
 
       {/* School identity */}
