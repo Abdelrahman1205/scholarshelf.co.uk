@@ -587,6 +587,8 @@ function UsersList() {
                 <SelectContent>
                   <SelectItem value="teacher">Teacher</SelectItem>
                   <SelectItem value="school_admin">School Admin</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="it_personnel">IT Personnel</SelectItem>
                 </SelectContent>
               </Select>
             </div>
