@@ -31,10 +31,35 @@ import {
 // ─── SETUP ────────────────────────────────────────────────────────────────────
 function SetupSection() {
   const { toast } = useToast();
+  const [paymentAppInput, setPaymentAppInput] = useState("");
 
   const { data: setup, isLoading } = useQuery<any>({
     queryKey: ["/api/admin/setup-status"],
     queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const { data: schoolSettings } = useQuery<any>({
+    queryKey: ["/api/admin/school/settings"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  // Sync input with fetched value
+  useEffect(() => {
+    if (schoolSettings?.paymentAppName !== undefined) {
+      setPaymentAppInput(schoolSettings.paymentAppName ?? "");
+    }
+  }, [schoolSettings?.paymentAppName]);
+
+  const savePaymentAppMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", "/api/admin/school/settings", { paymentAppName: paymentAppInput.trim() || null });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/school/settings"] });
+      toast({ title: "Payment settings saved" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
   const completeMutation = useMutation({
@@ -146,6 +171,46 @@ function SetupSection() {
           </AlertDescription>
         </Alert>
       )}
+
+      {/* Payment settings card */}
+      <Card className="border-border shadow-none">
+        <CardHeader>
+          <CardTitle>Payment settings</CardTitle>
+          <CardDescription>
+            Set the name of your school's external payment app. Parents will see this name when they're told where to send payment.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2 items-end">
+            <div className="flex-1 space-y-1">
+              <Label htmlFor="paymentAppName">Payment app name</Label>
+              <Input
+                id="paymentAppName"
+                value={paymentAppInput}
+                onChange={(e) => setPaymentAppInput(e.target.value)}
+                placeholder="e.g. Paragon, School Pay, ParentPay"
+                maxLength={100}
+              />
+            </div>
+            <Button
+              onClick={() => savePaymentAppMutation.mutate()}
+              disabled={savePaymentAppMutation.isPending || paymentAppInput === (schoolSettings?.paymentAppName ?? "")}
+            >
+              {savePaymentAppMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </div>
+          {schoolSettings?.paymentAppName && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400">
+              ✓ Currently set to: <strong>{schoolSettings.paymentAppName}</strong>
+            </p>
+          )}
+          {!schoolSettings?.paymentAppName && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              ⚠ No payment app name set — parents won't know where to send money.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-border shadow-none">
         <CardHeader>

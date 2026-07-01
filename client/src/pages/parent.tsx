@@ -317,6 +317,7 @@ function ParentBasketsSection({
   paymentResult,
   selectedBasketForPayment,
   paymentMutation,
+  paymentAppName,
 }: {
   basketsQuery: any;
   baskets: any[];
@@ -332,6 +333,7 @@ function ParentBasketsSection({
   paymentResult: any;
   selectedBasketForPayment: any;
   paymentMutation: any;
+  paymentAppName: string | null;
 }) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -508,7 +510,7 @@ function ParentBasketsSection({
             </DialogTitle>
             <DialogDescription>
               {paymentResult
-                ? "Your order has been created. Please pay using your school's payment app, then submit your payment reference."
+                ? `Your order has been created. Please pay using ${paymentAppName ? paymentAppName : "your school's payment app"}, then submit your payment reference.`
                 : "Review the order details below and proceed to create your order."}
             </DialogDescription>
           </DialogHeader>
@@ -533,8 +535,8 @@ function ParentBasketsSection({
                 <p className="font-semibold text-blue-700">How to Pay</p>
                 <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
                   <li>Create your order below</li>
-                  <li>Pay using your school's payment app (your school&apos;s official payment system)</li>
-                  <li>Come back to the <strong>Payments</strong> section and enter the reference number from your school's payment app</li>
+                  <li>Pay using {paymentAppName ? <strong>{paymentAppName}</strong> : "your school's payment app"}</li>
+                  <li>Come back to the <strong>Payments</strong> section and enter the reference number from {paymentAppName ? paymentAppName : "your school's payment app"}</li>
                   <li>The school will verify your payment and allocate the books</li>
                 </ol>
               </div>
@@ -561,7 +563,7 @@ function ParentBasketsSection({
               </div>
               <div className="rounded-lg border border-amber-500/30 p-3 bg-amber-500/5 text-sm text-amber-700">
                 <p className="font-medium">Next Step:</p>
-                <p>Pay using your school's payment app, then go to the <strong>Payments</strong> section to submit your payment reference number.</p>
+                <p>Pay using {paymentAppName ? <strong>{paymentAppName}</strong> : "your school's payment app"}, then go to the <strong>Payments</strong> section to submit your payment reference number.</p>
               </div>
             </div>
           )}
@@ -589,16 +591,32 @@ function ParentBasketsSection({
                 </Button>
               </div>
             ) : (
-              <Button
-                data-testid="button-close-payment"
-                onClick={() => {
-                  setPaymentDialogOpen(false);
-                  setPaymentResult(null);
-                  setSelectedBasketForPayment(null);
-                }}
-              >
-                Done
-              </Button>
+              <div className="flex gap-2 w-full justify-end">
+                <Button
+                  variant="outline"
+                  data-testid="button-close-payment"
+                  onClick={() => {
+                    setPaymentDialogOpen(false);
+                    setPaymentResult(null);
+                    setSelectedBasketForPayment(null);
+                  }}
+                >
+                  Close
+                </Button>
+                <Button
+                  data-testid="button-go-to-payments"
+                  className="gap-2"
+                  onClick={() => {
+                    setPaymentDialogOpen(false);
+                    setPaymentResult(null);
+                    setSelectedBasketForPayment(null);
+                    window.location.href = "/parent/payments";
+                  }}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  Go to Payments
+                </Button>
+              </div>
             )}
           </DialogFooter>
         </DialogContent>
@@ -1059,6 +1077,8 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
   const childrenQuery = useQuery<any[]>({ queryKey: ['/api/parent/children'], queryFn: getQueryFn({ on401: 'throw' }) });
   const basketsQuery = useQuery<any[]>({ queryKey: ['/api/parent/baskets'], queryFn: getQueryFn({ on401: 'throw' }) });
   const paymentsQuery = useQuery<any[]>({ queryKey: ['/api/parent/payments'], queryFn: getQueryFn({ on401: 'throw' }) });
+  const paymentInfoQuery = useQuery<any>({ queryKey: ['/api/school/payment-info'], queryFn: getQueryFn({ on401: 'returnNull' }), staleTime: 60_000 });
+  const paymentAppName: string | null = paymentInfoQuery.data?.paymentAppName ?? null;
 
   const startScanner = async () => {
     setScannerError(null); setScannerOpen(true);
@@ -1140,7 +1160,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
       case "link":
         return <ParentLinkSection linkCode={linkCode} setLinkCode={setLinkCode} linkChildMutation={linkChildMutation} childrenQuery={childrenQuery} children={children} createBasketMutation={createBasketMutation} scannerOpen={scannerOpen} startScanner={startScanner} stopScanner={stopScanner} scannerError={scannerError} />;
       case "baskets":
-        return <ParentBasketsSection basketsQuery={basketsQuery} baskets={baskets} children={children} pendingBaskets={pendingBaskets} processedBaskets={processedBaskets} childrenWithoutBaskets={childrenWithoutBaskets} createBasketMutation={createBasketMutation} setSelectedBasketForPayment={setSelectedBasketForPayment} setPaymentResult={setPaymentResult} setPaymentDialogOpen={setPaymentDialogOpen} paymentDialogOpen={paymentDialogOpen} paymentResult={paymentResult} selectedBasketForPayment={selectedBasketForPayment} paymentMutation={paymentMutation} />;
+        return <ParentBasketsSection basketsQuery={basketsQuery} baskets={baskets} children={children} pendingBaskets={pendingBaskets} processedBaskets={processedBaskets} childrenWithoutBaskets={childrenWithoutBaskets} createBasketMutation={createBasketMutation} setSelectedBasketForPayment={setSelectedBasketForPayment} setPaymentResult={setPaymentResult} setPaymentDialogOpen={setPaymentDialogOpen} paymentDialogOpen={paymentDialogOpen} paymentResult={paymentResult} selectedBasketForPayment={selectedBasketForPayment} paymentMutation={paymentMutation} paymentAppName={paymentAppName} />;
       case "payments":
         return <ParentPaymentsSection paymentsQuery={paymentsQuery} payments={payments} onSubmitReference={(p) => { setReferenceDialogPayment(p); setRefNumber(""); setRefConfirmed(false); setRefNotes(""); }} />;
       case "messages":
@@ -1159,7 +1179,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
           <DialogHeader>
             <DialogTitle className="font-heading">Submit Payment Reference</DialogTitle>
             <DialogDescription>
-              Enter the payment reference number from your school's payment app after completing your payment.
+              Enter the payment reference number from {paymentAppName ? paymentAppName : "your school's payment app"} after completing your payment.
             </DialogDescription>
           </DialogHeader>
           {referenceDialogPayment && (
@@ -1179,7 +1199,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
                 <Label htmlFor="ref-number">Payment Reference Number *</Label>
                 <Input
                   id="ref-number"
-                  placeholder="Enter reference from your school's payment app"
+                  placeholder={`Enter reference from ${paymentAppName || "your school's payment app"}`}
                   value={refNumber}
                   onChange={(e) => setRefNumber(e.target.value)}
                   className="font-mono"
@@ -1223,13 +1243,11 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
                   paymentId: referenceDialogPayment.id,
                   referenceNumber: refNumber,
                   confirmed: refConfirmed,
-                  notes: refNotes || undefined,
+                             notes: refNotes || undefined,
                 })}
                 disabled={submitReferenceMutation.isPending || !refNumber.trim() || !refConfirmed}
-                className="gap-2"
                 data-testid="button-submit-reference"
               >
-                <CreditCard className="w-4 h-4" />
                 {submitReferenceMutation.isPending ? "Submitting..." : "Submit Reference"}
               </Button>
             </div>

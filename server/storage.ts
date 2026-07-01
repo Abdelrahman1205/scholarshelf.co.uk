@@ -127,6 +127,7 @@ function ensureDemoUsersInMemory() {
       contactPhone: "+218-21-555-0100",
       address: "Tripoli, Libya",
       notes: "Demo school (memory mode)",
+      paymentAppName: null,
       createdAt: now(),
       updatedAt: now(),
       isDeleted: false,
@@ -420,6 +421,7 @@ class DatabaseStorage implements IStorage {
         contactPhone: school.contactPhone ?? null,
         address: school.address ?? null,
         notes: school.notes ?? null,
+        paymentAppName: school.paymentAppName ?? null,
         createdAt: now(),
         updatedAt: now(),
         isDeleted: false,
@@ -1455,6 +1457,21 @@ class DatabaseStorage implements IStorage {
     const links = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const link of links) {
       await getDb().update(schema.childBookBaskets).set({ status: "cancelled" }).where(eq(schema.childBookBaskets.id, link.basketId));
+
+      // If payment was already confirmed, stock was deducted — restore it now
+      const wasConfirmed = ["confirmed", "ready_for_collection"].includes(existing.status);
+      if (wasConfirmed) {
+        const basket = await this.getBasket(link.basketId);
+        if (basket) {
+          for (const item of basket.items) {
+            try {
+              await this.adjustStock(item.bookId, item.quantity, "return", 'Stock restored: payment ' + paymentId + ' cancelled');
+            } catch (_) {}
+          }
+          // Remove the finance allocations so books are no longer shown as allocated
+          await getDb().delete(schema.financeBookAllocations).where(eq(schema.financeBookAllocations.basketId, link.basketId));
+        }
+      }
     }
 
     return updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {

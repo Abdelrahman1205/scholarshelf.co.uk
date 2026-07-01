@@ -85,6 +85,7 @@ export function registerSetupRoutes(app: Express): void {
           contactPhone: school.contactPhone,
           address: school.address,
           notes: school.notes,
+          paymentAppName: school.paymentAppName ?? null,
         },
         invite: latestInvite
           ? {
@@ -510,6 +511,53 @@ export function registerSetupRoutes(app: Express): void {
       res.json(updated);
     } catch (e: any) {
       res.status(400).json({ message: e.message || "Failed to complete setup" });
+    }
+  });
+
+
+  // === SCHOOL SETTINGS (admin) ===
+
+  // GET school settings (paymentAppName, etc.)
+  app.get("/api/admin/school/settings", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+      res.json({ paymentAppName: school.paymentAppName ?? null });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load school settings" });
+    }
+  });
+
+  // PATCH school settings (paymentAppName, etc.)
+  app.patch("/api/admin/school/settings", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      const { paymentAppName } = req.body;
+      if (typeof paymentAppName !== "string" && paymentAppName !== null) {
+        return res.status(400).json({ message: "paymentAppName must be a string or null" });
+      }
+      const trimmed = typeof paymentAppName === "string" ? paymentAppName.trim() || null : null;
+      const updated = await storage.updateSchool(schoolId, { paymentAppName: trimmed } as any);
+      await auditLog(req, "school_settings_updated", `school:${schoolId}`, { paymentAppName: trimmed });
+      res.json({ paymentAppName: (updated as any)?.paymentAppName ?? null });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message || "Failed to update school settings" });
+    }
+  });
+
+  // GET payment info for parents (school-scoped, no sensitive data)
+  app.get("/api/school/payment-info", requireAuth, async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) return res.status(400).json({ message: "No school context available" });
+      const school = await storage.getSchoolById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+      res.json({ paymentAppName: school.paymentAppName ?? null });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load payment info" });
     }
   });
 

@@ -83,6 +83,7 @@ export const schools = pgTable("schools", {
   contactPhone: text("contact_phone"),
   address: text("address"),
   notes: text("notes"),
+  paymentAppName: text("payment_app_name"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   // Lifecycle metadata

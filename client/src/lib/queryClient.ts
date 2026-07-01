@@ -3,16 +3,18 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    // If a 403 carries a schoolStatus, store the message for the login page
-    if (res.status === 403) {
-      try {
-        const body = JSON.parse(text);
-        if (body.schoolStatus) {
-          window.__schoolBlockedMessage = body.message || "Your school account is currently inactive.";
-        }
-      } catch {}
-    }
-    throw new Error(`${res.status}: ${text}`);
+    // Default to raw status + body; try to extract a clean message from JSON
+    let message = `${res.status}: ${text}`;
+    try {
+      const body = JSON.parse(text);
+      if (res.status === 403 && body.schoolStatus) {
+        window.__schoolBlockedMessage = body.message || "Your school account is currently inactive.";
+      }
+      if (body.message) {
+        message = body.message;
+      }
+    } catch {}
+    throw new Error(message);
   }
 }
 

@@ -68,40 +68,117 @@ function OwnerDashboardSection() {
     );
   }
 
-  const cards = [
-    { label: "Total schools", value: data?.totalSchools },
-    { label: "Pending setup schools", value: data?.pendingSetupSchools },
-    { label: "Pending admin invite", value: data?.pendingAdminInviteSchools },
-    { label: "Pending admin acceptance", value: data?.pendingAdminAcceptanceSchools },
-    { label: "Setup in progress", value: data?.setupInProgressSchools },
-    { label: "Active schools", value: data?.activeSchools },
-    { label: "Suspended schools", value: data?.suspendedSchools },
-    { label: "Pending first admin invites", value: data?.pendingInvites },
-    { label: "Expired first admin invites", value: data?.expiredInvites },
-    { label: "Schools needing attention", value: data?.schoolsNeedingAttention },
+  type CardColor = "neutral" | "green" | "red" | "amber" | "blue" | "orange";
+  const colorStyles: Record<CardColor, { card: string; icon: string; value: string }> = {
+    neutral: { card: "border-border bg-card hover:bg-muted/40",                                                          icon: "text-muted-foreground",                                    value: "text-foreground" },
+    green:   { card: "border-emerald-200 dark:border-emerald-800/40 bg-emerald-50/60 dark:bg-emerald-950/20 hover:brightness-[0.97]", icon: "text-emerald-600 dark:text-emerald-400", value: "text-emerald-700 dark:text-emerald-300" },
+    red:     { card: "border-red-200 dark:border-red-800/40 bg-red-50/60 dark:bg-red-950/20 hover:brightness-[0.97]",               icon: "text-red-500 dark:text-red-400",           value: "text-red-700 dark:text-red-300" },
+    amber:   { card: "border-amber-200 dark:border-amber-800/40 bg-amber-50/60 dark:bg-amber-950/20 hover:brightness-[0.97]",        icon: "text-amber-600 dark:text-amber-400",       value: "text-amber-700 dark:text-amber-300" },
+    blue:    { card: "border-blue-200 dark:border-blue-800/40 bg-blue-50/60 dark:bg-blue-950/20 hover:brightness-[0.97]",            icon: "text-blue-600 dark:text-blue-400",         value: "text-blue-700 dark:text-blue-300" },
+    orange:  { card: "border-orange-200 dark:border-orange-800/40 bg-orange-50/60 dark:bg-orange-950/20 hover:brightness-[0.97]",    icon: "text-orange-600 dark:text-orange-400",     value: "text-orange-700 dark:text-orange-300" },
+  };
+
+  const statCards = [
+    { label: "Total schools",        value: data?.totalSchools,                color: "neutral" as CardColor, href: "/admin/schools",         icon: GraduationCap },
+    { label: "Active",               value: data?.activeSchools,               color: "green"   as CardColor, href: "/admin/schools",         icon: CheckCircle2 },
+    { label: "Needs attention",      value: data?.schoolsNeedingAttention,     color: "red"     as CardColor, href: "/admin/pending-setups",  icon: AlertTriangle },
+    { label: "Pending setup",        value: data?.pendingSetupSchools,         color: "amber"   as CardColor, href: "/admin/pending-setups",  icon: Clock },
+    { label: "Setup in progress",    value: data?.setupInProgressSchools,      color: "amber"   as CardColor, href: "/admin/pending-setups",  icon: RefreshCw },
+    { label: "Suspended",            value: data?.suspendedSchools,            color: "red"     as CardColor, href: "/admin/schools",         icon: Ban },
+    { label: "Pending admin invite", value: data?.pendingAdminInviteSchools,   color: "blue"    as CardColor, href: "/admin/admin-invites",   icon: UserPlus },
+    { label: "Pending acceptance",   value: data?.pendingAdminAcceptanceSchools, color: "blue"  as CardColor, href: "/admin/admin-invites",   icon: Mail },
+    { label: "Pending invites",      value: data?.pendingInvites,              color: "blue"    as CardColor, href: "/admin/admin-invites",   icon: Key },
+    { label: "Expired invites",      value: data?.expiredInvites,              color: "orange"  as CardColor, href: "/admin/admin-invites",   icon: XCircle },
   ];
+
+  // School health breakdown bar
+  const total = data?.totalSchools || 0;
+  const healthSegments = total > 0 ? [
+    { label: "Active",     value: data?.activeSchools || 0,    color: "bg-emerald-500" },
+    { label: "In setup",   value: (data?.pendingSetupSchools || 0) + (data?.setupInProgressSchools || 0) + (data?.pendingAdminInviteSchools || 0) + (data?.pendingAdminAcceptanceSchools || 0), color: "bg-amber-400" },
+    { label: "Suspended",  value: data?.suspendedSchools || 0, color: "bg-red-500" },
+  ] : [];
+
+  const activityMeta = (action: string) => {
+    const a = action.toLowerCase();
+    if (a.includes("created"))                return { icon: <Plus className="h-3.5 w-3.5" />,        badge: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300" };
+    if (a.includes("support"))                return { icon: <ShieldAlert className="h-3.5 w-3.5" />, badge: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" };
+    if (a.includes("suspend") || a.includes("archive")) return { icon: <Ban className="h-3.5 w-3.5" />, badge: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300" };
+    if (a.includes("restore") || a.includes("activ"))   return { icon: <CheckCircle2 className="h-3.5 w-3.5" />, badge: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300" };
+    if (a.includes("invite") || a.includes("email"))    return { icon: <Mail className="h-3.5 w-3.5" />, badge: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300" };
+    if (a.includes("setup") || a.includes("config"))    return { icon: <Settings className="h-3.5 w-3.5" />, badge: "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300" };
+    return { icon: <History className="h-3.5 w-3.5" />, badge: "bg-muted text-muted-foreground" };
+  };
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight">BytHub Platform Owner</h1>
-          <p className="text-muted-foreground text-sm mt-1">Platform onboarding and school lifecycle control center outside Support Mode.</p>
+          <p className="text-muted-foreground text-sm mt-1">Platform onboarding and school lifecycle control center.</p>
         </div>
-        <Button variant="outline" onClick={() => navigateTo("/admin/schools")}>Manage Schools</Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => navigateTo("/admin/admin-invites")}>Admin Invites</Button>
+          <Button variant="outline" size="sm" onClick={() => navigateTo("/admin/pending-setups")}>Pending Setups</Button>
+          <Button size="sm" onClick={() => navigateTo("/admin/schools")}>Manage Schools</Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        {cards.map((card) => (
-          <Card key={card.label} className="border-border shadow-none">
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">{card.label}</p>
-              <p className="text-2xl font-bold mt-1">{card.value ?? "Not available"}</p>
-            </CardContent>
-          </Card>
-        ))}
+      {/* Clickable stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        {statCards.map((card) => {
+          const styles = colorStyles[card.color];
+          const Icon = card.icon;
+          return (
+            <button
+              key={card.label}
+              onClick={() => navigateTo(card.href)}
+              className={cn(
+                "rounded-lg border p-4 text-left transition-all active:scale-[0.98] cursor-pointer",
+                styles.card
+              )}
+            >
+              <Icon className={cn("h-4 w-4 mb-2", styles.icon)} />
+              <p className={cn("text-2xl font-bold", styles.value)}>{card.value ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{card.label}</p>
+            </button>
+          );
+        })}
       </div>
 
+      {/* School health bar */}
+      {total > 0 && (
+        <Card className="border-border shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">School Health Overview</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex rounded-full overflow-hidden h-3 gap-px bg-muted">
+              {healthSegments.map((seg) =>
+                seg.value > 0 ? (
+                  <div
+                    key={seg.label}
+                    className={cn("h-full transition-all", seg.color)}
+                    style={{ width: `${Math.round((seg.value / total) * 100)}%` }}
+                    title={`${seg.label}: ${seg.value}`}
+                  />
+                ) : null
+              )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {healthSegments.map((seg) => (
+                <span key={seg.label} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className={cn("inline-block h-2 w-2 rounded-full flex-shrink-0", seg.color)} />
+                  {seg.label} — {seg.value} ({total > 0 ? Math.round((seg.value / total) * 100) : 0}%)
+                </span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Richer activity feed */}
       <Card className="border-border shadow-none">
         <CardHeader>
           <CardTitle>Recent setup and support activity</CardTitle>
@@ -111,15 +188,23 @@ function OwnerDashboardSection() {
           {(data?.recentActivity || []).length === 0 && (
             <p className="text-sm text-muted-foreground">No recent setup/support activity available.</p>
           )}
-          {(data?.recentActivity || []).map((item: any) => (
-            <div key={item.id} className="rounded-lg border p-3 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium capitalize">{String(item.action || "activity").replace(/_/g, " ")}</p>
-                <p className="text-xs text-muted-foreground mt-1">{formatTargetLabel(item)}</p>
+          {(data?.recentActivity || []).map((item: any) => {
+            const meta = activityMeta(String(item.action || ""));
+            return (
+              <div key={item.id} className="rounded-lg border border-border p-3 flex items-start justify-between gap-3 hover:bg-muted/40 transition-colors">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <div className={cn("mt-0.5 flex-shrink-0 h-6 w-6 rounded-full flex items-center justify-center", meta.badge)}>
+                    {meta.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium capitalize leading-tight">{String(item.action || "activity").replace(/_/g, " ")}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 truncate">{formatTargetLabel(item)}</p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">{formatDateTime(item.createdAt)}</span>
               </div>
-              <span className="text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</span>
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
     </div>
