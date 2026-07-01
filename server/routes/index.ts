@@ -23,12 +23,16 @@ import { registerNotificationRoutes } from "./notification.routes.js";
 import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
 import { registerFamilyRoutes } from "./family.routes.js";
+import { registerPublicRoutes } from "./public.routes.js";
 import bcrypt from "bcryptjs";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  // Public — unauthenticated school landing page API
+  registerPublicRoutes(app);
+
   // Auth — login, register, invite acceptance, password reset, /me
   registerAuthRoutes(app);
 

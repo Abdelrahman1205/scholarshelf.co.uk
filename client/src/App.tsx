@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/use-auth";
 import { getRoleRoute } from "@/lib/role-routes";
+import SchoolPublicPage from "@/pages/school-public";
 
 import Layout from "@/components/layout";
 import AdminPage from "@/pages/admin";
@@ -85,6 +86,9 @@ function Router() {
       <Route path="/">
         <RoleRedirect />
       </Route>
+
+      {/* Public school landing page */}
+      <Route path="/school/:code" component={SchoolPublicPage} />
 
       {/* Admin routes */}
       <Route path="/admin/:section?">

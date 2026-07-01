@@ -239,6 +239,7 @@ export interface IStorage {
   // Schools (owner-managed tenants)
   getSchools(): Promise<schema.School[]>;
   getSchoolById(id: string): Promise<schema.School | undefined>;
+  getSchoolByCode(code: string): Promise<schema.School | undefined>;
   createSchool(school: schema.InsertSchool): Promise<schema.School>;
   updateSchool(id: string, school: Partial<Omit<schema.School, "id">>): Promise<schema.School | undefined>;
   deleteSchool(id: string): Promise<void>;
@@ -415,6 +416,16 @@ class DatabaseStorage implements IStorage {
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       return memorySchools.get(id);
+    }
+  }
+
+  async getSchoolByCode(code: string): Promise<schema.School | undefined> {
+    try {
+      const [school] = await getDb().select().from(schema.schools).where(eq(schema.schools.code, code));
+      return school;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return Array.from(memorySchools.values()).find((s) => s.code === code);
     }
   }
 

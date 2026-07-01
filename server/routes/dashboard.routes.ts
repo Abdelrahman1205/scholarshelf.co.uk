@@ -76,9 +76,12 @@ export function registerDashboardRoutes(app: Express): void {
     try {
       const requestedSchoolId = typeof req.query.schoolId === "string" ? req.query.schoolId : null;
 
-      const [schools, users] = await Promise.all([
+      const [schools, users, allStudents, allBaskets, allPayments] = await Promise.all([
         storage.getSchools(),
         storage.getUsers(),
+        storage.getStudents(),
+        storage.getBaskets(),
+        storage.getPayments(),
       ]);
 
       const scopedSchools = requestedSchoolId ? schools.filter((s) => s.id === requestedSchoolId) : schools;
@@ -139,6 +142,10 @@ export function registerDashboardRoutes(app: Express): void {
 
       const pendingSetupSchools = scopedSchools.filter((s) => s.status !== "active").length;
 
+      // Platform usage stats (all schools, not scoped)
+      const confirmedPayments = allPayments.filter((p) => p.status === "confirmed" || p.status === "completed");
+      const totalRevenue = confirmedPayments.reduce((sum, p) => sum + parseFloat(p.totalAmount || "0"), 0);
+
       res.json({
         totalSchools: scopedSchools.length,
         pendingSetupSchools,
@@ -150,6 +157,14 @@ export function registerDashboardRoutes(app: Express): void {
         pendingInvites,
         expiredInvites,
         schoolsNeedingAttention,
+        // Platform-wide usage metrics
+        totalStudents: allStudents.filter((s) => !s.isArchived).length,
+        totalBaskets: allBaskets.length,
+        totalConfirmedPayments: confirmedPayments.length,
+        totalRevenue: totalRevenue.toFixed(2),
+        totalParents: users.filter((u) => u.role === "parent" && u.status === "active").length,
+        totalTeachers: users.filter((u) => u.role === "teacher" && u.status === "active").length,
+        totalActiveUsers: users.filter((u) => u.status === "active").length,
         recentActivity: recentActivityLogs
           .filter((log) => ["school_created", "school_updated", "school_setup_invite_sent", "school_setup_invite_resent", "support_mode_enter", "support_mode_exit", "invite_accepted", "school_setup_completed"].includes(log.action))
           .slice(0, 12)

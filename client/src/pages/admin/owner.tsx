@@ -178,6 +178,64 @@ function OwnerDashboardSection() {
         </Card>
       )}
 
+      {/* Platform Usage Metrics */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Platform Activity</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <GraduationCap className="h-4 w-4 mb-1.5 text-primary" />
+              <p className="text-2xl font-bold">{data?.totalStudents ?? "—"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Total students</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <BookOpen className="h-4 w-4 mb-1.5 text-blue-500" />
+              <p className="text-2xl font-bold">{data?.totalBaskets ?? "—"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Book baskets</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <CreditCard className="h-4 w-4 mb-1.5 text-emerald-500" />
+              <p className="text-2xl font-bold">{data?.totalConfirmedPayments ?? "—"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Confirmed payments</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <TrendingUp className="h-4 w-4 mb-1.5 text-amber-500" />
+              <p className="text-2xl font-bold">
+                {data?.totalRevenue !== undefined ? `£${parseFloat(data.totalRevenue).toLocaleString("en-GB", { minimumFractionDigits: 2 })}` : "—"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">Total revenue</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <Users className="h-4 w-4 mb-1.5 text-violet-500" />
+              <p className="text-2xl font-bold">{data?.totalParents ?? "—"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Active parents</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <ClipboardList className="h-4 w-4 mb-1.5 text-cyan-500" />
+              <p className="text-2xl font-bold">{data?.totalTeachers ?? "—"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Active teachers</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-none sm:col-span-2">
+            <CardContent className="p-4">
+              <BarChart2 className="h-4 w-4 mb-1.5 text-muted-foreground" />
+              <p className="text-2xl font-bold">{data?.totalActiveUsers ?? "—"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Total active users (all roles)</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
       {/* Richer activity feed */}
       <Card className="border-border shadow-none">
         <CardHeader>
