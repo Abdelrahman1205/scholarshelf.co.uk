@@ -28,8 +28,8 @@ const schema = z.object({
   APP_BASE_URL: z.string().url().optional(),
 
   // ── Email ─────────────────────────────────────────────────────────────
-  RESEND_API_KEY:    z.string().optional(),
-  RESEND_FROM_EMAIL: z.string().email().optional(),
+  RESEND_API_KEY:    z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
+  RESEND_FROM_EMAIL: z.preprocess((v) => (v === "" ? undefined : v), z.string().email().optional()),
 
   // ── Payment integration ───────────────────────────────────────────────
   EXTERNAL_PAYMENT_API_URL:  z.string().url().optional(),
