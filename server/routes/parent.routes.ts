@@ -3,6 +3,7 @@
  *
  * Route handlers: parent domain.
  * Extracted from routes.ts monolith.
+ * Linking-code endpoints are rate-limited (see linkCodeRateLimited).
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import { storage } from "../storage.js";
@@ -32,11 +33,28 @@ import {
   sendPaymentSubmittedEmail, isResendConfigured,
 } from "../email.js";
 
+/**
+ * Rate limit for linking-code attempts (preview/confirm/legacy link-child).
+ * Codes are short and human-typeable, so brute-force must be throttled.
+ * Keyed per authenticated parent (falls back to IP), sliding 15-minute window.
+ */
+function linkCodeRateLimited(req: Request, res: Response): boolean {
+  const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+  const key = `linkcode:${req.session.userId ?? ip}`;
+  if (rateLimit(key, 10, 15 * 60 * 1000)) {
+    void auditLog(req, "link_code_rate_limited", `key:${key}`);
+    res.status(429).json({ message: "Too many linking code attempts. Please try again in 15 minutes." });
+    return true;
+  }
+  return false;
+}
+
 export function registerParentRoutes(app: Express): void {
   app.post("/api/parent/link-code/preview", requireRole("parent"), async (req, res) => {
     try {
       const { code } = req.body;
       if (!code?.trim()) return res.status(400).json({ message: "Link code is required" });
+      if (linkCodeRateLimited(req, res)) return;
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       // Look up without consuming the code
@@ -86,6 +104,7 @@ export function registerParentRoutes(app: Express): void {
   app.post("/api/parent/link-code/confirm", requireRole("parent"), async (req, res) => {
     try {
       const { code } = req.body;
+      if (linkCodeRateLimited(req, res)) return;
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       const result = await storage.useLinkingCode(code, user.email);
@@ -108,6 +127,7 @@ export function registerParentRoutes(app: Express): void {
   app.post("/api/parent/link-child", requireRole("parent"), async (req, res) => {
     try {
       const { code } = req.body;
+      if (linkCodeRateLimited(req, res)) return;
       const user = await storage.getUserById(req.session.userId!);
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       const result = await storage.useLinkingCode(code, user.email);

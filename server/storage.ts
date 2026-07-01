@@ -1,4 +1,5 @@
 import { eq, and, lt, desc, sql, inArray } from "drizzle-orm";
+// NOTE: getAllocations uses batched inArray lookups (no N+1).
 import { drizzle } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
@@ -1709,16 +1710,36 @@ class DatabaseStorage implements IStorage {
     } else {
       allocs = await getDb().select().from(schema.financeBookAllocations);
     }
+    if (allocs.length === 0) return [];
+
+    // Batch-fetch related students, books, and classes (avoids N+1 queries).
+    const studentIds = Array.from(new Set(allocs.map((a) => a.studentId).filter(Boolean))) as string[];
+    const bookIds = Array.from(new Set(allocs.map((a) => a.bookId).filter(Boolean))) as string[];
+    const students = studentIds.length
+      ? await getDb().select().from(schema.students).where(inArray(schema.students.id, studentIds))
+      : [];
+    const books = bookIds.length
+      ? await getDb().select().from(schema.books).where(inArray(schema.books.id, bookIds))
+      : [];
+    const classIds = Array.from(new Set(students.map((s) => s.classId).filter(Boolean))) as string[];
+    const classes = classIds.length
+      ? await getDb().select().from(schema.classes).where(inArray(schema.classes.id, classIds))
+      : [];
+
+    const studentById = new Map(students.map((s) => [s.id, s]));
+    const bookById = new Map(books.map((b) => [b.id, b]));
+    const classById = new Map(classes.map((c) => [c.id, c]));
+
     const result = [];
     for (const alloc of allocs) {
-      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, alloc.studentId));
-      const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, alloc.bookId));
+      const student = studentById.get(alloc.studentId);
       if (classId && student?.classId !== classId) continue;
-      let cls;
-      if (student?.classId) {
-        [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
-      }
-      result.push({ ...alloc, student: student ? { ...student, class: cls } : undefined, book });
+      const cls = student?.classId ? classById.get(student.classId) : undefined;
+      result.push({
+        ...alloc,
+        student: student ? { ...student, class: cls } : undefined,
+        book: bookById.get(alloc.bookId),
+      });
     }
     return result;
   }
@@ -1793,16 +1814,22 @@ class DatabaseStorage implements IStorage {
     if (!request) throw new Error("Request not found");
     if (request.status !== "pending") throw new Error("Request is not pending");
 
+    // Approve even if stock adjustment fails (e.g. insufficient stock),
+    // but record the failure in adminNotes so it is visible and recoverable
+    // instead of silently drifting inventory.
+    let stockNote = "";
     try {
       await this.adjustStock(request.bookId, request.quantity, "allocation", `Extra copy request approved: ${request.reason}`);
-    } catch (e) {
-      // Stock may be insufficient but we still approve the request
+    } catch (e: any) {
+      const reason = e?.message || "unknown error";
+      console.warn(`[extra-copy] Stock adjustment failed for request ${id} (book ${request.bookId}, qty ${request.quantity}): ${reason}`);
+      stockNote = ` [Stock NOT adjusted: ${reason}. Adjust manually.]`;
     }
 
     const updated = await updateAndFetchFirst(
       schema.extraCopyRequests,
       eq(schema.extraCopyRequests.id, id),
-      { status: "approved", adminNotes, resolvedAt: new Date() }
+      { status: "approved", adminNotes: `${adminNotes ?? ""}${stockNote}`.trim() || undefined, resolvedAt: new Date() }
     );
     return updated;
   }
