@@ -290,7 +290,15 @@ export interface IStorage {
   // Linking Codes
   getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]>;
   createLinkingCode(code: schema.InsertChildLinkingCode): Promise<schema.ChildLinkingCode>;
-  useLinkingCode(code: string, parentIdentifier: string): Promise<{ student: schema.Student; linkingCode: schema.ChildLinkingCode } | null>;
+  useLinkingCode(code: string, parentIdentifier: string): Promise<{ student?: schema.Student; students?: schema.Student[]; linkingCode: schema.ChildLinkingCode; isFamily?: boolean } | null>;
+  // Family management
+  getFamilies(schoolId?: string | null): Promise<(schema.Family & { students?: schema.Student[] })[]>;
+  getFamilyById(id: string): Promise<(schema.Family & { students?: schema.Student[] }) | undefined>;
+  createFamily(data: schema.InsertFamily): Promise<schema.Family>;
+  updateFamily(id: string, data: Partial<schema.InsertFamily>): Promise<schema.Family | undefined>;
+  deleteFamily(id: string): Promise<void>;
+  addStudentToFamily(familyId: string, studentId: string): Promise<void>;
+  removeStudentFromFamily(familyId: string, studentId: string): Promise<void>;
 
   // Parent
   getParentChildren(parentIdentifier: string): Promise<(schema.ParentChild & { student?: schema.Student & { class?: schema.Class } })[]>;
@@ -1078,7 +1086,7 @@ class DatabaseStorage implements IStorage {
 
       const result = [];
       for (const code of codes) {
-        const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, code.studentId));
+        const [student] = code.studentId ? await getDb().select().from(schema.students).where(eq(schema.students.id, code.studentId)) : [undefined];
         let cls;
         if (student?.classId) {
           [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
@@ -1098,10 +1106,29 @@ class DatabaseStorage implements IStorage {
   }
 
   // Look up a single link code by its code string — for preview (does not consume)
-  async getLinkingCodeByCode(code: string): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class }) | null> {
+  async getLinkingCodeByCode(code: string): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class; family?: schema.Family & { students?: (schema.Student & { class?: schema.Class })[] } }) | null> {
     const [linkingCode] = await getDb().select().from(schema.childLinkingCodes)
       .where(eq(schema.childLinkingCodes.code, code));
     if (!linkingCode) return null;
+
+    // Family code path
+    if (linkingCode.familyId) {
+      const [family] = await getDb().select().from(schema.families).where(eq(schema.families.id, linkingCode.familyId));
+      if (!family) return { ...linkingCode };
+      const memberships = await getDb().select().from(schema.familyStudents).where(eq(schema.familyStudents.familyId, linkingCode.familyId));
+      const familyStudentsWithClass: (schema.Student & { class?: schema.Class })[] = [];
+      for (const m of memberships) {
+        const [s] = await getDb().select().from(schema.students).where(eq(schema.students.id, m.studentId));
+        if (s) {
+          let cls: schema.Class | undefined;
+          if (s.classId) [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, s.classId));
+          familyStudentsWithClass.push({ ...s, class: cls });
+        }
+      }
+      return { ...linkingCode, family: { ...family, students: familyStudentsWithClass } };
+    }
+
+    // Single-student code path
     const [student] = linkingCode.studentId
       ? await getDb().select().from(schema.students).where(eq(schema.students.id, linkingCode.studentId))
       : [undefined];
@@ -1131,7 +1158,7 @@ class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async useLinkingCode(code: string, parentIdentifier: string): Promise<{ student: schema.Student; linkingCode: schema.ChildLinkingCode } | null> {
+  async useLinkingCode(code: string, parentIdentifier: string): Promise<{ student?: schema.Student; students?: schema.Student[]; linkingCode: schema.ChildLinkingCode; isFamily?: boolean } | null> {
     const [linkingCode] = await getDb().select().from(schema.childLinkingCodes).where(
       eq(schema.childLinkingCodes.code, code)
     );
@@ -1142,12 +1169,12 @@ class DatabaseStorage implements IStorage {
       throw new Error("This linking code has already been used.");
     }
 
-    // SECURITY: Check expiry — if expiresAt is set, it must be in the future
+    // SECURITY: Check expiry
     if (linkingCode.expiresAt && new Date(linkingCode.expiresAt) < new Date()) {
       throw new Error("This linking code has expired. Please request a new code from the school.");
     }
 
-    // SECURITY: Check parentEmail — if the code was generated for a specific parent, enforce it
+    // SECURITY: Check parentEmail
     if (linkingCode.parentEmail && linkingCode.parentEmail.trim() !== "") {
       const codeEmail = linkingCode.parentEmail.trim().toLowerCase();
       const callerEmail = parentIdentifier.trim().toLowerCase();
@@ -1156,14 +1183,108 @@ class DatabaseStorage implements IStorage {
       }
     }
 
+    await getDb().update(schema.childLinkingCodes).set({ isUsed: true, linkedAt: new Date() }).where(eq(schema.childLinkingCodes.id, linkingCode.id));
+
+    // Family code: link all students in the family
+    if (linkingCode.familyId) {
+      const familyMemberships = await getDb().select().from(schema.familyStudents).where(eq(schema.familyStudents.familyId, linkingCode.familyId));
+      const students: schema.Student[] = [];
+      for (const m of familyMemberships) {
+        const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, m.studentId));
+        if (student) {
+          // Skip if already linked to avoid duplicate key error
+          const [existing] = await getDb().select().from(schema.parentChildren).where(
+            and(eq(schema.parentChildren.parentIdentifier, parentIdentifier), eq(schema.parentChildren.studentId, student.id))
+          );
+          if (!existing) {
+            await getDb().insert(schema.parentChildren).values({ parentIdentifier, studentId: student.id });
+          }
+          students.push(student);
+        }
+      }
+      return { students, linkingCode: { ...linkingCode, isUsed: true, linkedAt: new Date() }, isFamily: true };
+    }
+
+    // Single-child code
+    if (!linkingCode.studentId) return null;
     const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, linkingCode.studentId));
     if (!student) return null;
 
-    await getDb().update(schema.childLinkingCodes).set({ isUsed: true, linkedAt: new Date() }).where(eq(schema.childLinkingCodes.id, linkingCode.id));
+    const [existing] = await getDb().select().from(schema.parentChildren).where(
+      and(eq(schema.parentChildren.parentIdentifier, parentIdentifier), eq(schema.parentChildren.studentId, student.id))
+    );
+    if (!existing) {
+      await getDb().insert(schema.parentChildren).values({ parentIdentifier, studentId: student.id });
+    }
 
-    await getDb().insert(schema.parentChildren).values({ parentIdentifier, studentId: student.id });
+    return { student, linkingCode: { ...linkingCode, isUsed: true, linkedAt: new Date() }, isFamily: false };
+  }
 
-    return { student, linkingCode: { ...linkingCode, isUsed: true, linkedAt: new Date() } };
+  // === FAMILIES ===
+
+  async getFamilies(schoolId?: string | null): Promise<(schema.Family & { students?: schema.Student[] })[]> {
+    try {
+      const conditions: any[] = [];
+      const sf = schoolFilter(schema.families, schoolId);
+      if (sf) conditions.push(sf);
+      const rows = conditions.length > 0
+        ? await getDb().select().from(schema.families).where(and(...conditions))
+        : await getDb().select().from(schema.families);
+      const result = [];
+      for (const family of rows) {
+        const memberships = await getDb().select().from(schema.familyStudents).where(eq(schema.familyStudents.familyId, family.id));
+        const students: schema.Student[] = [];
+        for (const m of memberships) {
+          const [s] = await getDb().select().from(schema.students).where(eq(schema.students.id, m.studentId));
+          if (s) students.push(s);
+        }
+        result.push({ ...family, students });
+      }
+      return result;
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      return [];
+    }
+  }
+
+  async getFamilyById(id: string): Promise<(schema.Family & { students?: schema.Student[] }) | undefined> {
+    const [family] = await getDb().select().from(schema.families).where(eq(schema.families.id, id));
+    if (!family) return undefined;
+    const memberships = await getDb().select().from(schema.familyStudents).where(eq(schema.familyStudents.familyId, id));
+    const students: schema.Student[] = [];
+    for (const m of memberships) {
+      const [s] = await getDb().select().from(schema.students).where(eq(schema.students.id, m.studentId));
+      if (s) students.push(s);
+    }
+    return { ...family, students };
+  }
+
+  async createFamily(data: schema.InsertFamily): Promise<schema.Family> {
+    return await insertAndFetchById(schema.families, data);
+  }
+
+  async updateFamily(id: string, data: Partial<schema.InsertFamily>): Promise<schema.Family | undefined> {
+    return await updateAndFetchFirst(schema.families, eq(schema.families.id, id), data);
+  }
+
+  async deleteFamily(id: string): Promise<void> {
+    await getDb().delete(schema.families).where(eq(schema.families.id, id));
+  }
+
+  async addStudentToFamily(familyId: string, studentId: string): Promise<void> {
+    // Idempotent — skip if already a member
+    const [existing] = await getDb().select().from(schema.familyStudents).where(
+      and(eq(schema.familyStudents.familyId, familyId), eq(schema.familyStudents.studentId, studentId))
+    );
+    if (!existing) {
+      await getDb().insert(schema.familyStudents).values({ familyId, studentId });
+    }
+  }
+
+  async removeStudentFromFamily(familyId: string, studentId: string): Promise<void> {
+    await getDb().delete(schema.familyStudents).where(
+      and(eq(schema.familyStudents.familyId, familyId), eq(schema.familyStudents.studentId, studentId))
+    );
   }
 
   // === PARENT ===

@@ -49,10 +49,28 @@ export function registerParentRoutes(app: Express): void {
       if (linkingCode.parentEmail && linkingCode.parentEmail.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
         return res.status(403).json({ message: "This linking code is not assigned to your email address." });
       }
-      // Return safe preview — no PII beyond name
+      // Family code: return all children in the family
+      if (linkingCode.familyId && (linkingCode as any).family) {
+        const family = (linkingCode as any).family;
+        return res.json({
+          code: linkingCode.code,
+          isFamily: true,
+          familyId: linkingCode.familyId,
+          familyName: family.name,
+          students: (family.students || []).map((s: any) => ({
+            studentId: s.id,
+            studentName: s.name ?? "Unknown Student",
+            studentCode: s.studentCode ?? null,
+            className: s.class?.name ?? null,
+          })),
+        });
+      }
+
+      // Single-child code: return safe preview — no PII beyond name
       const student = linkingCode.student;
       res.json({
         code: linkingCode.code,
+        isFamily: false,
         studentId: linkingCode.studentId,
         studentName: student?.name ?? "Unknown Student",
         studentCode: student?.studentCode ?? null,
@@ -72,7 +90,12 @@ export function registerParentRoutes(app: Express): void {
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       const result = await storage.useLinkingCode(code, user.email);
       if (!result) return res.status(404).json({ message: "Invalid linking code" });
-      await auditLog(req, "parent_child_linked", `student:${result.student.id}`);
+      if (result.isFamily && result.students) {
+        const ids = result.students.map((s) => s.id).join(",");
+        await auditLog(req, "parent_family_linked", `students:${ids}`);
+      } else if (result.student) {
+        await auditLog(req, "parent_child_linked", `student:${result.student.id}`);
+      }
       res.json(result);
     } catch (e: any) {
       const msg = e.message || "Unknown error";

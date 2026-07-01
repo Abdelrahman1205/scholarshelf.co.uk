@@ -164,7 +164,10 @@ function ParentLinkSection({
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Child linked", description: `${preview?.studentName} has been linked to your account.` });
+      const desc = preview?.isFamily
+        ? `${preview.students?.length ?? 0} children linked to your account.`
+        : `${preview?.studentName} has been linked to your account.`;
+      toast({ title: preview?.isFamily ? "Family linked" : "Child linked", description: desc });
       setPreview(null);
       setPreviewError(null);
       setLinkCode("");
@@ -236,20 +239,39 @@ function ParentLinkSection({
           ) : (
             // Step 2: preview — confirm before linking
             <div className="space-y-4">
-              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
-                <p className="text-sm text-muted-foreground">The following child was found:</p>
-                <p className="text-lg font-semibold">{preview.studentName}</p>
-                {preview.className && <p className="text-sm text-muted-foreground">Class: {preview.className}</p>}
-                {preview.studentCode && <p className="text-xs text-muted-foreground font-mono">Code: {preview.studentCode}</p>}
-              </div>
-              <p className="text-sm text-muted-foreground">Is this your child? Click <strong>Yes, link this child</strong> to confirm.</p>
+              {preview.isFamily ? (
+                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+                  <p className="text-sm text-muted-foreground">Family found: <span className="font-semibold text-foreground">{preview.familyName}</span></p>
+                  <p className="text-sm text-muted-foreground">This code will link you to all {preview.students?.length} children:</p>
+                  <div className="space-y-2">
+                    {(preview.students || []).map((s: any) => (
+                      <div key={s.studentId} className="flex justify-between text-sm px-3 py-2 rounded-md bg-card border border-border">
+                        <span className="font-medium">{s.studentName}</span>
+                        {s.className && <span className="text-muted-foreground">{s.className}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
+                  <p className="text-sm text-muted-foreground">The following child was found:</p>
+                  <p className="text-lg font-semibold">{preview.studentName}</p>
+                  {preview.className && <p className="text-sm text-muted-foreground">Class: {preview.className}</p>}
+                  {preview.studentCode && <p className="text-xs text-muted-foreground font-mono">Code: {preview.studentCode}</p>}
+                </div>
+              )}
+              <p className="text-sm text-muted-foreground">
+                {preview.isFamily
+                  ? "Are these your children? Click confirm to link all of them at once."
+                  : <>Is this your child? Click <strong>Yes, link this child</strong> to confirm.</>}
+              </p>
               <div className="flex gap-2">
                 <Button
                   data-testid="button-confirm-link"
                   onClick={() => confirmMutation.mutate(linkCode.trim())}
                   disabled={confirmMutation.isPending}
                 >
-                  {confirmMutation.isPending ? "Linking..." : "Yes, link this child"}
+                  {confirmMutation.isPending ? "Linking..." : preview.isFamily ? "Yes, link all children" : "Yes, link this child"}
                 </Button>
                 <Button variant="outline" onClick={() => { setPreview(null); setPreviewError(null); }}>
                   Cancel

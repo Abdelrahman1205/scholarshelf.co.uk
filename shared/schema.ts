@@ -339,9 +339,30 @@ export const insertStudentBookLevelSchema = createInsertSchema(studentBookLevels
 export type InsertStudentBookLevel = z.infer<typeof insertStudentBookLevelSchema>;
 export type StudentBookLevel = typeof studentBookLevels.$inferSelect;
 
+// === FAMILIES ===
+export const families = pgTable("families", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  name: text("name").notNull(),
+  schoolId: varchar("school_id", { length: 36 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const familyStudents = pgTable("family_students", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  familyId: varchar("family_id", { length: 36 }).references(() => families.id, { onDelete: "cascade" }).notNull(),
+  studentId: varchar("student_id", { length: 36 }).references(() => students.id, { onDelete: "cascade" }).notNull(),
+});
+
+export const insertFamilySchema = createInsertSchema(families).omit({ id: true, createdAt: true });
+export type InsertFamily = z.infer<typeof insertFamilySchema>;
+export type Family = typeof families.$inferSelect;
+export type FamilyStudent = typeof familyStudents.$inferSelect;
+
 export const childLinkingCodes = pgTable("child_linking_codes", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
-  studentId: varchar("student_id", { length: 36 }).references(() => students.id, { onDelete: "cascade" }).notNull(),
+  // For single-child codes: studentId is set. For family codes: familyId is set, studentId is null.
+  studentId: varchar("student_id", { length: 36 }).references(() => students.id, { onDelete: "cascade" }),
+  familyId: varchar("family_id", { length: 36 }).references(() => families.id, { onDelete: "cascade" }),
   code: text("code").unique().notNull(),
   parentEmail: text("parent_email").notNull(),
   isUsed: boolean("is_used").default(false),

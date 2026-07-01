@@ -33,6 +33,7 @@ import { AllocationsSection, ExtraRequestsSection } from "./admin/allocations";
 import { CommunicationsSection }    from "./admin/communications";
 import { BrandingSection }          from "./admin/branding";
 import { ReportsSection }           from "./admin/reports";
+import { FamiliesSection }          from "./admin/families";
 
 // Re-export UserDetailPanel so any external import still works
 export { UserDetailPanel };
@@ -58,6 +59,7 @@ export default function AdminPage({ section }: { section: string }) {
     classes:            <ClassesSection />,
     students:           <StudentsSection />,
     parents:            <ParentsSection />,
+    families:           <FamiliesSection />,
     codes:              <LinkingCodesSection />,
     payments:           <PaymentsSection />,
     allocations:        <AllocationsSection />,

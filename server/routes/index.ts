@@ -22,6 +22,7 @@ import { registerMessageRoutes } from "./message.routes.js";
 import { registerNotificationRoutes } from "./notification.routes.js";
 import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
+import { registerFamilyRoutes } from "./family.routes.js";
 import bcrypt from "bcryptjs";
 
 export async function registerRoutes(
@@ -223,6 +224,9 @@ export async function registerRoutes(
   });
   }
 
+
+  // Family groups + family link codes
+  registerFamilyRoutes(app);
 
   // Owner: support mode, school lifecycle, owner invites, pending setups
   registerOwnerRoutes(app);
