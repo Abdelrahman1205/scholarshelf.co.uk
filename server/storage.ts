@@ -282,6 +282,10 @@ export interface IStorage {
   getClassBookLevels(schoolId?: string | null): Promise<(schema.ClassBookLevel & { class?: schema.Class; bookLevel?: schema.BookLevel })[]>;
   assignClassBookLevel(cbl: schema.InsertClassBookLevel): Promise<schema.ClassBookLevel>;
   removeClassBookLevel(id: string, schoolId?: string | null): Promise<void>;
+  getStudentBookLevelOverride(studentId: string): Promise<(schema.StudentBookLevel & { bookLevel?: schema.BookLevel }) | undefined>;
+  setStudentBookLevelOverride(studentId: string, bookLevelId: string, schoolId?: string | null): Promise<schema.StudentBookLevel>;
+  deleteStudentBookLevelOverride(studentId: string): Promise<void>;
+  getAllStudentBookLevelOverrides(schoolId?: string | null): Promise<(schema.StudentBookLevel & { bookLevel?: schema.BookLevel })[]>;
 
   // Linking Codes
   getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]>;
@@ -299,6 +303,7 @@ export interface IStorage {
   // Payments
   createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment>;
   getPayments(parentIdentifier?: string, schoolId?: string | null): Promise<schema.BookPayment[]>;
+  getPaymentsEnriched(schoolId?: string | null): Promise<any[]>;
   getPaymentById(id: string, schoolId?: string | null): Promise<schema.BookPayment | undefined>;
   submitPaymentReference(paymentId: string, referenceNumber: string, submittedBy: string, notes?: string, schoolId?: string | null): Promise<schema.BookPayment>;
   confirmPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
@@ -1031,6 +1036,34 @@ class DatabaseStorage implements IStorage {
     await getDb().delete(schema.classBookLevels).where(eq(schema.classBookLevels.id, id));
   }
 
+  async getStudentBookLevelOverride(studentId: string): Promise<(schema.StudentBookLevel & { bookLevel?: schema.BookLevel }) | undefined> {
+    const [row] = await getDb().select().from(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
+    if (!row) return undefined;
+    const [bl] = await getDb().select().from(schema.bookLevels).where(eq(schema.bookLevels.id, row.bookLevelId));
+    return { ...row, bookLevel: bl };
+  }
+
+  async setStudentBookLevelOverride(studentId: string, bookLevelId: string, schoolId?: string | null): Promise<schema.StudentBookLevel> {
+    await getDb().delete(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
+    const created = await insertAndFetchById(schema.studentBookLevels, { studentId, bookLevelId, schoolId: schoolId ?? null });
+    return created;
+  }
+
+  async deleteStudentBookLevelOverride(studentId: string): Promise<void> {
+    await getDb().delete(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
+  }
+
+  async getAllStudentBookLevelOverrides(schoolId?: string | null): Promise<(schema.StudentBookLevel & { bookLevel?: schema.BookLevel })[]> {
+    const filter = schoolId ? eq(schema.studentBookLevels.schoolId, schoolId) : undefined;
+    const rows = filter ? await getDb().select().from(schema.studentBookLevels).where(filter) : await getDb().select().from(schema.studentBookLevels);
+    const result = [];
+    for (const row of rows) {
+      const [bl] = await getDb().select().from(schema.bookLevels).where(eq(schema.bookLevels.id, row.bookLevelId));
+      result.push({ ...row, bookLevel: bl });
+    }
+    return result;
+  }
+
   // === LINKING CODES ===
 
   async getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]> {
@@ -1163,7 +1196,15 @@ class DatabaseStorage implements IStorage {
     const [student] = await getDb().select().from(schema.students).where(and(...conditions));
     if (!student || !student.classId) throw new Error("Your child's details couldn't be found. Please contact the school.");
 
-    const classLevels = await getDb().select().from(schema.classBookLevels).where(eq(schema.classBookLevels.classId, student.classId));
+    // Check for per-student override first, fall back to class-level assignment
+    const studentOverride = await getDb().select().from(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
+    let classLevels: (typeof schema.classBookLevels.$inferSelect)[] = [];
+    if (studentOverride.length > 0) {
+      // Use student-level override: treat it like a single class-level entry
+      classLevels = [{ id: studentOverride[0].id, classId: student.classId ?? "", bookLevelId: studentOverride[0].bookLevelId }] as unknown as (typeof schema.classBookLevels.$inferSelect)[];
+    } else {
+      classLevels = await getDb().select().from(schema.classBookLevels).where(eq(schema.classBookLevels.classId, student.classId));
+    }
     if (classLevels.length === 0) throw new Error("Your child's book list isn't ready yet. Please contact the school to let them know.");
 
     const allItems: { bookId: string; quantity: number; unitPrice: string }[] = [];
@@ -1295,6 +1336,34 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
     const [payment] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     return payment;
+  }
+
+  async getPaymentsEnriched(schoolId?: string | null): Promise<any[]> {
+    const payments = await this.getPayments(undefined, schoolId);
+    const result = [];
+    for (const payment of payments) {
+      // Get baskets linked to this payment
+      const links = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, payment.id));
+      let studentName: string | null = null;
+      let className: string | null = null;
+      let classId: string | null = null;
+      if (links.length > 0) {
+        const [basket] = await getDb().select().from(schema.childBookBaskets).where(eq(schema.childBookBaskets.id, links[0].basketId));
+        if (basket?.studentId) {
+          const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, basket.studentId));
+          if (student) {
+            studentName = student.name;
+            classId = student.classId;
+            if (student.classId) {
+              const [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+              className = cls?.name ?? null;
+            }
+          }
+        }
+      }
+      result.push({ ...payment, studentName, className, classId });
+    }
+    return result;
   }
 
   async submitPaymentReference(

@@ -69,9 +69,13 @@ export function registerPaymentRoutes(app: Express): void {
 
   // === ADMIN PAYMENTS (school-scoped) ===
   app.get("/api/admin/payments", requireRole(...FINANCE_ROLES), async (req, res) => {
-    const sid = sessionSchoolId(req);
-    const payments = await storage.getPayments(undefined, sid);
-    res.json(payments);
+    try {
+      const sid = sessionSchoolId(req);
+      const payments = await storage.getPaymentsEnriched(sid);
+      res.json(payments);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
   });
 
   app.post("/api/admin/payments/:id/confirm", requireRole(...FINANCE_ROLES), async (req, res) => {

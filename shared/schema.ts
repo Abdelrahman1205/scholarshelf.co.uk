@@ -250,6 +250,7 @@ export const classes = pgTable("classes", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   name: text("name").notNull(),
   academicYear: text("academic_year"),
+  yearGroup: text("year_group"),
   teacherId: varchar("teacher_id", { length: 36 }),
   schoolId: varchar("school_id", { length: 36 }),
 });
@@ -325,6 +326,18 @@ export const classBookLevels = pgTable("class_book_levels", {
 export const insertClassBookLevelSchema = createInsertSchema(classBookLevels).omit({ id: true });
 export type InsertClassBookLevel = z.infer<typeof insertClassBookLevelSchema>;
 export type ClassBookLevel = typeof classBookLevels.$inferSelect;
+
+// Per-student book level override (overrides the class-level assignment for one student)
+export const studentBookLevels = pgTable("student_book_levels", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  studentId: varchar("student_id", { length: 36 }).references(() => students.id, { onDelete: "cascade" }).notNull().unique(),
+  bookLevelId: varchar("book_level_id", { length: 36 }).references(() => bookLevels.id, { onDelete: "cascade" }).notNull(),
+  schoolId: varchar("school_id", { length: 36 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertStudentBookLevelSchema = createInsertSchema(studentBookLevels).omit({ id: true });
+export type InsertStudentBookLevel = z.infer<typeof insertStudentBookLevelSchema>;
+export type StudentBookLevel = typeof studentBookLevels.$inferSelect;
 
 export const childLinkingCodes = pgTable("child_linking_codes", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),

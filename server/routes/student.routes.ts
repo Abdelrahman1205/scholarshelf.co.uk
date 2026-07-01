@@ -210,6 +210,56 @@ export function registerStudentRoutes(app: Express): void {
 
   // === PARENT ENDPOINTS ===
 
+
+  // === STUDENT BOOK LEVEL OVERRIDE (§5.13) ===
+
+  // GET all book level overrides for this school (one call for the students table)
+  app.get("/api/students/book-level-overrides", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const overrides = await storage.getAllStudentBookLevelOverrides(sid);
+      res.json(overrides);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // GET override for a specific student
+  app.get("/api/students/:id/book-level-override", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const override = await storage.getStudentBookLevelOverride(String(req.params.id));
+      res.json(override ?? null);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // PUT (set/replace) override
+  app.put("/api/students/:id/book-level-override", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const { bookLevelId } = req.body;
+      if (!bookLevelId) return res.status(400).json({ message: "bookLevelId is required" });
+      const result = await storage.setStudentBookLevelOverride(String(req.params.id), bookLevelId, sid);
+      await auditLog(req, "student_book_level_override_set", "student:" + req.params.id, { bookLevelId });
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // DELETE override (revert to class default)
+  app.delete("/api/students/:id/book-level-override", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      await storage.deleteStudentBookLevelOverride(String(req.params.id));
+      await auditLog(req, "student_book_level_override_cleared", "student:" + req.params.id, {});
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   // Preview a link code — returns student info without creating the link
   // Spec §6.3: POST /api/parent/link-code/preview
 }

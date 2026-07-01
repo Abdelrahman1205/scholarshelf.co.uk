@@ -35,6 +35,7 @@ function PaymentsSection() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [classFilter, setClassFilter] = useState("all");
 
   const { data: payments = [] } = useQuery<any[]>({ queryKey: ["/api/admin/payments"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -80,22 +81,56 @@ function PaymentsSection() {
   const isReviewActionable = (status: string) => ["reference_submitted", "needs_review"].includes(status);
   const isFulfilmentActionable = (status: string) => ["confirmed", "ready_for_collection"].includes(status);
   const isActionable = (status: string) => isReviewActionable(status) || isFulfilmentActionable(status);
-  const filteredPayments = statusFilter === "all" ? payments : payments.filter((p: any) => p.status === statusFilter);
+  const allClasses: { id: string; name: string }[] = [];
+  payments.forEach((p: any) => { if (p.classId && p.className && !allClasses.find(c => c.id === p.classId)) allClasses.push({ id: p.classId, name: p.className }); });
+  allClasses.sort((a, b) => a.name.localeCompare(b.name));
+
+  const filteredPayments = payments.filter((p: any) => {
+    if (statusFilter !== "all" && p.status !== statusFilter) return false;
+    if (classFilter !== "all" && p.classId !== classFilter) return false;
+    return true;
+  });
+
+  const exportCSV = () => {
+    const rows = [
+      ["Order Ref", "Student", "Class", "Parent", "Amount (GBP)", "Payment Ref #", "Status", "Submitted"],
+      ...filteredPayments.map((p: any) => [
+        p.paymentReference ?? "",
+        p.studentName ?? "",
+        p.className ?? "",
+        p.parentIdentifier ?? "",
+        parseFloat(p.totalAmount || "0").toFixed(2),
+        p.paymentReferenceNumber ?? "",
+        p.status ?? "",
+        p.paymentReferenceSubmittedAt ? new Date(p.paymentReferenceSubmittedAt).toLocaleDateString() : "",
+      ]),
+    ];
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "payments-export.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
   const actionableCount = payments.filter((p: any) => isActionable(p.status)).length;
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight">Payment Review</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Review parent payment references submitted via external payment apps.
-          {actionableCount > 0 && <span className="ml-2 text-blue-600 font-medium">{actionableCount} awaiting review</span>}
-        </p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">Payment Review</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Review parent payment references submitted via external payment apps.
+            {actionableCount > 0 && <span className="ml-2 text-blue-600 font-medium">{actionableCount} awaiting review</span>}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={exportCSV} disabled={filteredPayments.length === 0}>
+          <Download className="w-4 h-4 mr-2" /> Export CSV
+        </Button>
       </div>
 
-      {/* Status filter */}
-      <div className="flex items-center gap-3">
-        <Label className="text-sm text-muted-foreground">Filter by status:</Label>
+      {/* Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <Label className="text-sm text-muted-foreground">Status:</Label>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -110,6 +145,18 @@ function PaymentsSection() {
             <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
+        {allClasses.length > 0 && (
+          <>
+            <Label className="text-sm text-muted-foreground">Class:</Label>
+            <Select value={classFilter} onValueChange={setClassFilter}>
+              <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All classes</SelectItem>
+                {allClasses.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </>
+        )}
       </div>
 
       <Card className="border-border shadow-none">
@@ -117,6 +164,8 @@ function PaymentsSection() {
           <TableHeader className="bg-muted/30">
             <TableRow>
               <TableHead>Order Ref</TableHead>
+              <TableHead>Student</TableHead>
+              <TableHead>Class</TableHead>
               <TableHead>Payment Ref #</TableHead>
               <TableHead>Parent</TableHead>
               <TableHead>Amount</TableHead>
@@ -129,6 +178,8 @@ function PaymentsSection() {
             {filteredPayments.map((p: any) => (
               <TableRow key={p.id} className={isActionable(p.status) ? "bg-blue-50/40" : undefined}>
                 <TableCell className="font-mono text-xs text-muted-foreground">{p.paymentReference}</TableCell>
+                <TableCell className="text-sm font-medium">{p.studentName ?? <span className="text-muted-foreground italic">—</span>}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{p.className ?? "—"}</TableCell>
                 <TableCell className="font-mono text-sm font-medium">{p.paymentReferenceNumber || <span className="text-muted-foreground italic">Not submitted</span>}</TableCell>
                 <TableCell className="text-muted-foreground">{p.parentIdentifier}</TableCell>
                 <TableCell className="font-medium">£{parseFloat(p.totalAmount || "0").toFixed(2)}</TableCell>
@@ -142,7 +193,7 @@ function PaymentsSection() {
               </TableRow>
             ))}
             {filteredPayments.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+              <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                 {statusFilter === "all" ? "No payments yet." : `No payments with status "${statusFilter.replace(/_/g, " ")}".`}
               </TableCell></TableRow>
             )}

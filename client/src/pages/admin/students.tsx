@@ -41,6 +41,11 @@ function StudentsSection() {
   const [showArchived, setShowArchived] = useState(false);
   const [form, setForm] = useState({ name: "", classId: "", parentEmail: "" });
 
+  // Book level override dialog state
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideStudent, setOverrideStudent] = useState<any>(null);
+  const [overrideLevelId, setOverrideLevelId] = useState<string>("");
+
   // CSV Import state
   const [importOpen, setImportOpen] = useState(false);
   const [csvText, setCsvText] = useState("");
@@ -51,6 +56,9 @@ function StudentsSection() {
   const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
   const classMap = Object.fromEntries(classes.map((c: any) => [c.id, c]));
+  const { data: bookLevels = [] } = useQuery<any[]>({ queryKey: ["/api/book-levels"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: studentOverrides = [] } = useQuery<any[]>({ queryKey: ["/api/students/book-level-overrides"], queryFn: getQueryFn({ on401: "throw" }) });
+  const overrideMap = Object.fromEntries(studentOverrides.map((o: any) => [o.studentId, o]));
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -115,6 +123,31 @@ function StudentsSection() {
     onError: (err: any) => { toast({ title: "Import failed", description: err.message, variant: "destructive" }); },
   });
 
+  const setOverrideMutation = useMutation({
+    mutationFn: async ({ studentId, bookLevelId }: { studentId: string; bookLevelId: string }) => {
+      const res = await apiRequest("PUT", "/api/students/" + studentId + "/book-level-override", { bookLevelId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/students/book-level-overrides"] });
+      setOverrideOpen(false);
+      toast({ title: "Book level override saved" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const clearOverrideMutation = useMutation({
+    mutationFn: async (studentId: string) => {
+      await apiRequest("DELETE", "/api/students/" + studentId + "/book-level-override");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/students/book-level-overrides"] });
+      setOverrideOpen(false);
+      toast({ title: "Override cleared — reverted to class default" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const activeStudents = students.filter((s: any) => !s.isArchived);
   const archivedStudents = students.filter((s: any) => s.isArchived);
   const displayStudents = showArchived ? archivedStudents : activeStudents;
@@ -158,6 +191,7 @@ function StudentsSection() {
               <TableHead>Name</TableHead>
               <TableHead>Student Code</TableHead>
               <TableHead>Class</TableHead>
+              <TableHead>Book Level</TableHead>
               {showArchived && <TableHead>Archived</TableHead>}
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -168,6 +202,15 @@ function StudentsSection() {
                 <TableCell className="font-medium">{student.name}</TableCell>
                 <TableCell className="text-muted-foreground font-mono text-sm">{student.studentCode || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{classMap[student.classId]?.name || "—"}</TableCell>
+                <TableCell>
+                  {overrideMap[student.id] ? (
+                    <Badge variant="outline" className="bg-violet-100 text-violet-700 border-violet-200 text-xs">
+                      {overrideMap[student.id].bookLevel?.name ?? "Custom"}
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Class default</span>
+                  )}
+                </TableCell>
                 {showArchived && <TableCell className="text-muted-foreground text-sm">{student.archivedAt ? new Date(student.archivedAt).toLocaleDateString() : "—"}</TableCell>}
                 <TableCell className="text-right space-x-1">
                   {student.isArchived ? (
@@ -176,6 +219,9 @@ function StudentsSection() {
                     </Button>
                   ) : (
                     <>
+                      <Button variant="ghost" size="sm" title="Set book level override" onClick={() => { setOverrideStudent(student); setOverrideLevelId(overrideMap[student.id]?.bookLevelId ?? ""); setOverrideOpen(true); }}>
+                        <BookOpen className="w-4 h-4" />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => { setSelectedStudent(student); setForm({ name: student.name || "", classId: student.classId || "", parentEmail: "" }); setEditOpen(true); }}>
                         <Pencil className="w-4 h-4" />
                       </Button>
@@ -188,11 +234,49 @@ function StudentsSection() {
               </TableRow>
             ))}
             {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={showArchived ? 5 : 4} className="text-center text-muted-foreground py-8">{search ? "No matching students" : showArchived ? "No archived students." : "No students yet. Add your first student above."}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={showArchived ? 6 : 5} className="text-center text-muted-foreground py-8">{search ? "No matching students" : showArchived ? "No archived students." : "No students yet. Add your first student above."}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </Card>
+
+      {/* Book Level Override Dialog */}
+      <Dialog open={overrideOpen} onOpenChange={setOverrideOpen}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Book Level Override</DialogTitle>
+            <DialogDescription>
+              Override the class-level book bundle for <strong>{overrideStudent?.name}</strong>. Their class default is <strong>{classMap[overrideStudent?.classId]?.name ?? "—"}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Book level for this student</Label>
+              <Select value={overrideLevelId} onValueChange={setOverrideLevelId}>
+                <SelectTrigger><SelectValue placeholder="Select a book level…" /></SelectTrigger>
+                <SelectContent>
+                  {bookLevels.map((bl: any) => (
+                    <SelectItem key={bl.id} value={bl.id}>{bl.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {overrideMap[overrideStudent?.id] && (
+              <p className="text-xs text-violet-600">Currently overridden to: <strong>{overrideMap[overrideStudent?.id]?.bookLevel?.name}</strong></p>
+            )}
+          </div>
+          <DialogFooter className="flex gap-2 flex-wrap">
+            {overrideMap[overrideStudent?.id] && (
+              <Button variant="outline" className="text-destructive border-destructive/30" onClick={() => clearOverrideMutation.mutate(overrideStudent?.id)} disabled={clearOverrideMutation.isPending}>
+                {clearOverrideMutation.isPending ? "Clearing…" : "Clear override"}
+              </Button>
+            )}
+            <Button onClick={() => { if (overrideLevelId && overrideStudent) setOverrideMutation.mutate({ studentId: overrideStudent.id, bookLevelId: overrideLevelId }); }} disabled={!overrideLevelId || setOverrideMutation.isPending}>
+              {setOverrideMutation.isPending ? "Saving…" : "Save Override"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">
@@ -203,7 +287,7 @@ function StudentsSection() {
               <Label>Class</Label>
               <Select value={form.classId} onValueChange={(v) => setForm({ ...form, classId: v })}>
                 <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
-                <SelectContent>{classes.map((cls: any) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}</SelectContent>
+                <SelectContent>{classes.map((cls: any) => <SelectItem key={cls.id} value={cls.id}>{cls.yearGroup ? `${cls.name} (${cls.yearGroup})` : cls.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
           </div>
@@ -227,7 +311,7 @@ function StudentsSection() {
               <Label>Class</Label>
               <Select value={form.classId} onValueChange={(v) => setForm({ ...form, classId: v })}>
                 <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
-                <SelectContent>{classes.map((cls: any) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}</SelectContent>
+                <SelectContent>{classes.map((cls: any) => <SelectItem key={cls.id} value={cls.id}>{cls.yearGroup ? `${cls.name} (${cls.yearGroup})` : cls.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
           </div>
