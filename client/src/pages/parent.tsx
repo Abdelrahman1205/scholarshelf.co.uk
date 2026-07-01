@@ -332,12 +332,12 @@ function ParentBasketsSection({
   processedBaskets,
   childrenWithoutBaskets,
   createBasketMutation,
-  setSelectedBasketForPayment,
+  setPaymentSelection,
   setPaymentResult,
   setPaymentDialogOpen,
   paymentDialogOpen,
   paymentResult,
-  selectedBasketForPayment,
+  paymentSelection,
   paymentMutation,
   paymentAppName,
 }: {
@@ -348,12 +348,12 @@ function ParentBasketsSection({
   processedBaskets: any[];
   childrenWithoutBaskets: any[];
   createBasketMutation: any;
-  setSelectedBasketForPayment: (basket: any) => void;
+  setPaymentSelection: (sel: { baskets: any[] } | null) => void;
   setPaymentResult: (result: any) => void;
   setPaymentDialogOpen: (open: boolean) => void;
   paymentDialogOpen: boolean;
   paymentResult: any;
-  selectedBasketForPayment: any;
+  paymentSelection: { baskets: any[] } | null;
   paymentMutation: any;
   paymentAppName: string | null;
 }) {
@@ -407,6 +407,31 @@ function ParentBasketsSection({
         </div>
       ) : (
         <>
+          {pendingBaskets.length >= 2 && (
+            <div className="flex items-center justify-between p-4 rounded-lg border-2 border-primary/30 bg-primary/5 shadow-sm">
+              <div>
+                <p className="font-semibold text-foreground">Pay for All Children</p>
+                <p className="text-sm text-muted-foreground">
+                  {pendingBaskets.length} baskets •{" "}
+                  <span className="font-medium text-primary">
+                    £{pendingBaskets.reduce((sum: number, b: any) => sum + parseFloat(b.totalAmount || "0"), 0).toFixed(2)} total
+                  </span>
+                </p>
+              </div>
+              <Button
+                data-testid="button-pay-all-baskets"
+                className="gap-2 shadow-sm"
+                onClick={() => {
+                  setPaymentSelection({ baskets: pendingBaskets });
+                  setPaymentResult(null);
+                  setPaymentDialogOpen(true);
+                }}
+              >
+                <CreditCard className="w-4 h-4" />
+                Pay for All Children
+              </Button>
+            </div>
+          )}
           {pendingBaskets.map((basket: any) => (
             <Card key={basket.id} className="border-border shadow-sm border-t-4 border-t-primary overflow-hidden" data-testid={`card-basket-${basket.id}`}>
               <CardHeader className="bg-muted/20 pb-4 border-b border-border">
@@ -455,10 +480,7 @@ function ParentBasketsSection({
                   data-testid={`button-pay-basket-${basket.id}`}
                   className="gap-2 shadow-sm"
                   onClick={() => {
-                    const ts = Date.now().toString(36).toUpperCase();
-                    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-                    const ref = `EDU-${ts}-${rand}`;
-                    setSelectedBasketForPayment({ ...basket, generatedReference: ref });
+                    setPaymentSelection({ baskets: [basket] });
                     setPaymentResult(null);
                     setPaymentDialogOpen(true);
                   }}
@@ -522,13 +544,17 @@ function ParentBasketsSection({
         if (!open) {
           setPaymentDialogOpen(false);
           setPaymentResult(null);
-          setSelectedBasketForPayment(null);
+          setPaymentSelection(null);
         }
       }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="font-heading">
-              {paymentResult ? "Order Created" : "Confirm Book Order"}
+              {paymentResult
+                ? "Order Created"
+                : paymentSelection && paymentSelection.baskets.length > 1
+                  ? `Confirm Order for ${paymentSelection.baskets.length} Children`
+                  : "Confirm Book Order"}
             </DialogTitle>
             <DialogDescription>
               {paymentResult
@@ -537,21 +563,40 @@ function ParentBasketsSection({
             </DialogDescription>
           </DialogHeader>
 
-          {selectedBasketForPayment && !paymentResult && (
+          {paymentSelection && !paymentResult && (
             <div className="space-y-4">
               <div className="rounded-lg border border-border p-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Child</span>
-                  <span className="font-medium">{selectedBasketForPayment.student?.name || "Child"}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Class</span>
-                  <span>{selectedBasketForPayment.student?.class?.name || "—"}</span>
-                </div>
-                <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-2">
-                  <span>Total Amount</span>
-                  <span className="text-primary text-lg">£{parseFloat(selectedBasketForPayment.totalAmount || "0").toFixed(2)}</span>
-                </div>
+                {paymentSelection.baskets.length > 1 ? (
+                  <>
+                    {paymentSelection.baskets.map((b: any) => (
+                      <div key={b.id} className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">{b.student?.name || "Child"} <span className="text-xs">({b.student?.class?.name || "—"})</span></span>
+                        <span className="font-medium">£{parseFloat(b.totalAmount || "0").toFixed(2)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-2">
+                      <span>Combined Total</span>
+                      <span className="text-primary text-lg">
+                        £{paymentSelection.baskets.reduce((s: number, b: any) => s + parseFloat(b.totalAmount || "0"), 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Child</span>
+                      <span className="font-medium">{paymentSelection.baskets[0]?.student?.name || "Child"}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Class</span>
+                      <span>{paymentSelection.baskets[0]?.student?.class?.name || "—"}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-2">
+                      <span>Total Amount</span>
+                      <span className="text-primary text-lg">£{parseFloat(paymentSelection.baskets[0]?.totalAmount || "0").toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
               </div>
               <div className="rounded-lg border-2 border-blue-500/30 p-4 bg-blue-500/5 text-sm space-y-2">
                 <p className="font-semibold text-blue-700">How to Pay</p>
@@ -597,14 +642,14 @@ function ParentBasketsSection({
                   variant="outline"
                   onClick={() => {
                     setPaymentDialogOpen(false);
-                    setSelectedBasketForPayment(null);
+                    setPaymentSelection(null);
                   }}
                 >
                   Cancel
                 </Button>
                 <Button
                   data-testid="button-confirm-payment"
-                  onClick={() => paymentMutation.mutate({ basketIds: [selectedBasketForPayment.id] })}
+                  onClick={() => paymentMutation.mutate({ basketIds: (paymentSelection?.baskets || []).map((b: any) => b.id) })}
                   disabled={paymentMutation.isPending}
                   className="gap-2"
                 >
@@ -620,7 +665,7 @@ function ParentBasketsSection({
                   onClick={() => {
                     setPaymentDialogOpen(false);
                     setPaymentResult(null);
-                    setSelectedBasketForPayment(null);
+                    setPaymentSelection(null);
                   }}
                 >
                   Close
@@ -631,7 +676,7 @@ function ParentBasketsSection({
                   onClick={() => {
                     setPaymentDialogOpen(false);
                     setPaymentResult(null);
-                    setSelectedBasketForPayment(null);
+                    setPaymentSelection(null);
                     window.location.href = "/parent/payments";
                   }}
                 >
@@ -1093,7 +1138,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
   const [scannerError, setScannerError] = useState<string | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [selectedBasketForPayment, setSelectedBasketForPayment] = useState<any>(null);
+  const [paymentSelection, setPaymentSelection] = useState<{ baskets: any[] } | null>(null);
   const [paymentResult, setPaymentResult] = useState<any>(null);
 
   const childrenQuery = useQuery<any[]>({ queryKey: ['/api/parent/children'], queryFn: getQueryFn({ on401: 'throw' }) });
@@ -1182,7 +1227,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
       case "link":
         return <ParentLinkSection linkCode={linkCode} setLinkCode={setLinkCode} linkChildMutation={linkChildMutation} childrenQuery={childrenQuery} children={children} createBasketMutation={createBasketMutation} scannerOpen={scannerOpen} startScanner={startScanner} stopScanner={stopScanner} scannerError={scannerError} />;
       case "baskets":
-        return <ParentBasketsSection basketsQuery={basketsQuery} baskets={baskets} children={children} pendingBaskets={pendingBaskets} processedBaskets={processedBaskets} childrenWithoutBaskets={childrenWithoutBaskets} createBasketMutation={createBasketMutation} setSelectedBasketForPayment={setSelectedBasketForPayment} setPaymentResult={setPaymentResult} setPaymentDialogOpen={setPaymentDialogOpen} paymentDialogOpen={paymentDialogOpen} paymentResult={paymentResult} selectedBasketForPayment={selectedBasketForPayment} paymentMutation={paymentMutation} paymentAppName={paymentAppName} />;
+        return <ParentBasketsSection basketsQuery={basketsQuery} baskets={baskets} children={children} pendingBaskets={pendingBaskets} processedBaskets={processedBaskets} childrenWithoutBaskets={childrenWithoutBaskets} createBasketMutation={createBasketMutation} setPaymentSelection={setPaymentSelection} setPaymentResult={setPaymentResult} setPaymentDialogOpen={setPaymentDialogOpen} paymentDialogOpen={paymentDialogOpen} paymentResult={paymentResult} paymentSelection={paymentSelection} paymentMutation={paymentMutation} paymentAppName={paymentAppName} />;
       case "payments":
         return <ParentPaymentsSection paymentsQuery={paymentsQuery} payments={payments} onSubmitReference={(p) => { setReferenceDialogPayment(p); setRefNumber(""); setRefConfirmed(false); setRefNotes(""); }} />;
       case "messages":

@@ -184,9 +184,9 @@ export async function sendSchoolSetupInviteEmail(
   branding?: EmailBranding
 ): Promise<boolean> {
   const body = `
-    <h2 style="margin-top:0;color:#1e3a5f;">Complete your EduBook school setup</h2>
+    <h2 style="margin-top:0;color:#1e3a5f;">Complete your Scholar Shelf school setup</h2>
     <p>Hello ${adminName},</p>
-    <p><strong>${schoolName}</strong> has been created in EduBook and you have been invited as the first School Admin.</p>
+    <p><strong>${schoolName}</strong> has been created in Scholar Shelf and you have been invited as the first School Admin.</p>
     <p>Use the secure link below to create your password, accept the invitation, and continue the school setup.</p>
     <p style="text-align:center;margin:28px 0;">
       <a href="${inviteLink}"
@@ -204,8 +204,8 @@ export async function sendSchoolSetupInviteEmail(
 
   return sendEmail(
     to,
-    `Complete your EduBook school setup for ${schoolName}`,
-    wrapEmail("Complete your school setup", body, {
+    `Complete your Scholar Shelf school setup for ${schoolName}`,
+    wrapEmail("Complete your Scholar Shelf school setup", body, {
       schoolName,
       logoUrl: branding?.logoUrl || null,
       primaryColour: branding?.primaryColour || null,
@@ -233,7 +233,7 @@ export async function sendParentCodeEmail(
   const body = `
     <h2 style="margin-top:0;color:#1e3a5f;">Your child's book linking code</h2>
     <p>A linking code has been generated for <strong>${studentName}</strong>.</p>
-    <p>Use this code to link your parent account to your child's book record on Scholar Shelf:</p>
+    <p>Use this code to connect your parent account to your child's book record on Scholar Shelf:</p>
     <p style="text-align:center;margin:28px 0;">
       <span style="background:#f0f4ff;border:2px solid #1e3a5f;border-radius:8px;
                    padding:14px 32px;font-size:28px;font-weight:bold;letter-spacing:4px;
@@ -243,9 +243,10 @@ export async function sendParentCodeEmail(
     </p>
     <p><strong>How to use it:</strong></p>
     <ol style="padding-left:20px;color:#374151;">
-      <li>Sign in to Scholar Shelf at <a href="https://scholarshelf.co.uk">scholarshelf.co.uk</a></li>
-      <li>Go to <strong>My Children</strong> and click <strong>Link a Child</strong></li>
-      <li>Enter the code above</li>
+      <li><strong>New to Scholar Shelf?</strong> Create a free parent account at <a href="https://scholarshelf.co.uk/register" style="color:#1e3a5f;">scholarshelf.co.uk/register</a></li>
+      <li><strong>Already have an account?</strong> Sign in at <a href="https://scholarshelf.co.uk/login" style="color:#1e3a5f;">scholarshelf.co.uk/login</a></li>
+      <li>Once signed in, go to <strong>Link Child</strong> in the menu</li>
+      <li>Enter the code above to link your child</li>
     </ol>
     <p style="color:#6b7280;font-size:13px;margin-top:24px;">
       This code expires on <strong>${expiryStr}</strong> and can only be used once.
