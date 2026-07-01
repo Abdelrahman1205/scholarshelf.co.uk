@@ -35,16 +35,20 @@ import { BrandingSection }          from "./admin/branding";
 import { ReportsSection }           from "./admin/reports";
 import { FamiliesSection }          from "./admin/families";
 import { DbConsoleSection }        from "./admin/db-console";
+import { ItDashboardSection }      from "./admin/it-dashboard";
 
 // Re-export UserDetailPanel so any external import still works
 export { UserDetailPanel };
 
 export default function AdminPage({ section }: { section: string }) {
   const { user } = useAuth();
+  const normalizedRole = normalizeRole(user?.role);
   const requesterIsOwner = normalizeRole(user?.role) === "platform_owner";
   const inSupportMode = requesterIsOwner && (user as any)?.supportMode?.active;
+  const isItPersonnel = normalizedRole === "it_personnel";
 
   const sections: Record<string, ReactNode> = {
+    website:            <ItDashboardSection />,
     owner:              <OwnerDashboardSection />,
     schools:            <SchoolsSection />,
     "school-details":   <OwnerSchoolDetailsSection />,
@@ -79,6 +83,14 @@ export default function AdminPage({ section }: { section: string }) {
 
   let resolvedSection = section;
 
+  const itAllowedSections = new Set(["website", "communications", "branding", "users", "setup"]);
+
+  if (isItPersonnel) {
+    if (section === "dashboard" || !itAllowedSections.has(section)) {
+      resolvedSection = "website";
+    }
+  }
+
   if (ownerOnlySections.has(section) && !requesterIsOwner) {
     resolvedSection = "dashboard";
   }
@@ -93,7 +105,7 @@ export default function AdminPage({ section }: { section: string }) {
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-      {sections[resolvedSection] || <DashboardSection />}
+      {sections[resolvedSection] || (isItPersonnel ? <ItDashboardSection /> : <DashboardSection />)}
     </div>
   );
 }

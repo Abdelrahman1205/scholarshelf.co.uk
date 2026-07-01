@@ -92,6 +92,16 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },
+  it_personnel: {
+    label: "IT Control",
+    navItems: [
+      { label: "Website Control", href: "/admin/website", icon: LayoutDashboard },
+      { label: "Branding", href: "/admin/branding", icon: Palette },
+      { label: "Communications", href: "/admin/communications", icon: MessageSquare },
+      { label: "Users", href: "/admin/users", icon: UserPlus },
+      { label: "Setup", href: "/admin/setup", icon: Settings },
+    ],
+  },
   teacher: {
     label: "Teacher",
     navItems: [
@@ -149,7 +159,7 @@ export default function Layout({ children }: LayoutProps) {
     ? "owner_support"
     : isOwner
       ? "owner"
-      : activeContext === "school_admin" || activeContext === "admin" || activeContext === "it_personnel"
+      : activeContext === "school_admin" || activeContext === "admin"
         ? "admin"
         : activeContext;
   const isItPersonnelContext = activeContext === "it_personnel";

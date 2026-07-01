@@ -14,8 +14,9 @@ export function getRoleRoute(role: string, opts?: { isNewAccount?: boolean }): s
       // New school admins land on the setup wizard; existing ones on the dashboard
       return opts?.isNewAccount ? "/admin/setup" : "/admin";
     case "admin":
-    case "it_personnel":
       return "/admin";
+    case "it_personnel":
+      return "/admin/website";
     case "teacher":
       return "/teacher";
     case "parent":
