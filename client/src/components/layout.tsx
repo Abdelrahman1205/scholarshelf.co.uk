@@ -149,7 +149,7 @@ export default function Layout({ children }: LayoutProps) {
     ? "owner_support"
     : isOwner
       ? "owner"
-      : activeContext === "school_admin" || activeContext === "admin"
+      : activeContext === "school_admin" || activeContext === "admin" || activeContext === "it_personnel"
         ? "admin"
         : activeContext;
 
