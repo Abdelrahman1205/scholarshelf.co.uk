@@ -27,7 +27,8 @@ import {
 export const COMPLETE_SETUP_STATUSES = new Set(["operational_setup_complete", "complete", "active"]);
 
 export const PLATFORM_OWNER_ROLES = ["owner", "platform_admin"];
-export const ADMIN_UI_ROLES = ["admin", "school_admin", "it_personnel", "owner", "platform_admin"] as const;
+export const ADMIN_UI_ROLES = ["admin", "school_admin", "owner", "platform_admin"] as const;
+export const IT_WEBSITE_ROLES = ["it_personnel"] as const;
 export const FINANCE_ROLES = [...ADMIN_UI_ROLES, "finance"] as const;
 
 export const BRANDING_VIEW_PERMISSION    = "BRANDING_VIEW";

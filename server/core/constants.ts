@@ -12,7 +12,8 @@
 // ── Roles ──────────────────────────────────────────────────────────────────
 
 export const PLATFORM_OWNER_ROLES   = ["owner", "platform_admin"] as const;
-export const ADMIN_UI_ROLES         = ["admin", "school_admin", "it_personnel", "owner", "platform_admin"] as const;
+export const ADMIN_UI_ROLES         = ["admin", "school_admin", "owner", "platform_admin"] as const;
+export const IT_WEBSITE_ROLES       = ["it_personnel"] as const;
 export const FINANCE_ROLES          = [...ADMIN_UI_ROLES, "finance"] as const;
 export const ALL_STAFF_ROLES        = [...FINANCE_ROLES, "teacher", "it_personnel"] as const;
 

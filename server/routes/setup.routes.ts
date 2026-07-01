@@ -12,7 +12,7 @@ import {
   getActiveRequestContext, resolveRole,
   auditLog, rateLimit,
   routeParam, normalizeEmail, normalizeSchoolCode, extractSupportReason,
-  PLATFORM_OWNER_ROLES, ADMIN_UI_ROLES, FINANCE_ROLES,
+  PLATFORM_OWNER_ROLES, ADMIN_UI_ROLES, IT_WEBSITE_ROLES, FINANCE_ROLES,
   BRANDING_VIEW_PERMISSION, BRANDING_MANAGE_PERMISSION,
   BRANDING_UPLOAD_LOGO_PERMISSION, BRANDING_UPDATE_THEME_PERMISSION, BRANDING_RESET_DEFAULT_PERMISSION,
   COMPLETE_SETUP_STATUSES, CONTEXT_DEFAULT_PATHS,
@@ -135,6 +135,73 @@ export function registerSetupRoutes(app: Express): void {
       });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to load setup status" });
+    }
+  });
+
+  // IT website control surface: only public-facing website and content status.
+  app.get("/api/it/website-summary", requireRole(...IT_WEBSITE_ROLES), async (req, res) => {
+    try {
+      const schoolId = sessionSchoolId(req);
+      if (!schoolId) {
+        return res.status(400).json({ message: "No school is currently selected." });
+      }
+
+      const [setupState, branding, messageThreads] = await Promise.all([
+        getSchoolSetupState(schoolId),
+        storage.getSchoolBranding(schoolId),
+        storage.getMessageThreads({ schoolId, status: "open" }),
+      ]);
+
+      if (!setupState) {
+        return res.status(404).json({ message: "School not found" });
+      }
+
+      const school = setupState.school;
+      const checklist = setupState.checklist;
+      const websiteChecklist = {
+        schoolProfileComplete: !!checklist.schoolProfileComplete,
+        brandingDesignConfigured: !!checklist.brandingDesignConfigured,
+        operationalSetupComplete: !!checklist.operationalSetupComplete,
+      };
+
+      const websiteReadinessDone = Object.values(websiteChecklist).filter(Boolean).length;
+      const unreadConversations = messageThreads.filter((thread: any) =>
+        (Number(thread.unreadByParent) || 0) + (Number(thread.unreadByTeacher) || 0) > 0,
+      ).length;
+
+      res.json({
+        school: {
+          id: school.id,
+          name: school.name,
+          code: school.code,
+          status: school.status,
+          contactEmail: school.contactEmail,
+          contactPhone: school.contactPhone,
+          address: school.address,
+          notes: school.notes,
+          paymentAppName: school.paymentAppName ?? null,
+        },
+        publicWebsite: {
+          path: `/school/${encodeURIComponent(school.code)}`,
+          hasCustomBranding:
+            !!branding?.logoUrl ||
+            !!branding?.faviconUrl ||
+            !!branding?.primaryColour ||
+            !!branding?.secondaryColour,
+        },
+        communications: {
+          openThreads: messageThreads.length,
+          unreadConversations,
+        },
+        checklist: websiteChecklist,
+        readiness: {
+          done: websiteReadinessDone,
+          total: Object.keys(websiteChecklist).length,
+          percent: Math.round((websiteReadinessDone / Math.max(Object.keys(websiteChecklist).length, 1)) * 100),
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to load IT website summary" });
     }
   });
 

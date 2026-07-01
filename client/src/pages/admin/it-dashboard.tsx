@@ -5,32 +5,26 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { AlertTriangle, ExternalLink, Globe, MessageSquare, Palette, Settings, ShieldCheck, Users } from "lucide-react";
+import { AlertTriangle, ExternalLink, Globe, MessageSquare, Palette, Settings, ShieldCheck } from "lucide-react";
 import { navigateTo } from "./shared";
 
 export function ItDashboardSection() {
   const { user } = useAuth();
 
-  const { data: setup, isLoading, error } = useQuery<any>({
-    queryKey: ["/api/admin/setup-status"],
+  const { data: summary, isLoading, error } = useQuery<any>({
+    queryKey: ["/api/it/website-summary"],
     queryFn: getQueryFn({ on401: "throw" }),
   });
 
-  const { data: schoolSettings } = useQuery<any>({
-    queryKey: ["/api/admin/school/settings"],
-    queryFn: getQueryFn({ on401: "throw" }),
-  });
-
-  const schoolName = setup?.school?.name || user?.schoolName || "School";
-  const schoolCode = setup?.school?.code || user?.schoolCode || "";
+  const schoolName = summary?.school?.name || user?.schoolName || "School";
+  const schoolCode = summary?.school?.code || user?.schoolCode || "";
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const publicUrl = schoolCode ? `${baseUrl}/school/${encodeURIComponent(schoolCode)}` : null;
 
   const readinessChecks = [
-    { label: "School profile", done: !!setup?.checklist?.schoolProfileComplete },
-    { label: "Branding configured", done: !!setup?.checklist?.brandingDesignConfigured },
-    { label: "Communications ready", done: !!setup?.checklist?.parentsLinked },
-    { label: "Operational setup", done: !!setup?.checklist?.operationalSetupComplete },
+    { label: "School profile", done: !!summary?.checklist?.schoolProfileComplete },
+    { label: "Branding configured", done: !!summary?.checklist?.brandingDesignConfigured },
+    { label: "Operational setup", done: !!summary?.checklist?.operationalSetupComplete },
   ];
 
   const completedChecks = readinessChecks.filter((item) => item.done).length;
@@ -93,7 +87,6 @@ export function ItDashboardSection() {
               >
                 <ExternalLink className="h-4 w-4 mr-2" />Open Public Page
               </Button>
-              <Button variant="outline" onClick={() => navigateTo("/admin/setup")}>Setup</Button>
             </div>
           </CardContent>
         </Card>
@@ -125,6 +118,9 @@ export function ItDashboardSection() {
           <CardContent className="space-y-3">
             <div className="text-sm text-muted-foreground">
               Review current message threads and maintain response quality.
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Open threads: {summary?.communications?.openThreads ?? 0} · Unread: {summary?.communications?.unreadConversations ?? 0}
             </div>
             <Button variant="outline" onClick={() => navigateTo("/admin/communications")}>Open Communications</Button>
           </CardContent>
@@ -168,13 +164,7 @@ export function ItDashboardSection() {
           <CardContent className="space-y-3 text-sm">
             <div className="rounded-md border px-3 py-2">
               <div className="text-muted-foreground">Payment app label</div>
-              <div className="font-medium mt-1">{schoolSettings?.paymentAppName || "Not configured"}</div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => navigateTo("/admin/users")}>
-                <Users className="h-4 w-4 mr-2" />Manage Access
-              </Button>
-              <Button variant="outline" onClick={() => navigateTo("/admin/setup")}>Setup And Settings</Button>
+              <div className="font-medium mt-1">{summary?.school?.paymentAppName || "Not configured"}</div>
             </div>
           </CardContent>
         </Card>
