@@ -1,7 +1,7 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
-  BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
+  Database, BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, X,
   ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell
@@ -49,6 +49,7 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Email Status", href: "/admin/email-status", icon: Key },
       { label: "Activity Logs", href: "/admin/activity", icon: History },
       { label: "Settings", href: "/admin/owner-settings", icon: Settings },
+      { label: "DB Console", href: "/admin/db-console", icon: Database },
     ],
   },
   owner_support: {

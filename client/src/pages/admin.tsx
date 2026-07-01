@@ -34,6 +34,7 @@ import { CommunicationsSection }    from "./admin/communications";
 import { BrandingSection }          from "./admin/branding";
 import { ReportsSection }           from "./admin/reports";
 import { FamiliesSection }          from "./admin/families";
+import { DbConsoleSection }        from "./admin/db-console";
 
 // Re-export UserDetailPanel so any external import still works
 export { UserDetailPanel };
@@ -60,6 +61,7 @@ export default function AdminPage({ section }: { section: string }) {
     students:           <StudentsSection />,
     parents:            <ParentsSection />,
     families:           <FamiliesSection />,
+    "db-console":       <DbConsoleSection />,
     codes:              <LinkingCodesSection />,
     payments:           <PaymentsSection />,
     allocations:        <AllocationsSection />,

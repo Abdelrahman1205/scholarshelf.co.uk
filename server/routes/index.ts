@@ -24,6 +24,7 @@ import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
 import { registerFamilyRoutes } from "./family.routes.js";
 import { registerPublicRoutes } from "./public.routes.js";
+import { registerDbConsoleRoutes } from "./db-console.routes.js";
 import bcrypt from "bcryptjs";
 
 export async function registerRoutes(
@@ -32,6 +33,9 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Public — unauthenticated school landing page API
   registerPublicRoutes(app);
+
+  // Owner DB Console — database admin panel (owner only)
+  registerDbConsoleRoutes(app);
 
   // Auth — login, register, invite acceptance, password reset, /me
   registerAuthRoutes(app);
