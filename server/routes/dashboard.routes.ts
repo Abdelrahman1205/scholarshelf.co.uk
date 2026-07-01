@@ -238,13 +238,21 @@ export function registerDashboardRoutes(app: Express): void {
 
       const parentCodesGenerated = scopedLinkingCodes.length;
       const parentCodesUsed = scopedLinkingCodes.filter((c) => c.isUsed).length;
-      const parentCodesNotSent = scopedLinkingCodes.filter((c) => !c.isUsed).length;
+      // "Students without invites" = current students with no linking code at all.
+      // (Counting unused codes was wrong: it included codes for deleted students
+      // and duplicates, so the number could exceed the student roster.)
+      const studentIdsWithCodes = new Set(
+        scopedLinkingCodes.map((c) => c.studentId).filter(Boolean),
+      );
+      const parentCodesNotSent = scopedStudents.filter((s) => !studentIdsWithCodes.has(s.id)).length;
       // Approximate parents linked via used linking codes
       const parentsLinked = parentCodesUsed;
 
       const pendingPayments = scopedPayments.filter((p) => ["pending", "awaiting_reference", "reference_submitted", "needs_review"].includes(p.status!)).length;
       const paymentsSubmitted = scopedPayments.length;
-      const paymentsVerified = scopedPayments.filter((p) => p.status === "completed" || p.status === "confirmed").length;
+      // Verified = confirmed and every later lifecycle stage (a collected payment is still verified).
+      const VERIFIED_PAYMENT_STATUSES = ["completed", "confirmed", "ready_for_collection", "collected"];
+      const paymentsVerified = scopedPayments.filter((p) => VERIFIED_PAYMENT_STATUSES.includes(p.status!)).length;
 
       const allocatedItems = scopedAllocations.filter((a: any) => a.status === "allocated");
       const readyForDistribution = allocatedItems.length;
@@ -442,10 +450,13 @@ export function registerDashboardRoutes(app: Express): void {
       const outOfStockBooks = activeBooks.filter((b) => (b.stockQuantity ?? 0) === 0);
 
       // ── Payment report ──
+      // "confirmed" includes every post-verification lifecycle stage — a payment
+      // marked ready-for-collection or collected is still verified revenue.
+      const VERIFIED_STATUSES = ["confirmed", "completed", "ready_for_collection", "collected"];
       const paymentsByStatus = {
         awaiting_reference: payments.filter((p) => p.status === "awaiting_reference" || p.status === "pending"),
         reference_submitted: payments.filter((p) => p.status === "reference_submitted"),
-        confirmed: payments.filter((p) => p.status === "confirmed" || p.status === "completed"),
+        confirmed: payments.filter((p) => VERIFIED_STATUSES.includes(p.status!)),
         rejected: payments.filter((p) => p.status === "rejected" || p.status === "failed"),
         needs_review: payments.filter((p) => p.status === "needs_review"),
       };

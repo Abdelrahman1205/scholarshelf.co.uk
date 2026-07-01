@@ -214,6 +214,19 @@ export function registerAllocationRoutes(app: Express): void {
     }
   });
 
+  // Teacher: mark allocation out of stock at distribution (spec §8.2)
+  app.post("/api/teacher/book-distribution/:id/mark-out-of-stock", requireRole("teacher"), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const result = await storage.markDistributionOutOfStock(routeParam(req.params.id), req.session.userId!, sid);
+      await auditLog(req, "distribution_out_of_stock", `allocation:${routeParam(req.params.id)}`);
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   // Teacher: report issue with distribution
   app.post("/api/teacher/book-distribution/:id/report-issue", requireRole("teacher"), async (req, res) => {
     try {

@@ -175,16 +175,16 @@ export function isInSupportMode(req: Request): boolean {
 
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 
-// Warn on startup so this limitation is visible in production logs.
-if (process.env.NODE_ENV === "production") {
+// Warn on startup only when no distributed store is available.
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
   console.warn(
-    "[SECURITY WARNING] In-memory rate limiter is active. " +
+    "[SECURITY WARNING] In-memory rate limiter is active (no DATABASE_URL). " +
     "On serverless deployments (Vercel), rate limits are NOT enforced across " +
-    "concurrent function instances. Replace rateLimitStore with a distributed " +
-    "store (Redis/PostgreSQL) before deploying at scale.",
+    "concurrent function instances.",
   );
 }
-export function rateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
+
+function rateLimitMemory(key: string, maxAttempts: number, windowMs: number): boolean {
   const now = Date.now();
   const entry = rateLimitStore.get(key);
   if (!entry || now > entry.resetAt) {
@@ -193,6 +193,60 @@ export function rateLimit(key: string, maxAttempts: number, windowMs: number): b
   }
   entry.count++;
   return entry.count > maxAttempts;
+}
+
+// PostgreSQL-backed distributed rate limiter.
+// Each serverless instance has its own memory, so the Map alone cannot enforce
+// limits across concurrent instances. With DATABASE_URL set, an atomic upsert
+// against rate_limits does; the Map remains a fast fallback for dev/DB outages.
+let rateLimitTableReady = false;
+
+async function ensureRateLimitTable(): Promise<void> {
+  if (rateLimitTableReady) return;
+  const { getPool } = await import("../config/database.js");
+  await getPool().query(
+    `CREATE TABLE IF NOT EXISTS rate_limits (
+       key text PRIMARY KEY,
+       count integer NOT NULL,
+       reset_at timestamptz NOT NULL
+     )`,
+  );
+  rateLimitTableReady = true;
+}
+
+export async function rateLimit(key: string, maxAttempts: number, windowMs: number): Promise<boolean> {
+  // Always run the in-memory check — free, and still throttles within this
+  // instance if the database is unreachable.
+  const memoryLimited = rateLimitMemory(key, maxAttempts, windowMs);
+  if (!process.env.DATABASE_URL) return memoryLimited;
+  try {
+    await ensureRateLimitTable();
+    const { getPool } = await import("../config/database.js");
+    const { rows } = await getPool().query(
+      `INSERT INTO rate_limits (key, count, reset_at)
+       VALUES ($1, 1, now() + ($2 || ' milliseconds')::interval)
+       ON CONFLICT (key) DO UPDATE SET
+         count = CASE WHEN rate_limits.reset_at < now() THEN 1 ELSE rate_limits.count + 1 END,
+         reset_at = CASE WHEN rate_limits.reset_at < now()
+                    THEN now() + ($2 || ' milliseconds')::interval
+                    ELSE rate_limits.reset_at END
+       RETURNING count`,
+      [key, String(windowMs)],
+    );
+    // Opportunistic cleanup of long-expired keys (~1% of calls).
+    if (Math.random() < 0.01) {
+      void getPool()
+        .query(`DELETE FROM rate_limits WHERE reset_at < now() - interval '1 day'`)
+        .catch(() => {});
+    }
+    return memoryLimited || Number(rows[0]?.count ?? 0) > maxAttempts;
+  } catch (e) {
+    console.error(
+      "[rateLimit] Distributed check failed; using in-memory fallback:",
+      (e as Error).message,
+    );
+    return memoryLimited;
+  }
 }
 
 // ─── Audit logging ─────────────────────────────────────────────────────────────

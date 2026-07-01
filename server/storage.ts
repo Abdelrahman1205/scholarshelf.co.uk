@@ -342,6 +342,7 @@ export interface IStorage {
   getDistributionsByTeacher(teacherId: string, schoolId: string, filters?: { classId?: string; status?: string }): Promise<any[]>;
   confirmDistribution(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
   markDistributionAbsent(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
+  markDistributionOutOfStock(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
   reportDistributionIssue(allocationId: string, teacherId: string, issueNote: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
   getDistributionOverview(schoolId: string): Promise<any>;
   adminConfirmDistribution(allocationId: string, schoolId: string): Promise<schema.FinanceBookAllocation>;
@@ -1329,6 +1330,16 @@ class DatabaseStorage implements IStorage {
     const [student] = await getDb().select().from(schema.students).where(and(...conditions));
     if (!student || !student.classId) throw new Error("Your child's details couldn't be found. Please contact the school.");
 
+    // Reuse an existing pending basket instead of creating a duplicate —
+    // double-clicking "Create Book Basket" must never lead to double payment.
+    const [existingPending] = await getDb().select().from(schema.childBookBaskets)
+      .where(and(
+        eq(schema.childBookBaskets.studentId, studentId),
+        eq(schema.childBookBaskets.parentIdentifier, parentIdentifier),
+        eq(schema.childBookBaskets.status, "pending"),
+      ));
+    if (existingPending) return existingPending;
+
     // Check for per-student override first, fall back to class-level assignment
     const studentOverride = await getDb().select().from(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
     let classLevels: (typeof schema.classBookLevels.$inferSelect)[] = [];
@@ -1946,6 +1957,23 @@ class DatabaseStorage implements IStorage {
       {
         distributionStatus: "student_absent",
         absentMarkedAt: new Date(),
+        absentMarkedByTeacherId: teacherId,
+      }
+    );
+    return updated;
+  }
+
+  async markDistributionOutOfStock(allocationId: string, teacherId: string, schoolId: string): Promise<schema.FinanceBookAllocation> {
+    const [existing] = await getDb().select().from(schema.financeBookAllocations)
+      .where(and(eq(schema.financeBookAllocations.id, allocationId), eq(schema.financeBookAllocations.schoolId, schoolId)));
+    if (!existing) throw new Error("Allocation not found");
+
+    const updated = await updateAndFetchFirst(
+      schema.financeBookAllocations,
+      eq(schema.financeBookAllocations.id, allocationId),
+      {
+        distributionStatus: "out_of_stock",
+        issueNote: "Out of stock at distribution",
         absentMarkedByTeacherId: teacherId,
       }
     );

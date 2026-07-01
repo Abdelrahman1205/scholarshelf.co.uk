@@ -3,11 +3,14 @@ import { Resend } from "resend";
 // Support both RESEND_API_KEY (existing) and EMAIL_API_KEY (spec alias)
 const resendApiKey = process.env.RESEND_API_KEY || process.env.EMAIL_API_KEY;
 
-// Support both RESEND_FROM_EMAIL (existing) and EMAIL_FROM (spec alias)
-const resendFrom =
+// Support both RESEND_FROM_EMAIL (existing) and EMAIL_FROM (spec alias).
+// Env validation requires a PLAIN email address (e.g. noreply@scholarshelf.co.uk);
+// the "Scholar Shelf <...>" display name is added here at send time.
+const rawFrom =
   process.env.RESEND_FROM_EMAIL ||
   process.env.EMAIL_FROM ||
-  "Scholar Shelf <noreply@scholarshelf.co.uk>";
+  "noreply@scholarshelf.co.uk";
+const resendFrom = rawFrom.includes("<") ? rawFrom : `Scholar Shelf <${rawFrom}>`;
 
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 

@@ -196,6 +196,12 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
     onError: (e: Error) => { toast({ title: "Error", description: e.message, variant: "destructive" }); },
   });
 
+  const outOfStockMut = useMutation({
+    mutationFn: async (id: string) => { await apiRequest("POST", `/api/teacher/book-distribution/${id}/mark-out-of-stock`); },
+    onSuccess: () => { toast({ title: "Marked Out of Stock", description: "The school office can now restock and re-distribute." }); queryClient.invalidateQueries({ queryKey: ["/api/teacher/book-distribution"] }); },
+    onError: (e: Error) => { toast({ title: "Error", description: e.message, variant: "destructive" }); },
+  });
+
   const classStudents = useMemo(() => {
     return allStudents.filter(s => s.classId === activeClassId);
   }, [allStudents, activeClassId]);
@@ -242,7 +248,8 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
   const rcvd = allocations?.filter((a) => (a as any).distributionStatus === "received_by_student").length ?? 0;
   const absnt = allocations?.filter((a) => (a as any).distributionStatus === "student_absent").length ?? 0;
   const issues = allocations?.filter((a) => (a as any).distributionStatus === "issue_reported").length ?? 0;
-  const pend = total - rcvd - absnt - issues;
+  const oosCount = allocations?.filter((a) => (a as any).distributionStatus === "out_of_stock").length ?? 0;
+  const pend = total - rcvd - absnt - issues - oosCount;
   const pct = total > 0 ? Math.round((rcvd / total) * 100) : 0;
 
   if (classesLoading) {
@@ -342,6 +349,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
                       <CardTitle className="text-sm font-semibold flex items-center gap-2">
                         {g.student.name}
                         {g.allReceived && <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-medium">Complete</Badge>}
+                        {!g.allReceived && g.receivedCount > 0 && <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] font-medium">Partially collected</Badge>}
                       </CardTitle>
                       <CardDescription className="text-xs mt-0.5">
                         {g.student.studentCode || "No code"}{g.student.class ? ` · ${g.student.class.name}` : ""}
@@ -358,8 +366,10 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
                         const done = ds === "received_by_student";
                         const abs = ds === "student_absent";
                         const issue = ds === "issue_reported";
+                        const oos = ds === "out_of_stock";
                         const confirming = confirmMut.isPending && confirmMut.variables === a.id;
                         const marking = absentMut.isPending && absentMut.variables === a.id;
+                        const markingOos = outOfStockMut.isPending && outOfStockMut.variables === a.id;
                         return (
                           <div key={a.id} className="flex items-center justify-between p-4 hover:bg-muted/10 transition-colors">
                             <div className="flex flex-col">
@@ -378,6 +388,8 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
                                 <Badge variant="destructive">Absent</Badge>
                               ) : issue ? (
                                 <Badge className="bg-red-500/10 text-red-600">Issue</Badge>
+                              ) : oos ? (
+                                <Badge className="bg-amber-500/10 text-amber-600">Out of stock</Badge>
                               ) : (
                                 <>
                                   <Button variant="ghost" size="sm"
@@ -385,10 +397,15 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
                                     <AlertTriangle className="w-4 h-4" />
                                   </Button>
                                   <Button variant="outline" size="sm"
-                                    disabled={marking || confirming} onClick={() => absentMut.mutate(a.id)}>
+                                    disabled={marking || confirming || markingOos}
+                                    onClick={() => outOfStockMut.mutate(a.id)}>
+                                    {markingOos ? "..." : "No stock"}
+                                  </Button>
+                                  <Button variant="outline" size="sm"
+                                    disabled={marking || confirming || markingOos} onClick={() => absentMut.mutate(a.id)}>
                                     {marking ? "..." : "Absent"}
                                   </Button>
-                                  <Button variant="default" size="sm" disabled={confirming || marking}
+                                  <Button variant="default" size="sm" disabled={confirming || marking || markingOos}
                                     onClick={() => confirmMut.mutate(a.id)}>
                                     <CheckCircle2 className="w-4 h-4 mr-1" />{confirming ? "..." : "Received"}
                                   </Button>

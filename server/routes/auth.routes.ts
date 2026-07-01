@@ -69,7 +69,7 @@ export function registerAuthRoutes(app: Express): void {
       const { username, password, schoolCode } = parsed.data;
 
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (rateLimit(`signin:${ip}`, 10, 15 * 60 * 1000)) {
+      if (await rateLimit(`signin:${ip}`, 10, 15 * 60 * 1000)) {
         await auditLog(req, "login_rate_limited", `ip:${ip}`);
         return res.status(429).json({ message: "Too many login attempts. Please try again later." });
       }
@@ -162,7 +162,7 @@ export function registerAuthRoutes(app: Express): void {
       const { name, email, username, password } = parsed.data;
 
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (rateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
+      if (await rateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many registration attempts. Please try again later." });
       }
 
@@ -272,7 +272,7 @@ export function registerAuthRoutes(app: Express): void {
   app.get("/api/invites/:token", async (req, res) => {
     try {
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (rateLimit(`invite-lookup:${ip}`, 20, 15 * 60 * 1000)) {
+      if (await rateLimit(`invite-lookup:${ip}`, 20, 15 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many requests. Please try again later." });
       }
       const token = routeParam(req.params.token);
@@ -306,7 +306,7 @@ export function registerAuthRoutes(app: Express): void {
   app.post("/api/invites/:token/accept", async (req, res) => {
     try {
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (rateLimit(`invite-accept:${ip}`, 10, 15 * 60 * 1000)) {
+      if (await rateLimit(`invite-accept:${ip}`, 10, 15 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many requests. Please try again later." });
       }
       const token = routeParam(req.params.token);
@@ -332,7 +332,7 @@ export function registerAuthRoutes(app: Express): void {
       const { email } = parsed.data;
 
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (rateLimit(`forgot:${ip}`, 3, 15 * 60 * 1000)) {
+      if (await rateLimit(`forgot:${ip}`, 3, 15 * 60 * 1000)) {
         return res.json({ message: "If an account with that email exists, a password reset link has been sent." });
       }
 
@@ -395,7 +395,7 @@ export function registerAuthRoutes(app: Express): void {
   app.post("/api/auth/reset-password", async (req, res) => {
     try {
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (rateLimit(`reset-password:${ip}`, 5, 15 * 60 * 1000)) {
+      if (await rateLimit(`reset-password:${ip}`, 5, 15 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many requests. Please try again later." });
       }
       const parsed = resetPasswordSchema.safeParse(req.body);
