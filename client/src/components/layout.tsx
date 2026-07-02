@@ -97,7 +97,6 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
     navItems: [
       { label: "Website Control", href: "/admin/website", icon: LayoutDashboard },
       { label: "Branding", href: "/admin/branding", icon: Palette },
-      { label: "Communications", href: "/admin/communications", icon: MessageSquare },
     ],
   },
   teacher: {
@@ -115,6 +114,12 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Dashboard", href: "/finance", icon: LayoutDashboard },
       { label: "Payment Review", href: "/finance/payments", icon: CreditCard },
       { label: "Reports", href: "/finance/reports", icon: BarChart3 },
+    ],
+  },
+  it_personnel: {
+    label: "IT",
+    navItems: [
+      { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },
   parent: {

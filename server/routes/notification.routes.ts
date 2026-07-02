@@ -12,7 +12,7 @@ import {
   getActiveRequestContext, resolveRole,
   auditLog, rateLimit,
   routeParam, normalizeEmail, normalizeSchoolCode, extractSupportReason,
-  PLATFORM_OWNER_ROLES, ADMIN_UI_ROLES, IT_WEBSITE_ROLES, FINANCE_ROLES,
+  PLATFORM_OWNER_ROLES, ADMIN_UI_ROLES, FINANCE_ROLES,
   BRANDING_VIEW_PERMISSION, BRANDING_MANAGE_PERMISSION,
   BRANDING_UPLOAD_LOGO_PERMISSION, BRANDING_UPDATE_THEME_PERMISSION, BRANDING_RESET_DEFAULT_PERMISSION,
   COMPLETE_SETUP_STATUSES, CONTEXT_DEFAULT_PATHS,
@@ -88,7 +88,7 @@ export function registerNotificationRoutes(app: Express): void {
         pushItem("extra_requests", "Approved extra requests", approvedExtraRequests, "/teacher/requests", "success");
       }
 
-      if ((context === "admin" || context === "school_admin" || context === "it_personnel") && sid) {
+      if ((context === "admin" || context === "school_admin") && sid) {
         const communicationThreads = await storage.getMessageThreads({ schoolId: sid, status: "open" });
         const unreadConversations = communicationThreads.filter((thread: any) =>
           (Number(thread.unreadByParent) || 0) + (Number(thread.unreadByTeacher) || 0) > 0
@@ -152,7 +152,7 @@ export function registerNotificationRoutes(app: Express): void {
   });
 
   // ── School Admin communication oversight ────────────────────
-  app.get("/api/admin/communications", requireRole(...ADMIN_UI_ROLES, ...IT_WEBSITE_ROLES), async (req, res) => {
+  app.get("/api/admin/communications", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (!sid) return res.json([]);
@@ -164,7 +164,7 @@ export function registerNotificationRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/admin/communications/:threadId", requireRole(...ADMIN_UI_ROLES, ...IT_WEBSITE_ROLES), async (req, res) => {
+  app.get("/api/admin/communications/:threadId", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (!sid) return res.status(400).json({ message: "No school context" });
@@ -177,7 +177,7 @@ export function registerNotificationRoutes(app: Express): void {
     }
   });
 
-  app.patch("/api/admin/communications/:threadId/status", requireRole(...ADMIN_UI_ROLES, ...IT_WEBSITE_ROLES), async (req, res) => {
+  app.patch("/api/admin/communications/:threadId/status", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
       if (!sid) return res.status(400).json({ message: "No school context" });

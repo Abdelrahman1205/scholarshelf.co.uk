@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { AlertTriangle, ExternalLink, Globe, MessageSquare, Palette, Settings, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ExternalLink, FileText, Globe, Palette, Settings, ShieldCheck, ShoppingCart, SquareStack } from "lucide-react";
 import { navigateTo } from "./shared";
 
 export function ItDashboardSection() {
@@ -68,6 +68,15 @@ export function ItDashboardSection() {
         </Badge>
       </div>
 
+      <Alert>
+        <ShieldCheck className="h-4 w-4" />
+        <AlertTitle>Role separation is active</AlertTitle>
+        <AlertDescription>
+          This dashboard is limited to school website pages, design, public content, forms, and website shop configuration.
+          Internal operations such as students, classes, payments, inventory, and staff administration remain School Admin only.
+        </AlertDescription>
+      </Alert>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <Card className="border-border shadow-none">
           <CardHeader className="pb-2">
@@ -110,19 +119,18 @@ export function ItDashboardSection() {
         <Card className="border-border shadow-none">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-emerald-600" />
-              Website Communications
+              <SquareStack className="h-4 w-4 text-emerald-600" />
+              Website Builder Modules
             </CardTitle>
-            <CardDescription>Monitor inbound conversations and reply workflows.</CardDescription>
+            <CardDescription>Core modules for no-code public website management.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="text-sm text-muted-foreground">
-              Review current message threads and maintain response quality.
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="rounded-md border px-3 py-2">Pages And Navigation</div>
+              <div className="rounded-md border px-3 py-2">Announcements And News</div>
+              <div className="rounded-md border px-3 py-2">Events And Galleries</div>
+              <div className="rounded-md border px-3 py-2">Downloads And Policies</div>
             </div>
-            <div className="text-xs text-muted-foreground">
-              Open threads: {summary?.communications?.openThreads ?? 0} · Unread: {summary?.communications?.unreadConversations ?? 0}
-            </div>
-            <Button variant="outline" onClick={() => navigateTo("/admin/communications")}>Open Communications</Button>
           </CardContent>
         </Card>
       </div>
@@ -157,14 +165,24 @@ export function ItDashboardSection() {
           <CardHeader>
             <CardTitle className="text-base font-semibold flex items-center gap-2">
               <Settings className="h-4 w-4 text-slate-700" />
-              Website Operations
+              Website Operations And Settings
             </CardTitle>
-            <CardDescription>Core data used on public and admin-facing school pages.</CardDescription>
+            <CardDescription>Public site controls available to IT website personnel.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
             <div className="rounded-md border px-3 py-2">
               <div className="text-muted-foreground">Payment app label</div>
               <div className="font-medium mt-1">{summary?.school?.paymentAppName || "Not configured"}</div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="rounded-md border px-3 py-2 flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Forms And Enquiries
+              </div>
+              <div className="rounded-md border px-3 py-2 flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4" /> Website Shop Items
+              </div>
+              <div className="rounded-md border px-3 py-2">SEO And Social Links</div>
+              <div className="rounded-md border px-3 py-2">Footer, Contact, Map, Hours</div>
             </div>
           </CardContent>
         </Card>

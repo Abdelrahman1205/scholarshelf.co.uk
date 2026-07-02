@@ -45,7 +45,7 @@ export const CONTEXT_DEFAULT_PATHS: Record<string, string> = {
   teacher: "/teacher",
   parent: "/parent",
   finance: "/finance",
-  it_personnel: "/admin",
+  it_personnel: "/admin/branding",
 };
 
 // ─── Multer (branding uploads) ─────────────────────────────────────────────────

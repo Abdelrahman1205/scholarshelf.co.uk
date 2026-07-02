@@ -83,7 +83,7 @@ export default function AdminPage({ section }: { section: string }) {
 
   let resolvedSection = section;
 
-  const itAllowedSections = new Set(["website", "communications", "branding"]);
+  const itAllowedSections = new Set(["website", "branding"]);
 
   if (isItPersonnel) {
     if (section === "dashboard" || !itAllowedSections.has(section)) {
