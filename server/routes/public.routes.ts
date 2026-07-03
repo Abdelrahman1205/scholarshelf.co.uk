@@ -47,4 +47,32 @@ export function registerPublicRoutes(app: Express): void {
       res.status(500).json({ message: "Internal server error" });
     }
   });
+
+  /**
+   * GET /api/public/schools/:code/website
+   * Returns the school's PUBLISHED website sections for the public page.
+   * Fails safe: returns [] if the table doesn't exist yet or anything errors,
+   * so the public page never breaks.
+   */
+  app.get("/api/public/schools/:code/website", async (req, res) => {
+    try {
+      const school = await storage.getSchoolByCode(req.params.code.toUpperCase());
+      if (!school || school.isDeleted || school.status !== "active") {
+        return res.status(404).json({ message: "School not found" });
+      }
+      const sections = await storage.getWebsiteSections(school.id, true);
+      return res.json(sections.map((s) => ({
+        id: s.id,
+        type: s.type,
+        title: s.title,
+        body: s.body ?? null,
+        imageUrl: s.imageUrl ?? null,
+        linkUrl: s.linkUrl ?? null,
+        linkLabel: s.linkLabel ?? null,
+      })));
+    } catch (e: any) {
+      console.error("[public] GET /api/public/schools/:code/website", e.message);
+      return res.json([]); // fail-safe: public page renders without CMS sections
+    }
+  });
 }

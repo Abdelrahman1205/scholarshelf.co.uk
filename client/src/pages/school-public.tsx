@@ -20,6 +20,18 @@ function SchoolPublicPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // CMS sections managed by the school's IT staff (published only)
+  const { data: sections } = useQuery<any[]>({
+    queryKey: ["public-school-website", code],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/public/schools/${code?.toUpperCase()}/website`);
+      return res.json();
+    },
+    retry: false,
+    staleTime: 60 * 1000,
+    enabled: !!code,
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
@@ -119,6 +131,34 @@ function SchoolPublicPage() {
               )}
             </CardContent>
           </Card>
+        )}
+
+        {/* CMS content sections (managed in the school's Website editor) */}
+        {sections && sections.length > 0 && (
+          <div className="space-y-5 mb-8">
+            {sections.map((s: any) => (
+              <Card key={s.id} className="border-border shadow-sm overflow-hidden">
+                {s.imageUrl && (
+                  <img src={s.imageUrl} alt={s.title} className="w-full max-h-64 object-cover" />
+                )}
+                <CardContent className="p-5">
+                  {s.type === "announcement" && (
+                    <Badge className="mb-2" style={{ background: `${primary}18`, color: primary }}>News</Badge>
+                  )}
+                  <h2 className="text-lg font-heading font-semibold text-foreground mb-2">{s.title}</h2>
+                  {s.body && (
+                    <p className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">{s.body}</p>
+                  )}
+                  {s.linkUrl && (
+                    <a href={s.linkUrl} target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sm font-medium mt-3 hover:underline" style={{ color: primary }}>
+                      {s.linkLabel || "Learn more"} <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         )}
 
         {/* CTAs */}

@@ -4,7 +4,7 @@ import {
   Database, BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, X,
-  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell
+  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell, Globe
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -70,6 +70,7 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Reports", href: "/admin/reports", icon: BarChart2 },
       { label: "Users", href: "/admin/users", icon: UserPlus },
       { label: "Branding", href: "/admin/branding", icon: Palette },
+      { label: "Website", href: "/admin/website", icon: Globe },
     ],
   },
   admin: {
@@ -90,12 +91,14 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Reports", href: "/admin/reports", icon: BarChart2 },
       { label: "Users", href: "/admin/users", icon: UserPlus },
       { label: "Branding", href: "/admin/branding", icon: Palette },
+      { label: "Website", href: "/admin/website", icon: Globe },
     ],
   },
   it_personnel: {
     label: "IT Control",
     navItems: [
       { label: "Website Control", href: "/admin/website", icon: LayoutDashboard },
+      { label: "Page Sections", href: "/admin/website-content", icon: Globe },
       { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },
@@ -114,12 +117,6 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Dashboard", href: "/finance", icon: LayoutDashboard },
       { label: "Payment Review", href: "/finance/payments", icon: CreditCard },
       { label: "Reports", href: "/finance/reports", icon: BarChart3 },
-    ],
-  },
-  it_personnel: {
-    label: "IT",
-    navItems: [
-      { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },
   parent: {

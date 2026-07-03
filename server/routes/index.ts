@@ -24,6 +24,7 @@ import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
 import { registerFamilyRoutes } from "./family.routes.js";
 import { registerPublicRoutes } from "./public.routes.js";
+import { registerWebsiteRoutes } from "./website.routes.js";
 import { registerDbConsoleRoutes } from "./db-console.routes.js";
 import bcrypt from "bcryptjs";
 
@@ -42,6 +43,9 @@ export async function registerRoutes(
 
   // Admin setup checklist + school branding (public + admin + owner)
   registerSetupRoutes(app);
+
+  // School public-website CMS (IT personnel + school admin)
+  registerWebsiteRoutes(app);
 
   // Books, classes, students, book levels, class-book-level assignments
   registerBookRoutes(app);

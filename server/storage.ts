@@ -384,6 +384,13 @@ export interface IStorage {
   getSchoolBranding(schoolId: string): Promise<schema.SchoolBranding | undefined>;
   upsertSchoolBranding(schoolId: string, payload: Partial<schema.InsertSchoolBranding>, updatedBy?: string | null): Promise<schema.SchoolBranding>;
   resetSchoolBranding(schoolId: string, updatedBy?: string | null): Promise<schema.SchoolBranding>;
+
+  // === School Website CMS ===
+  getWebsiteSections(schoolId: string, publishedOnly?: boolean): Promise<schema.SchoolWebsiteSection[]>;
+  createWebsiteSection(data: schema.InsertSchoolWebsiteSection): Promise<schema.SchoolWebsiteSection>;
+  updateWebsiteSection(id: string, schoolId: string, data: Partial<schema.InsertSchoolWebsiteSection>): Promise<schema.SchoolWebsiteSection>;
+  deleteWebsiteSection(id: string, schoolId: string): Promise<void>;
+  moveWebsiteSection(id: string, schoolId: string, direction: "up" | "down"): Promise<void>;
   getUserPermissions(userId: string): Promise<string[]>;
   setUserPermissions(userId: string, permissions: string[]): Promise<void>;
 
@@ -626,6 +633,52 @@ class DatabaseStorage implements IStorage {
   }
 
   // === BRANDING & PERMISSIONS ===
+
+  // === School Website CMS ===
+
+  async getWebsiteSections(schoolId: string, publishedOnly = false): Promise<schema.SchoolWebsiteSection[]> {
+    const conditions = [eq(schema.schoolWebsiteSections.schoolId, schoolId)];
+    if (publishedOnly) conditions.push(eq(schema.schoolWebsiteSections.isPublished, true));
+    return getDb().select().from(schema.schoolWebsiteSections)
+      .where(and(...conditions))
+      .orderBy(schema.schoolWebsiteSections.sortOrder, schema.schoolWebsiteSections.createdAt);
+  }
+
+  async createWebsiteSection(data: schema.InsertSchoolWebsiteSection): Promise<schema.SchoolWebsiteSection> {
+    // Append at the end of the current ordering.
+    const existing = await this.getWebsiteSections(data.schoolId);
+    const maxOrder = existing.reduce((m, s) => Math.max(m, s.sortOrder ?? 0), -1);
+    return insertAndFetchById(schema.schoolWebsiteSections, { ...data, sortOrder: maxOrder + 1 });
+  }
+
+  async updateWebsiteSection(id: string, schoolId: string, data: Partial<schema.InsertSchoolWebsiteSection>): Promise<schema.SchoolWebsiteSection> {
+    const [existing] = await getDb().select().from(schema.schoolWebsiteSections)
+      .where(and(eq(schema.schoolWebsiteSections.id, id), eq(schema.schoolWebsiteSections.schoolId, schoolId)));
+    if (!existing) throw new Error("Section not found");
+    return updateAndFetchFirst(
+      schema.schoolWebsiteSections,
+      eq(schema.schoolWebsiteSections.id, id),
+      { ...data, updatedAt: new Date() },
+    );
+  }
+
+  async deleteWebsiteSection(id: string, schoolId: string): Promise<void> {
+    const [existing] = await getDb().select().from(schema.schoolWebsiteSections)
+      .where(and(eq(schema.schoolWebsiteSections.id, id), eq(schema.schoolWebsiteSections.schoolId, schoolId)));
+    if (!existing) throw new Error("Section not found");
+    await getDb().delete(schema.schoolWebsiteSections).where(eq(schema.schoolWebsiteSections.id, id));
+  }
+
+  async moveWebsiteSection(id: string, schoolId: string, direction: "up" | "down"): Promise<void> {
+    const sections = await this.getWebsiteSections(schoolId);
+    const idx = sections.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error("Section not found");
+    const swapWith = direction === "up" ? idx - 1 : idx + 1;
+    if (swapWith < 0 || swapWith >= sections.length) return; // already at edge
+    const a = sections[idx], b = sections[swapWith];
+    await getDb().update(schema.schoolWebsiteSections).set({ sortOrder: b.sortOrder }).where(eq(schema.schoolWebsiteSections.id, a.id));
+    await getDb().update(schema.schoolWebsiteSections).set({ sortOrder: a.sortOrder }).where(eq(schema.schoolWebsiteSections.id, b.id));
+  }
 
   async getSchoolBranding(schoolId: string): Promise<schema.SchoolBranding | undefined> {
     try {

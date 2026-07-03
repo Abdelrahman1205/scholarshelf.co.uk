@@ -147,6 +147,43 @@ export const schoolBranding = pgTable(
   }),
 );
 
+// ── Distributed rate limiting (used by server/middleware/auth.ts on serverless) ──
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull(),
+  resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+});
+
+// ── School public website content (CMS sections, managed by IT / school admin) ──
+export const schoolWebsiteSections = pgTable("school_website_sections", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
+  type: text("type").default("custom").notNull(), // hero | about | announcement | contact | custom
+  title: text("title").notNull(),
+  body: text("body"),
+  imageUrl: text("image_url"),
+  linkUrl: text("link_url"),
+  linkLabel: text("link_label"),
+  sortOrder: integer("sort_order").default(0).notNull(),
+  isPublished: boolean("is_published").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  updatedBy: varchar("updated_by", { length: 36 }).references(() => users.id),
+});
+
+export type SchoolWebsiteSection = typeof schoolWebsiteSections.$inferSelect;
+export type InsertSchoolWebsiteSection = typeof schoolWebsiteSections.$inferInsert;
+
+export const websiteSectionInputSchema = z.object({
+  type: z.enum(["hero", "about", "announcement", "contact", "custom"]).default("custom"),
+  title: z.string().trim().min(1, "Title is required").max(200),
+  body: z.string().max(20000).optional().nullable(),
+  imageUrl: z.string().trim().url("Image must be a valid URL").max(2000).optional().nullable().or(z.literal("").transform(() => null)),
+  linkUrl: z.string().trim().url("Link must be a valid URL").max(2000).optional().nullable().or(z.literal("").transform(() => null)),
+  linkLabel: z.string().max(100).optional().nullable(),
+  isPublished: z.boolean().optional(),
+});
+
 export const insertSchoolBrandingSchema = createInsertSchema(schoolBranding).omit({ id: true, createdAt: true, updatedAt: true });
 export const updateSchoolBrandingSchema = insertSchoolBrandingSchema.partial().omit({ schoolId: true });
 export type InsertSchoolBranding = z.infer<typeof insertSchoolBrandingSchema>;

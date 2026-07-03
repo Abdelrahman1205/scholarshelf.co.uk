@@ -36,6 +36,7 @@ import { ReportsSection }           from "./admin/reports";
 import { FamiliesSection }          from "./admin/families";
 import { DbConsoleSection }        from "./admin/db-console";
 import { ItDashboardSection }      from "./admin/it-dashboard";
+import { WebsiteSection }           from "./admin/website";
 
 // Re-export UserDetailPanel so any external import still works
 export { UserDetailPanel };
@@ -49,6 +50,7 @@ export default function AdminPage({ section }: { section: string }) {
 
   const sections: Record<string, ReactNode> = {
     website:            <ItDashboardSection />,
+    "website-content":  <WebsiteSection />,
     owner:              <OwnerDashboardSection />,
     schools:            <SchoolsSection />,
     "school-details":   <OwnerSchoolDetailsSection />,
@@ -83,7 +85,7 @@ export default function AdminPage({ section }: { section: string }) {
 
   let resolvedSection = section;
 
-  const itAllowedSections = new Set(["website", "branding"]);
+  const itAllowedSections = new Set(["website", "website-content", "branding"]);
 
   if (isItPersonnel) {
     if (section === "dashboard" || !itAllowedSections.has(section)) {

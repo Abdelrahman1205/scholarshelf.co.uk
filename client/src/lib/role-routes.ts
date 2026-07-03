@@ -16,7 +16,7 @@ export function getRoleRoute(role: string, opts?: { isNewAccount?: boolean }): s
     case "admin":
       return "/admin";
     case "it_personnel":
-      return "/admin/branding";
+      return "/admin/website";
     case "teacher":
       return "/teacher";
     case "parent":

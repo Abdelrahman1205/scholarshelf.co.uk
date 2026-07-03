@@ -131,6 +131,9 @@ export function ItDashboardSection() {
               <div className="rounded-md border px-3 py-2">Events And Galleries</div>
               <div className="rounded-md border px-3 py-2">Downloads And Policies</div>
             </div>
+            <Button onClick={() => navigateTo("/admin/website-content")}>
+              <Globe className="h-4 w-4 mr-2" />Edit Page Sections
+            </Button>
           </CardContent>
         </Card>
       </div>
