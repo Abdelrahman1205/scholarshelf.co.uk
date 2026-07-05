@@ -81,6 +81,7 @@ export default function AdminPage({ section }: { section: string }) {
   const ownerOnlySections = new Set([
     "owner", "schools", "school-details", "pending-setups",
     "admin-invites", "email-status", "activity", "owner-settings",
+    "db-console",
   ]);
 
   let resolvedSection = section;
