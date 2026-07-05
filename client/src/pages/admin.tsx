@@ -86,11 +86,17 @@ export default function AdminPage({ section }: { section: string }) {
   let resolvedSection = section;
 
   const itAllowedSections = new Set(["website", "website-content", "branding"]);
+  // The public-website control surface belongs to IT (and platform owners for
+  // support). School admins run EduBook operations, not the website — so even a
+  // direct URL to a website section is redirected to their dashboard.
+  const websiteSections = new Set(["website", "website-content"]);
 
   if (isItPersonnel) {
     if (section === "dashboard" || !itAllowedSections.has(section)) {
       resolvedSection = "website";
     }
+  } else if (websiteSections.has(section) && !requesterIsOwner) {
+    resolvedSection = "dashboard";
   }
 
   if (ownerOnlySections.has(section) && !requesterIsOwner) {

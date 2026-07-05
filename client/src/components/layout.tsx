@@ -70,7 +70,6 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Reports", href: "/admin/reports", icon: BarChart2 },
       { label: "Users", href: "/admin/users", icon: UserPlus },
       { label: "Branding", href: "/admin/branding", icon: Palette },
-      { label: "Website", href: "/admin/website", icon: Globe },
     ],
   },
   admin: {
@@ -91,7 +90,6 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Reports", href: "/admin/reports", icon: BarChart2 },
       { label: "Users", href: "/admin/users", icon: UserPlus },
       { label: "Branding", href: "/admin/branding", icon: Palette },
-      { label: "Website", href: "/admin/website", icon: Globe },
     ],
   },
   it_personnel: {
