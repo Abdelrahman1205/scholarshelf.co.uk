@@ -7,6 +7,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+// Defence-in-depth: even though the API validates URL schemes on save, never
+// render a link/image whose scheme could execute code. Returns a safe href or
+// undefined (which drops the link entirely).
+const SAFE_SCHEMES = ["http:", "https:", "mailto:", "tel:"];
+function safeHref(raw?: string | null): string | undefined {
+  if (!raw) return undefined;
+  try {
+    return SAFE_SCHEMES.includes(new URL(raw).protocol.toLowerCase()) ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function SchoolPublicPage() {
   const { code } = useParams<{ code: string }>();
 
@@ -136,10 +149,13 @@ function SchoolPublicPage() {
         {/* CMS content sections (managed in the school's Website editor) */}
         {sections && sections.length > 0 && (
           <div className="space-y-5 mb-8">
-            {sections.map((s: any) => (
+            {sections.map((s: any) => {
+              const img = safeHref(s.imageUrl);
+              const link = safeHref(s.linkUrl);
+              return (
               <Card key={s.id} className="border-border shadow-sm overflow-hidden">
-                {s.imageUrl && (
-                  <img src={s.imageUrl} alt={s.title} className="w-full max-h-64 object-cover" />
+                {img && (
+                  <img src={img} alt={s.title} className="w-full max-h-64 object-cover" />
                 )}
                 <CardContent className="p-5">
                   {s.type === "announcement" && (
@@ -149,15 +165,16 @@ function SchoolPublicPage() {
                   {s.body && (
                     <p className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">{s.body}</p>
                   )}
-                  {s.linkUrl && (
-                    <a href={s.linkUrl} target="_blank" rel="noreferrer"
+                  {link && (
+                    <a href={link} target="_blank" rel="noreferrer noopener"
                       className="inline-flex items-center gap-1 text-sm font-medium mt-3 hover:underline" style={{ color: primary }}>
                       {s.linkLabel || "Learn more"} <ArrowRight className="w-3.5 h-3.5" />
                     </a>
                   )}
                 </CardContent>
               </Card>
-            ))}
+            );
+            })}
           </div>
         )}
 

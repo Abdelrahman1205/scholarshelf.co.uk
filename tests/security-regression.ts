@@ -335,6 +335,84 @@ async function testCriticalSecurityPatterns() {
   }
 }
 
+async function testWebsiteCmsSecurity() {
+  console.log("\n─── 6. Website CMS Security ───");
+
+  // 6.1 Manager endpoint must reject unauthenticated access
+  const { status: unauthStatus } = await fetchJson("/api/website/sections");
+  if (unauthStatus === 401 || unauthStatus === 403) {
+    pass(`GET /api/website/sections unauth → ${unauthStatus} (blocked)`);
+  } else {
+    fail("Website sections unauth", `Expected 401/403, got ${unauthStatus}`);
+  }
+
+  // 6.2 A non-website role (parent) must not manage website content
+  const parentCookie = await signIn("parent", "parent123", "DEMO-001");
+  if (parentCookie) {
+    const res = await fetch(`${BASE}/api/website/sections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: parentCookie },
+      body: JSON.stringify({ type: "custom", title: "Parent should not do this" }),
+      redirect: "manual",
+    });
+    if (res.status === 401 || res.status === 403) {
+      pass(`Parent POST /api/website/sections → ${res.status} (blocked)`);
+    } else {
+      fail("Parent website write blocked", `Expected 401/403, got ${res.status}`);
+    }
+  }
+
+  // 6.3 Admin cannot save a section with an unsafe (javascript:) link scheme
+  const adminCookie = await signIn("admin", "admin123", "DEMO-001");
+  if (adminCookie) {
+    const res = await fetch(`${BASE}/api/website/sections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ type: "custom", title: "Bad link", linkUrl: "javascript:alert(1)" }),
+      redirect: "manual",
+    });
+    if (res.status === 400) {
+      pass("Unsafe javascript: link rejected (400)");
+    } else {
+      fail("Unsafe link rejected", `Expected 400, got ${res.status} — stored-XSS scheme was accepted`);
+    }
+
+    // 6.4 A safe https link passes URL validation (positive control).
+    // In memory-storage test mode persistence may fail after validation; we
+    // therefore assert only that a safe link is NOT rejected as an invalid URL.
+    const okRes = await fetch(`${BASE}/api/website/sections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ type: "custom", title: "Good link", linkUrl: "https://example.com" }),
+      redirect: "manual",
+    });
+    let okBody: any = null;
+    try { okBody = await okRes.json(); } catch { /* ignore */ }
+    const rejectedAsBadUrl = okRes.status === 400 && /must be a valid URL/i.test(okBody?.message ?? "");
+    if (!rejectedAsBadUrl) {
+      pass("Safe https link passes URL validation", `status=${okRes.status}`);
+    } else {
+      fail("Safe link passes validation", "A valid https URL was wrongly rejected");
+    }
+  }
+
+  // 6.5 Public website endpoint must never leak internal fields or drafts
+  const { status: pubStatus, body: pubBody } = await fetchJson("/api/public/schools/DEMO-001/website");
+  if (pubStatus === 200 && Array.isArray(pubBody)) {
+    const leaked = pubBody.some((s: any) =>
+      "schoolId" in s || "updatedBy" in s || "isPublished" in s || "sortOrder" in s || "createdAt" in s
+    );
+    if (!leaked) {
+      pass("Public website endpoint leaks no internal fields", `${pubBody.length} sections`);
+    } else {
+      fail("Public website field leak", "Internal field present in public response");
+    }
+  } else {
+    // A 404 (no such active school in memory mode) is acceptable — not a leak
+    pass("Public website endpoint safe", `status=${pubStatus}`);
+  }
+}
+
 // ── Runner ──
 
 async function main() {
@@ -349,6 +427,7 @@ async function main() {
     await testTenantIsolation();
     await testAuthSessionIntegrity();
     await testCriticalSecurityPatterns();
+    await testWebsiteCmsSecurity();
   } catch (e) {
     console.error("\nFATAL ERROR:", e);
   }

@@ -174,15 +174,40 @@ export const schoolWebsiteSections = pgTable("school_website_sections", {
 export type SchoolWebsiteSection = typeof schoolWebsiteSections.$inferSelect;
 export type InsertSchoolWebsiteSection = typeof schoolWebsiteSections.$inferInsert;
 
+// Safe-URL validators for CMS content. A section is published to a PUBLIC page,
+// so a stored URL must not carry active content. We allow only navigable schemes
+// and reject javascript:, data:, vbscript:, file:, etc. — closing the stored-XSS
+// vector where a link like `javascript:...` would execute in a visitor's browser.
+const SAFE_LINK_SCHEMES = ["http:", "https:", "mailto:", "tel:"];
+const SAFE_IMAGE_SCHEMES = ["http:", "https:"];
+
+function safeUrl(allowedSchemes: string[], label: string) {
+  return z
+    .string()
+    .trim()
+    .max(2000)
+    .refine((v) => {
+      try {
+        const scheme = new URL(v).protocol.toLowerCase();
+        return allowedSchemes.includes(scheme);
+      } catch {
+        return false;
+      }
+    }, `${label} must be a valid URL using ${allowedSchemes.map((s) => s.replace(":", "")).join(", ")}`)
+    .optional()
+    .nullable()
+    .or(z.literal("").transform(() => null));
+}
+
 export const websiteSectionInputSchema = z.object({
   type: z.enum(["hero", "about", "announcement", "contact", "custom"]).default("custom"),
   title: z.string().trim().min(1, "Title is required").max(200),
   body: z.string().max(20000).optional().nullable(),
-  imageUrl: z.string().trim().url("Image must be a valid URL").max(2000).optional().nullable().or(z.literal("").transform(() => null)),
-  linkUrl: z.string().trim().url("Link must be a valid URL").max(2000).optional().nullable().or(z.literal("").transform(() => null)),
+  imageUrl: safeUrl(SAFE_IMAGE_SCHEMES, "Image"),
+  linkUrl: safeUrl(SAFE_LINK_SCHEMES, "Link"),
   linkLabel: z.string().max(100).optional().nullable(),
   isPublished: z.boolean().optional(),
-});
+}).strict();
 
 export const insertSchoolBrandingSchema = createInsertSchema(schoolBranding).omit({ id: true, createdAt: true, updatedAt: true });
 export const updateSchoolBrandingSchema = insertSchoolBrandingSchema.partial().omit({ schoolId: true });

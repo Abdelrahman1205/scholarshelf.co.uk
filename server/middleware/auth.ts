@@ -219,7 +219,10 @@ export async function rateLimit(key: string, maxAttempts: number, windowMs: numb
   // Always run the in-memory check — free, and still throttles within this
   // instance if the database is unreachable.
   const memoryLimited = rateLimitMemory(key, maxAttempts, windowMs);
-  if (!process.env.DATABASE_URL) return memoryLimited;
+  // Use the distributed store only when the app is actually running on the
+  // database. In memory mode (dev/test) we must NOT touch a DB — otherwise a
+  // stray DATABASE_URL from a .env would pull test traffic onto a shared DB.
+  if (getStorageMode() !== "database") return memoryLimited;
   try {
     await ensureRateLimitTable();
     const { getPool } = await import("../config/database.js");

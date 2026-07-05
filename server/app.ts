@@ -186,7 +186,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // unsafe-eval needed for Vite HMR in dev
+          // 'unsafe-eval' is only needed for the Vite dev HMR runtime; it must NOT
+          // be present in production, where it materially weakens XSS defence.
+          scriptSrc: IS_PRODUCTION
+            ? ["'self'", "'unsafe-inline'"]
+            : ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", "data:", "https:"],
           connectSrc: ["'self'", "wss:", "ws:"],
@@ -268,7 +272,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         maxAge: DEFAULT_SESSION_MAX_AGE,
         httpOnly: true,
         secure: IS_PRODUCTION,
-        sameSite: "lax",
+        // 'strict' prevents the session cookie from being sent on any cross-site
+        // request, hardening CSRF defence on state-changing routes. Top-level
+        // navigations into the SPA still authenticate normally.
+        sameSite: "strict",
       },
     }),
   );
