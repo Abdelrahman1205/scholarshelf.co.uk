@@ -1,30 +1,76 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import {
   Database, Play, Trash2, Pencil, ChevronLeft, ChevronRight, Search,
-  AlertTriangle, Check, Copy, RefreshCw, Zap, Shield
+  AlertTriangle, Check, Copy, RefreshCw, Terminal, ShieldAlert, ShieldCheck, X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 
-// ─── Table Browser ────────────────────────────────────────────────────────────
+/**
+ * BytHub DB Console — platform-owner database administration.
+ *
+ * Styling follows the "BytHub" design system (deep slate, indigo accents,
+ * monospaced data). The console is always dark regardless of app theme, since
+ * it is a high-privilege engineering surface. All data operations use the real
+ * /api/owner/db/* endpoints; nothing here is mocked.
+ */
 
+// ── Shared style tokens (BytHub palette) ────────────────────────────────────
+const S = {
+  panel: "bg-[#171f33] border border-[#2d3449] rounded-xl",
+  panelInset: "bg-[#0b1326] border border-[#464554] rounded-lg",
+  input:
+    "w-full bg-[#060e20] border border-[#464554] rounded-lg px-3 py-2 text-sm text-[#dae2fd] " +
+    "placeholder:text-[#908fa0] focus:outline-none focus:ring-2 focus:ring-[#8083ff] focus:border-transparent",
+  btnPrimary:
+    "inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-[#8083ff] to-[#c0c1ff] " +
+    "px-4 py-2 text-sm font-semibold text-[#1000a9] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition",
+  btnGhost:
+    "inline-flex items-center gap-2 rounded-lg border border-[#464554] bg-[#222a3d] px-3 py-2 " +
+    "text-sm text-[#dae2fd] hover:bg-[#2d3449] disabled:opacity-40 transition",
+  btnDanger:
+    "inline-flex items-center gap-2 rounded-lg bg-[#93000a] px-4 py-2 text-sm font-semibold text-[#ffdad6] " +
+    "hover:bg-[#b3131d] disabled:opacity-40 disabled:cursor-not-allowed transition",
+  label: "text-[11px] font-bold uppercase tracking-wider text-[#908fa0]",
+  mono: "font-mono text-xs",
+};
+
+function StatusPill({ value }: { value: any }) {
+  const v = String(value).toLowerCase();
+  const map: Record<string, string> = {
+    active: "bg-[#89ceff1a] text-[#89ceff] border-[#89ceff55]",
+    completed: "bg-[#89ceff1a] text-[#89ceff] border-[#89ceff55]",
+    confirmed: "bg-[#89ceff1a] text-[#89ceff] border-[#89ceff55]",
+    suspended: "bg-[#f59e0b1a] text-[#f59e0b] border-[#f59e0b55]",
+    pending: "bg-[#908fa01a] text-[#c7c4d7] border-[#908fa055]",
+    archived: "bg-[#908fa01a] text-[#c7c4d7] border-[#908fa055]",
+    rejected: "bg-[#ffb4ab1a] text-[#ffb4ab] border-[#ffb4ab55]",
+    deleted: "bg-[#ffb4ab1a] text-[#ffb4ab] border-[#ffb4ab55]",
+  };
+  const cls = map[v] || "bg-[#908fa01a] text-[#c7c4d7] border-[#908fa055]";
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>
+      {String(value)}
+    </span>
+  );
+}
+
+function cellValue(val: any) {
+  if (val === null || val === undefined) return <span className="text-[#908fa0] italic">null</span>;
+  if (val === true || val === false) return <StatusPill value={String(val)} />;
+  const s = String(val);
+  const looksStatus = ["active", "suspended", "pending", "archived", "confirmed", "rejected", "completed", "deleted"].includes(s.toLowerCase());
+  if (looksStatus) return <StatusPill value={s} />;
+  if (s.length > 60) return <span title={s}>{s.slice(0, 60)}…</span>;
+  return s;
+}
+
+// ─── Table Browser ──────────────────────────────────────────────────────────
 function TableBrowser() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [selectedTable, setSelectedTable] = useState<string>("");
+  const [selectedTable, setSelectedTable] = useState("");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -75,186 +121,172 @@ function TableBrowser() {
     onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
   });
 
+  const tables: string[] = tablesData?.tables ?? [];
   const columns: string[] = data?.columns ?? [];
   const rows: Record<string, any>[] = data?.rows ?? [];
 
-  function openEdit(row: Record<string, any>) {
-    setEditRow(row);
-    setEditValues({ ...row });
-  }
+  function openEdit(row: Record<string, any>) { setEditRow(row); setEditValues({ ...row }); }
 
   return (
-    <div className="space-y-4">
-      {/* Controls */}
-      <div className="flex flex-wrap gap-3 items-end">
-        <div className="w-52">
-          <Label className="text-xs text-muted-foreground mb-1 block">Table</Label>
-          <Select value={selectedTable} onValueChange={(v) => { setSelectedTable(v); setPage(1); setSearch(""); setSearchInput(""); }}>
-            <SelectTrigger><SelectValue placeholder="Select table…" /></SelectTrigger>
-            <SelectContent>
-              {(tablesData?.tables ?? []).map((t: string) => (
-                <SelectItem key={t} value={t}>{t}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+    <div className="space-y-5">
+      {/* Title + scope/table selectors */}
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-[#c0c1ff]">Table Browser</h2>
+          <p className="text-sm text-[#c7c4d7]">Exploring direct production data for the <span className={`${S.mono} text-[#89ceff]`}>scholar_db</span> cluster.</p>
         </div>
-        <div className="flex gap-2 flex-1 min-w-0">
-          <Input
-            placeholder="Search by id or name…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") { setSearch(searchInput); setPage(1); } }}
-            className="max-w-xs"
-          />
-          <Button size="sm" variant="outline" onClick={() => { setSearch(searchInput); setPage(1); }}>
-            <Search className="w-4 h-4" />
-          </Button>
-          {selectedTable && (
-            <Button size="sm" variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["/api/owner/db/browse", selectedTable] })}>
-              <RefreshCw className="w-4 h-4" />
-            </Button>
-          )}
+        <div className="flex items-end gap-3">
+          <div>
+            <div className={`${S.label} mb-1`}>Target Table</div>
+            <select
+              value={selectedTable}
+              onChange={(e) => { setSelectedTable(e.target.value); setPage(1); setSearch(""); setSearchInput(""); }}
+              className={`${S.input} min-w-[200px]`}
+            >
+              <option value="">Select table…</option>
+              {tables.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Stats */}
-      {data && (
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span><strong className="text-foreground">{data.total}</strong> rows</span>
-          <span>Page <strong className="text-foreground">{data.page}</strong> of <strong className="text-foreground">{data.pages}</strong></span>
-          <span>{columns.length} columns</span>
+      {/* Query bar + stat cards */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto_auto] gap-3">
+        <div className={`${S.panel} flex items-center gap-3 px-4 py-3`}>
+          <Search className="w-4 h-4 text-[#908fa0] shrink-0" />
+          <input
+            placeholder={selectedTable ? `SELECT * FROM ${selectedTable} — search by id or name…` : "Select a table to begin…"}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { setSearch(searchInput); setPage(1); } }}
+            disabled={!selectedTable}
+            className={`flex-1 bg-transparent ${S.mono} text-sm text-[#dae2fd] placeholder:text-[#908fa0] focus:outline-none disabled:opacity-50`}
+          />
+          <button
+            onClick={() => { setSearch(searchInput); setPage(1); }}
+            disabled={!selectedTable}
+            className="text-[#c0c1ff] hover:text-white disabled:opacity-30"
+            title="Run search"
+          >
+            <Play className="w-4 h-4" />
+          </button>
+          {selectedTable && (
+            <button onClick={() => qc.invalidateQueries({ queryKey: ["/api/owner/db/browse", selectedTable] })} className="text-[#908fa0] hover:text-[#dae2fd]" title="Refresh">
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          )}
         </div>
-      )}
+        <div className={`${S.panel} px-5 py-3 min-w-[130px]`}>
+          <div className={S.label}>Total Rows</div>
+          <div className="text-2xl font-bold text-[#dae2fd] mt-0.5">{data ? Number(data.total).toLocaleString() : "—"}</div>
+        </div>
+        <div className={`${S.panel} px-5 py-3 min-w-[130px] ring-1 ring-[#8083ff33]`}>
+          <div className={S.label}>Columns</div>
+          <div className="text-2xl font-bold text-[#c0c1ff] mt-0.5">{data ? columns.length : "—"}</div>
+        </div>
+      </div>
 
-      {/* Table */}
+      {/* Data table */}
       {!selectedTable ? (
-        <Card className="border-dashed border-2 shadow-none">
-          <CardContent className="flex flex-col items-center justify-center h-40 text-center">
-            <Database className="w-8 h-8 text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">Select a table to browse its rows</p>
-          </CardContent>
-        </Card>
+        <div className={`${S.panel} border-dashed flex flex-col items-center justify-center h-48 text-center`}>
+          <Database className="w-8 h-8 text-[#464554] mb-2" />
+          <p className="text-sm text-[#908fa0]">Select a table to browse its rows.</p>
+        </div>
       ) : isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className={`${S.panel} h-48 flex items-center justify-center text-sm text-[#908fa0]`}>Loading…</div>
       ) : isError ? (
-        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>Failed to load table</AlertDescription></Alert>
+        <div className="rounded-lg border border-[#93000a] bg-[#93000a1a] px-4 py-3 text-sm text-[#ffb4ab] flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" /> Failed to load table.
+        </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8 sticky left-0 bg-muted/50" />
+        <div className={`${S.panel} overflow-auto`}>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-b border-[#2d3449]">
+                <th className="w-10 px-3 py-3" />
                 {columns.map((col) => (
-                  <TableHead key={col} className="whitespace-nowrap font-mono text-xs">{col}</TableHead>
+                  <th key={col} className={`text-left px-4 py-3 ${S.label} whitespace-nowrap`}>{col}</th>
                 ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+              </tr>
+            </thead>
+            <tbody>
               {rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length + 1} className="text-center text-muted-foreground py-8">No rows found</TableCell>
-                </TableRow>
+                <tr><td colSpan={columns.length + 1} className="text-center text-[#908fa0] py-10 text-sm">No rows found.</td></tr>
               ) : rows.map((row, i) => (
-                <TableRow key={row.id ?? i} className="hover:bg-muted/30 group">
-                  <TableCell className="w-8 sticky left-0 bg-background p-1">
+                <tr key={row.id ?? i} className="border-b border-[#2d3449] hover:bg-[#222a3d] group transition-colors">
+                  <td className="w-10 px-2 py-2">
                     <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(row)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                      <button onClick={() => setDeleteRow(row)} className="p-1 rounded hover:bg-red-100 text-muted-foreground hover:text-red-600">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                      <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-[#2d3449] text-[#908fa0] hover:text-[#c0c1ff]"><Pencil className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setDeleteRow(row)} className="p-1.5 rounded hover:bg-[#93000a33] text-[#908fa0] hover:text-[#ffb4ab]"><Trash2 className="w-3.5 h-3.5" /></button>
                     </div>
-                  </TableCell>
-                  {columns.map((col) => {
-                    const val = row[col];
-                    const display = val === null ? <span className="text-muted-foreground/50 italic text-xs">null</span>
-                      : val === true ? <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-700">true</Badge>
-                      : val === false ? <Badge variant="secondary" className="text-xs">false</Badge>
-                      : typeof val === "string" && val.length > 60 ? <span title={val}>{val.slice(0, 60)}…</span>
-                      : String(val);
-                    return (
-                      <TableCell key={col} className="font-mono text-xs whitespace-nowrap max-w-[200px] overflow-hidden text-ellipsis">
-                        {display}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
+                  </td>
+                  {columns.map((col) => (
+                    <td key={col} className={`px-4 py-3 ${S.mono} text-[#dae2fd] whitespace-nowrap max-w-[240px] overflow-hidden text-ellipsis`}>
+                      {cellValue(row[col])}
+                    </td>
+                  ))}
+                </tr>
               ))}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
+          {/* Footer / pagination */}
+          {data && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-[#2d3449] text-xs text-[#908fa0]">
+              <span>Showing page {data.page} of {data.pages} · {Number(data.total).toLocaleString()} rows</span>
+              <div className="flex items-center gap-2">
+                <button className={`${S.btnGhost} px-2 py-1`} disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="w-4 h-4" /></button>
+                <span className="text-[#dae2fd] font-mono">{page} / {data.pages}</span>
+                <button className={`${S.btnGhost} px-2 py-1`} disabled={page >= data.pages} onClick={() => setPage(p => p + 1)}><ChevronRight className="w-4 h-4" /></button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Pagination */}
-      {data && data.pages > 1 && (
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <span className="text-sm text-muted-foreground">{page} / {data.pages}</span>
-          <Button size="sm" variant="outline" disabled={page >= data.pages} onClick={() => setPage(p => p + 1)}>
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        </div>
-      )}
-
-      {/* Edit dialog */}
-      <Dialog open={!!editRow} onOpenChange={(o) => { if (!o) setEditRow(null); }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit row — {selectedTable}</DialogTitle>
-            <DialogDescription>ID: <span className="font-mono">{editRow?.id}</span></DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 py-2">
-            {Object.keys(editValues).filter(k => !["id", "created_at"].includes(k)).map((key) => (
+      {/* Edit modal */}
+      {editRow && (
+        <Modal onClose={() => setEditRow(null)} title={`Edit row — ${selectedTable}`} subtitle={`ID: ${editRow.id}`} wide>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-2 max-h-[55vh] overflow-y-auto">
+            {Object.keys(editValues).filter((k) => !["id", "created_at"].includes(k)).map((key) => (
               <div key={key}>
-                <Label className="text-xs text-muted-foreground mb-1 block font-mono">{key}</Label>
-                <Input
+                <div className={`${S.label} mb-1 ${S.mono} normal-case tracking-normal`}>{key}</div>
+                <input
                   value={editValues[key] === null ? "" : String(editValues[key])}
-                  onChange={(e) => setEditValues(prev => ({ ...prev, [key]: e.target.value || null }))}
-                  className="font-mono text-xs"
+                  onChange={(e) => setEditValues((p) => ({ ...p, [key]: e.target.value || null }))}
+                  className={`${S.input} ${S.mono}`}
                 />
               </div>
             ))}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditRow(null)}>Cancel</Button>
-            <Button
-              onClick={() => updateMutation.mutate({ id: editRow!.id, values: editValues })}
-              disabled={updateMutation.isPending}
-            >
+          <div className="flex justify-end gap-2 pt-3">
+            <button className={S.btnGhost} onClick={() => setEditRow(null)}>Cancel</button>
+            <button className={S.btnPrimary} onClick={() => updateMutation.mutate({ id: editRow.id, values: editValues })} disabled={updateMutation.isPending}>
               {updateMutation.isPending ? "Saving…" : "Save changes"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </button>
+          </div>
+        </Modal>
+      )}
 
-      {/* Delete confirm dialog */}
-      <Dialog open={!!deleteRow} onOpenChange={(o) => { if (!o) setDeleteRow(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-destructive">Delete row?</DialogTitle>
-            <DialogDescription>
-              This permanently deletes the row with ID <span className="font-mono font-medium">{deleteRow?.id}</span> from <span className="font-mono">{selectedTable}</span>. This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteRow(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => deleteMutation.mutate(deleteRow!.id)} disabled={deleteMutation.isPending}>
+      {/* Delete modal */}
+      {deleteRow && (
+        <Modal onClose={() => setDeleteRow(null)} title="Delete row?" danger>
+          <p className="text-sm text-[#c7c4d7] py-2">
+            This permanently deletes the row with ID <span className={`${S.mono} text-[#ffb4ab]`}>{deleteRow.id}</span> from <span className={S.mono}>{selectedTable}</span>. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2 pt-3">
+            <button className={S.btnGhost} onClick={() => setDeleteRow(null)}>Cancel</button>
+            <button className={S.btnDanger} onClick={() => deleteMutation.mutate(deleteRow.id)} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? "Deleting…" : "Delete permanently"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
 // ─── SQL Console ──────────────────────────────────────────────────────────────
-
 function SqlConsole() {
-  const { toast } = useToast();
   const [query, setQuery] = useState("SELECT * FROM schools LIMIT 10;");
   const [result, setResult] = useState<{ rows: any[]; columns: string[]; rowCount: number; durationMs: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -263,19 +295,13 @@ function SqlConsole() {
   const [copied, setCopied] = useState(false);
 
   async function runQuery(dangerConfirm = false) {
-    setIsRunning(true);
-    setError(null);
-    setRequiresConfirm(false);
+    setIsRunning(true); setError(null); setRequiresConfirm(false);
     try {
       const r = await apiRequest("POST", "/api/owner/db/query", { query, dangerConfirm });
       const data = await r.json();
       if (!r.ok) {
-        if (data.requiresConfirm) {
-          setRequiresConfirm(true);
-          setError(data.message);
-        } else {
-          setError(data.message || "Query failed");
-        }
+        if (data.requiresConfirm) { setRequiresConfirm(true); setError(data.message); }
+        else setError(data.message || "Query failed");
         return;
       }
       setResult(data);
@@ -289,91 +315,92 @@ function SqlConsole() {
   function copyResults() {
     if (!result) return;
     const header = result.columns.join("\t");
-    const rows = result.rows.map(row => result.columns.map(c => row[c] ?? "").join("\t")).join("\n");
-    navigator.clipboard.writeText(`${header}\n${rows}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const body = result.rows.map((row) => result.columns.map((c) => row[c] ?? "").join("\t")).join("\n");
+    navigator.clipboard.writeText(`${header}\n${body}`);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
   }
+
+  const lineCount = Math.max(query.split("\n").length, 7);
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-2 bg-muted/40 border-b border-border">
-          <span className="text-xs font-mono text-muted-foreground">SQL Query</span>
-          <div className="flex gap-2">
-            <Button size="sm" variant="ghost" className="h-6 text-xs gap-1" onClick={() => setQuery("")}>Clear</Button>
-            <Button size="sm" className="h-6 text-xs gap-1" onClick={() => runQuery()} disabled={isRunning || !query.trim()}>
-              <Play className="w-3 h-3" />
-              {isRunning ? "Running…" : "Run"}
-            </Button>
+      <h2 className="text-2xl font-bold tracking-tight text-[#c0c1ff]">Query Runner</h2>
+
+      {/* Editor card */}
+      <div className={`${S.panel} overflow-hidden`}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[#2d3449]">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-[#89ceff]" />
+            <span className={`${S.mono} font-semibold text-[#dae2fd]`}>scholar_db · production</span>
           </div>
+          <span className="text-xs text-[#908fa0]">Ctrl + Enter to execute</span>
         </div>
-        <Textarea
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runQuery(); } }}
-          className="font-mono text-sm border-0 rounded-none min-h-[140px] resize-none focus-visible:ring-0 bg-card"
-          placeholder="SELECT * FROM schools LIMIT 10;"
-          spellCheck={false}
-        />
-        <div className="px-3 py-1.5 bg-muted/20 border-t border-border text-xs text-muted-foreground">
-          Ctrl+Enter to run • DDL blocked • Mutations require confirmation
+        <div className="flex">
+          {/* line gutter */}
+          <div className={`select-none py-3 px-3 text-right ${S.mono} text-[#464554] bg-[#060e20] border-r border-[#2d3449]`}>
+            {Array.from({ length: lineCount }, (_, i) => <div key={i} className="leading-6">{i + 1}</div>)}
+          </div>
+          <textarea
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runQuery(); } }}
+            className={`flex-1 bg-[#060e20] ${S.mono} text-sm leading-6 text-[#dae2fd] p-3 min-h-[160px] resize-none focus:outline-none placeholder:text-[#908fa0]`}
+            placeholder="SELECT * FROM schools LIMIT 10;"
+            spellCheck={false}
+          />
+        </div>
+        <div className="flex items-center justify-between px-4 py-3 border-t border-[#2d3449]">
+          <span className="text-xs text-[#908fa0]">DDL blocked · mutations require confirmation</span>
+          <div className="flex gap-2">
+            <button className={S.btnGhost} onClick={() => setQuery("")}>Clear</button>
+            <button className={S.btnPrimary} onClick={() => runQuery()} disabled={isRunning || !query.trim()}>
+              <Play className="w-4 h-4" /> {isRunning ? "Running…" : "Run"}
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Error / confirm */}
       {error && (
-        <Alert variant={requiresConfirm ? "default" : "destructive"} className={requiresConfirm ? "border-amber-500/50 bg-amber-50" : ""}>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between gap-4">
-            <span>{error}</span>
-            {requiresConfirm && (
-              <Button size="sm" variant="destructive" className="shrink-0" onClick={() => runQuery(true)}>
-                Confirm & Execute
-              </Button>
-            )}
-          </AlertDescription>
-        </Alert>
+        <div className={`rounded-lg border px-4 py-3 text-sm flex items-center justify-between gap-4 ${requiresConfirm ? "border-[#f59e0b55] bg-[#f59e0b1a] text-[#f59e0b]" : "border-[#93000a] bg-[#93000a1a] text-[#ffb4ab]"}`}>
+          <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 shrink-0" /> {error}</span>
+          {requiresConfirm && <button className={S.btnDanger} onClick={() => runQuery(true)}>Confirm &amp; Execute</button>}
+        </div>
       )}
 
+      {/* Results */}
       {result && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex gap-3 text-xs text-muted-foreground">
-              <span><strong className="text-foreground">{result.rowCount}</strong> rows</span>
-              <span><strong className="text-foreground">{result.durationMs}ms</strong></span>
-              <span>{result.columns.length} columns</span>
+        <div className={`${S.panel} overflow-hidden`}>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[#2d3449]">
+            <div className="flex items-center gap-4 text-xs text-[#908fa0]">
+              <span className="font-semibold text-[#dae2fd] flex items-center gap-2"><Terminal className="w-4 h-4" /> Query Results</span>
+              <span><strong className="text-[#dae2fd]">{result.rowCount}</strong> rows</span>
+              <span><strong className="text-[#89ceff]">{result.durationMs}ms</strong></span>
+              <span>{result.columns.length} cols</span>
             </div>
-            <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={copyResults}>
-              {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-              {copied ? "Copied" : "Copy TSV"}
-            </Button>
+            <button className={`${S.btnGhost} px-3 py-1.5`} onClick={copyResults}>
+              {copied ? <Check className="w-3.5 h-3.5 text-[#89ceff]" /> : <Copy className="w-3.5 h-3.5" />} {copied ? "Copied" : "Copy as TSV"}
+            </button>
           </div>
-          <div className="rounded-lg border border-border overflow-auto max-h-[50vh]">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {result.columns.map((col) => (
-                    <TableHead key={col} className="font-mono text-xs whitespace-nowrap">{col}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+          <div className="overflow-auto max-h-[50vh]">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-[#2d3449]">
+                  {result.columns.map((col) => <th key={col} className={`text-left px-4 py-3 ${S.label} whitespace-nowrap`}>{col}</th>)}
+                </tr>
+              </thead>
+              <tbody>
                 {result.rows.length === 0 ? (
-                  <TableRow><TableCell colSpan={result.columns.length} className="text-center text-muted-foreground">No rows returned</TableCell></TableRow>
+                  <tr><td colSpan={result.columns.length} className="text-center text-[#908fa0] py-8 text-sm">No rows returned.</td></tr>
                 ) : result.rows.map((row, i) => (
-                  <TableRow key={i}>
-                    {result.columns.map((col) => {
-                      const val = row[col];
-                      return (
-                        <TableCell key={col} className="font-mono text-xs whitespace-nowrap max-w-[200px] overflow-hidden text-ellipsis">
-                          {val === null ? <span className="text-muted-foreground/50 italic">null</span> : String(val)}
-                        </TableCell>
-                      );
-                    })}
-                  </TableRow>
+                  <tr key={i} className="border-b border-[#2d3449] hover:bg-[#222a3d]">
+                    {result.columns.map((col) => (
+                      <td key={col} className={`px-4 py-3 ${S.mono} text-[#dae2fd] whitespace-nowrap max-w-[240px] overflow-hidden text-ellipsis`}>{cellValue(row[col])}</td>
+                    ))}
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -382,7 +409,6 @@ function SqlConsole() {
 }
 
 // ─── Danger Zone ──────────────────────────────────────────────────────────────
-
 function DangerZone() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -406,9 +432,7 @@ function DangerZone() {
     },
     onSuccess: (data) => {
       setWipeResult(data.message);
-      setWipeDialogOpen(false);
-      setWipeSchoolId("");
-      setWipeConfirmName("");
+      setWipeDialogOpen(false); setWipeSchoolId(""); setWipeConfirmName("");
       qc.invalidateQueries({ queryKey: ["/api/owner/db/browse"] });
       toast({ title: "School data wiped", description: data.message });
     },
@@ -418,138 +442,203 @@ function DangerZone() {
   const confirmNameMatches = selectedSchool && wipeConfirmName.trim().toLowerCase() === selectedSchool.name.trim().toLowerCase();
 
   return (
-    <div className="space-y-6">
-      <Alert className="border-red-500/40 bg-red-50 dark:bg-red-950/20">
-        <AlertTriangle className="h-4 w-4 text-red-600" />
-        <AlertDescription className="text-red-700 dark:text-red-400 font-medium">
-          Danger Zone — These operations are irreversible. All deleted data is permanently gone.
-        </AlertDescription>
-      </Alert>
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight text-[#dae2fd]">Critical System Maintenance</h2>
+        <p className="text-sm text-[#c7c4d7] mt-1 max-w-2xl">
+          Destructive tenant-data operations. These actions are irreversible and take immediate effect — proceed only with a verified backup and sign-off.
+        </p>
+      </div>
 
-      {/* Wipe school */}
-      <Card className="border-red-500/30">
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Trash2 className="w-4 h-4 text-red-500" />
-            Wipe School Data
-          </CardTitle>
-          <CardDescription>
-            Permanently deletes all students, classes, books, baskets, payments, allocations, and users for a school. The school record itself is preserved.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <Label className="text-xs text-muted-foreground mb-1 block">Select school</Label>
-            <Select value={wipeSchoolId} onValueChange={setWipeSchoolId}>
-              <SelectTrigger className="max-w-sm">
-                <SelectValue placeholder="Choose school to wipe…" />
-              </SelectTrigger>
-              <SelectContent>
-                {schools.map((s: any) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name} <span className="text-muted-foreground font-mono text-xs ml-1">({s.code})</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {/* Unrestrained access warning */}
+      <div className="rounded-xl border border-[#93000a] bg-gradient-to-r from-[#93000a22] to-transparent px-4 py-4 flex gap-3">
+        <div className="h-9 w-9 rounded-lg bg-[#93000a] flex items-center justify-center shrink-0"><ShieldAlert className="w-5 h-5 text-[#ffdad6]" /></div>
+        <div>
+          <div className="font-semibold text-[#ffb4ab]">High-privilege console</div>
+          <p className="text-sm text-[#ffb4ab]/80 mt-0.5">Data deleted here is permanent and is not recoverable from routine snapshots. Every action on this page is written to the audit log.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5">
+        {/* Wipe card */}
+        <div className="rounded-xl border-2 border-[#93000a] p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-[#ffb4ab]" />
+            <h3 className="text-lg font-bold text-[#ffb4ab]">Danger Zone</h3>
           </div>
-          {wipeSchoolId && (
-            <div>
-              <Label className="text-xs text-muted-foreground mb-1 block">
-                Type the school name to confirm: <span className="font-semibold text-foreground">{selectedSchool?.name}</span>
-              </Label>
-              <Input
-                value={wipeConfirmName}
-                onChange={(e) => setWipeConfirmName(e.target.value)}
-                placeholder="Type school name exactly…"
-                className="max-w-sm"
-              />
+          <div className={`${S.panel} p-4 space-y-4`}>
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="font-semibold text-[#dae2fd]">School Wipe</div>
+                <p className="text-sm text-[#c7c4d7] mt-0.5 max-w-md">Purge all data for a tenant — students, classes, books, baskets, payments, allocations, and users. The school record itself is preserved.</p>
+              </div>
+              <span className="inline-flex items-center rounded border border-[#93000a] bg-[#93000a33] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[#ffb4ab]">Destructive</span>
             </div>
-          )}
-          <Button
-            variant="destructive"
-            disabled={!wipeSchoolId || !confirmNameMatches}
-            onClick={() => setWipeDialogOpen(true)}
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Wipe all data for this school
-          </Button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <div className={`${S.label} mb-1`}>Select Tenant</div>
+                <select value={wipeSchoolId} onChange={(e) => { setWipeSchoolId(e.target.value); setWipeConfirmName(""); }} className={S.input}>
+                  <option value="">Choose a school…</option>
+                  {schools.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+                </select>
+              </div>
+              <div>
+                <div className={`${S.label} mb-1`}>Confirm Selection</div>
+                <input
+                  value={wipeConfirmName}
+                  onChange={(e) => setWipeConfirmName(e.target.value)}
+                  disabled={!wipeSchoolId}
+                  placeholder={selectedSchool ? `Type "${selectedSchool.name}"` : "Select a school first"}
+                  className={`${S.input} disabled:opacity-50`}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1 border-t border-[#2d3449]">
+              <p className="text-xs text-[#908fa0] max-w-xs">Type the exact school name to unlock the wipe control.</p>
+              <button
+                className={S.btnDanger}
+                disabled={!wipeSchoolId || !confirmNameMatches}
+                onClick={() => setWipeDialogOpen(true)}
+              >
+                <Trash2 className="w-4 h-4" /> Wipe Tenant Data
+              </button>
+            </div>
+          </div>
 
           {wipeResult && (
-            <Alert className="border-emerald-500/40 bg-emerald-50">
-              <Check className="h-4 w-4 text-emerald-600" />
-              <AlertDescription className="text-emerald-700">{wipeResult}</AlertDescription>
-            </Alert>
+            <div className="rounded-lg border border-[#89ceff55] bg-[#89ceff1a] px-4 py-3 text-sm text-[#89ceff] flex items-center gap-2">
+              <Check className="w-4 h-4" /> {wipeResult}
+            </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Final confirm dialog */}
-      <Dialog open={wipeDialogOpen} onOpenChange={setWipeDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-destructive flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" /> Final confirmation
-            </DialogTitle>
-            <DialogDescription className="space-y-2 pt-2">
-              <p>You are about to permanently wipe <strong>all data</strong> for:</p>
-              <p className="font-semibold text-foreground text-base">{selectedSchool?.name} ({selectedSchool?.code})</p>
-              <p className="text-destructive font-medium">This cannot be undone.</p>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setWipeDialogOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => wipeMutation.mutate()} disabled={wipeMutation.isPending}>
+        {/* Safety checklist */}
+        <div className={`${S.panel} p-5 h-fit`}>
+          <div className="flex items-center gap-2 mb-4">
+            <ShieldCheck className="w-4 h-4 text-[#c0c1ff]" />
+            <h3 className="font-semibold text-[#dae2fd]">Safety Checklist</h3>
+          </div>
+          <ul className="space-y-3 text-sm">
+            {[
+              "Confirm a recent database backup exists",
+              "Verify you have the correct tenant selected",
+              "Ensure sign-off from the school / account owner",
+              "Understand this cannot be undone",
+            ].map((item) => (
+              <li key={item} className="flex items-start gap-2.5 text-[#c7c4d7]">
+                <span className="mt-0.5 h-4 w-4 rounded-full border border-[#464554] flex items-center justify-center shrink-0" />
+                {item}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-5 pt-4 border-t border-[#2d3449] text-xs text-[#908fa0]">
+            All wipe operations are recorded in <span className={S.mono}>audit_logs</span> with your user ID and timestamp.
+          </div>
+        </div>
+      </div>
+
+      {/* Final confirm modal */}
+      {wipeDialogOpen && (
+        <Modal onClose={() => setWipeDialogOpen(false)} title="Final confirmation" danger>
+          <div className="space-y-2 py-2">
+            <p className="text-sm text-[#c7c4d7]">You are about to permanently wipe <strong className="text-[#dae2fd]">all data</strong> for:</p>
+            <p className="font-semibold text-[#dae2fd] text-base">{selectedSchool?.name} <span className={`${S.mono} text-[#908fa0]`}>({selectedSchool?.code})</span></p>
+            <p className="text-[#ffb4ab] font-medium text-sm">This cannot be undone.</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-3">
+            <button className={S.btnGhost} onClick={() => setWipeDialogOpen(false)}>Cancel</button>
+            <button className={S.btnDanger} onClick={() => wipeMutation.mutate()} disabled={wipeMutation.isPending}>
               {wipeMutation.isPending ? "Wiping…" : "Yes, wipe everything"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Modal primitive (BytHub styled) ────────────────────────────────────────
+function Modal({ children, onClose, title, subtitle, danger, wide }: {
+  children: React.ReactNode; onClose: () => void; title: string; subtitle?: string; danger?: boolean; wide?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className={`${S.panel} ${wide ? "max-w-2xl" : "max-w-md"} w-full p-5 shadow-2xl`}
+        style={{ borderColor: danger ? "#93000a" : "#464554" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <h3 className={`text-lg font-bold ${danger ? "text-[#ffb4ab]" : "text-[#dae2fd]"} flex items-center gap-2`}>
+              {danger && <AlertTriangle className="w-5 h-5" />} {title}
+            </h3>
+            {subtitle && <p className={`text-xs ${S.mono} text-[#908fa0] mt-0.5`}>{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="text-[#908fa0] hover:text-[#dae2fd]"><X className="w-4 h-4" /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Section ─────────────────────────────────────────────────────────────
+type Tab = "browser" | "sql" | "danger";
 
 export function DbConsoleSection() {
+  const [tab, setTab] = useState<Tab>("browser");
+  const tabs: { id: Tab; label: string; icon: any }[] = [
+    { id: "browser", label: "Table Browser", icon: Database },
+    { id: "sql", label: "Query Runner", icon: Terminal },
+    { id: "danger", label: "Danger Zone", icon: AlertTriangle },
+  ];
+
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex items-center gap-3">
-        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
-          <Database className="w-5 h-5 text-primary" />
+    <div className="-m-4 md:-m-6 lg:-m-8 min-h-screen bg-[#0b1326] text-[#dae2fd] p-4 md:p-6 lg:p-8 animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-[#8083ff] to-[#c0c1ff] flex items-center justify-center">
+          <Terminal className="w-5 h-5 text-[#1000a9]" />
         </div>
         <div>
-          <h1 className="text-xl font-bold tracking-tight">DB Console</h1>
-          <p className="text-sm text-muted-foreground">BytHub super account — direct database access</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-[#dae2fd]">BytHub</h1>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#c0c1ff]">Super-Admin</span>
+          </div>
+          <p className="text-sm text-[#908fa0]">DB Console — direct production database access</p>
         </div>
-        <Badge variant="destructive" className="ml-auto gap-1">
-          <Shield className="w-3 h-3" /> Owner only
-        </Badge>
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[#93000a] bg-[#93000a1a] px-3 py-1 text-xs font-semibold text-[#ffb4ab]">
+          <ShieldAlert className="w-3.5 h-3.5" /> Owner only
+        </span>
       </div>
 
-      <Tabs defaultValue="browser">
-        <TabsList className="grid w-full grid-cols-3 max-w-md">
-          <TabsTrigger value="browser" className="gap-1.5">
-            <Database className="w-3.5 h-3.5" /> Table Browser
-          </TabsTrigger>
-          <TabsTrigger value="sql" className="gap-1.5">
-            <Zap className="w-3.5 h-3.5" /> SQL Console
-          </TabsTrigger>
-          <TabsTrigger value="danger" className="gap-1.5 text-destructive">
-            <AlertTriangle className="w-3.5 h-3.5" /> Danger Zone
-          </TabsTrigger>
-        </TabsList>
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 bg-[#131b2e] border border-[#2d3449] rounded-xl p-1 w-fit">
+        {tabs.map((t) => {
+          const active = tab === t.id;
+          const isDanger = t.id === "danger";
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
+                active
+                  ? isDanger ? "bg-[#93000a] text-[#ffdad6]" : "bg-gradient-to-r from-[#8083ff] to-[#c0c1ff] text-[#1000a9]"
+                  : `text-[#c7c4d7] hover:bg-[#222a3d] ${isDanger ? "hover:text-[#ffb4ab]" : ""}`
+              }`}
+            >
+              <t.icon className="w-4 h-4" /> {t.label}
+            </button>
+          );
+        })}
+      </div>
 
-        <TabsContent value="browser" className="mt-4">
-          <TableBrowser />
-        </TabsContent>
-        <TabsContent value="sql" className="mt-4">
-          <SqlConsole />
-        </TabsContent>
-        <TabsContent value="danger" className="mt-4">
-          <DangerZone />
-        </TabsContent>
-      </Tabs>
+      {tab === "browser" && <TableBrowser />}
+      {tab === "sql" && <SqlConsole />}
+      {tab === "danger" && <DangerZone />}
     </div>
   );
 }
