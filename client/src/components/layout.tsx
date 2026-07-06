@@ -221,7 +221,9 @@ export default function Layout({ children }: LayoutProps) {
       label: adminSetupComplete ? "Setup Summary" : "Continue Setup",
       href: "/admin/setup",
       icon: Settings,
-      group: "Overview",
+      // Joins "Overview" at the top while onboarding; joins "Admin" at the
+      // bottom once complete — avoids a duplicate group header.
+      group: adminSetupComplete ? "Admin" : "Overview",
     };
 
     return adminSetupComplete
