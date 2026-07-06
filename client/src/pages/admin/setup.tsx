@@ -118,7 +118,7 @@ function SetupSection() {
   }));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 max-w-[1400px]">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Continue School Setup</h1>
@@ -130,7 +130,7 @@ function SetupSection() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">School</p>
             <p className="text-lg font-semibold mt-1">{setup?.school?.name || "School setup"}</p>
@@ -138,14 +138,14 @@ function SetupSection() {
             <p className="text-sm text-muted-foreground mt-1 capitalize">Status: {(setup?.schoolStatus || setup?.school?.status || "pending_setup").replace(/_/g, " ")}</p>
           </CardContent>
         </Card>
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Setup status</p>
             <p className="text-lg font-semibold mt-1">{setupStatusLabel[setup?.setupStatus || ""] || "Pending"}</p>
             <p className="text-sm text-muted-foreground mt-1 capitalize">{(setup?.setupStatus || "pending_admin_invite").replace(/_/g, " ")}</p>
           </CardContent>
         </Card>
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">First admin invite</p>
             <p className="text-lg font-semibold mt-1">{setup?.firstAdminEmail || setup?.invite?.email || "Not invited"}</p>
@@ -173,7 +173,7 @@ function SetupSection() {
       )}
 
       {/* Payment settings card */}
-      <Card className="border-border shadow-none">
+      <Card className="border-border shadow-none rounded-2xl">
         <CardHeader>
           <CardTitle>Payment settings</CardTitle>
           <CardDescription>
@@ -212,7 +212,7 @@ function SetupSection() {
         </CardContent>
       </Card>
 
-      <Card className="border-border shadow-none">
+      <Card className="border-border shadow-none rounded-2xl">
         <CardHeader>
           <CardTitle>Setup checklist</CardTitle>
           <CardDescription>
@@ -223,6 +223,13 @@ function SetupSection() {
         </CardHeader>
         <CardContent className="space-y-3">
           {isLoading && <p className="text-sm text-muted-foreground">Loading setup progress...</p>}
+          {setup?.setupProgress && (
+            <div className="mb-2">
+              <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${setup.setupProgress.percent}%` }} />
+              </div>
+            </div>
+          )}
           {checklistSteps.map((step) => (
             <div key={step.label} className="flex items-center justify-between gap-3 rounded-lg border p-3">
               <span className="text-sm font-medium">{step.label}</span>

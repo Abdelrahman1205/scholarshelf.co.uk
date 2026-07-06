@@ -1,37 +1,21 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import {
-  BookOpen, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus,
-  Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight,
-  QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
-  Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
-  XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw, Printer, ShieldAlert, ShieldOff, Ban
-} from "lucide-react";
+import { Mail, Loader2, Search, Link as LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import {
-  navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
-  normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
-} from "./shared";
 
-// ─── LINKING CODES ────────────────────────────────────────────────────────────
+// ─── PARENT INVITES / LINKING CODES (redesign) ──────────────────────────────
 function LinkingCodesSection() {
   const { toast } = useToast();
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const { data: codes = [] } = useQuery<any[]>({ queryKey: ["/api/linking-codes"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -45,16 +29,53 @@ function LinkingCodesSection() {
     onError: (err: any) => { setResendingId(null); toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
+  const counts = {
+    total: codes.length,
+    linked: codes.filter((c: any) => c.isUsed).length,
+    pending: codes.filter((c: any) => !c.isUsed).length,
+  };
+
+  const filtered = codes.filter((c: any) => {
+    const q = search.toLowerCase();
+    const matchesSearch = !q || c.student?.name?.toLowerCase().includes(q) || c.parentEmail?.toLowerCase().includes(q);
+    const matchesStatus = statusFilter === "all" ? true : statusFilter === "linked" ? c.isUsed : !c.isUsed;
+    return matchesSearch && matchesStatus;
+  });
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 max-w-[1400px]">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Parent Invites</h1>
-        <p className="text-muted-foreground text-sm mt-1">
+        <p className="text-muted-foreground mt-1">
           Invites are sent automatically when a student is added with a parent email. Use <strong>Resend</strong> if a parent lost or didn't receive their email.
         </p>
       </div>
 
-      <Card className="border-border shadow-none">
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Total Invites", value: counts.total, tone: "text-foreground" },
+          { label: "Linked", value: counts.linked, tone: "text-emerald-600" },
+          { label: "Pending", value: counts.pending, tone: "text-amber-600" },
+        ].map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{k.label}</div>
+            <div className={cn("text-2xl font-bold mt-0.5", k.tone)}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+          <div className="relative flex-1 max-w-xs"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Search student or email…" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="linked">Linked</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -62,11 +83,11 @@ function LinkingCodesSection() {
               <TableHead className="text-[10px] font-mono uppercase tracking-wider">Parent Email</TableHead>
               <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
               <TableHead className="text-[10px] font-mono uppercase tracking-wider">Expires</TableHead>
-              <TableHead />
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {codes.map((code: any) => (
+            {filtered.map((code: any) => (
               <TableRow key={code.id}>
                 <TableCell className="font-medium">{code.student?.name || "Unknown"}</TableCell>
                 <TableCell className="text-muted-foreground">{code.parentEmail}</TableCell>
@@ -91,17 +112,17 @@ function LinkingCodesSection() {
                 </TableCell>
               </TableRow>
             ))}
-            {codes.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No invites sent yet. Add a student with a parent email to get started.</TableCell></TableRow>
+            {filtered.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-12">
+                <LinkIcon className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
+                {codes.length === 0 ? "No invites sent yet. Add a student with a parent email to get started." : "No matching invites."}
+              </TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-      </Card>
+      </div>
     </div>
   );
 }
-
-// ─── PAYMENTS ──────────────────────────────────────────────────
-
 
 export { LinkingCodesSection };

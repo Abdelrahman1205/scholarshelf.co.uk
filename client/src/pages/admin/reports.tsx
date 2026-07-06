@@ -1,34 +1,15 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
 import {
-  BookOpen, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus,
-  Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight,
-  QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
-  Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
-  XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw, Printer, ShieldAlert, ShieldOff, Ban
+  Layers, CreditCard, BoxSelect, Loader2, GraduationCap, Users,
+  Package, ClipboardList, CheckCircle2, Clock, XCircle, AlertTriangle, BarChart2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
+import { getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
-import {
-  navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
-  normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
-} from "./shared";
 
-// ─── REPORTS ──────────────────────────────────────────────────────────────────
+// ─── REPORTS (Stitch redesign) ──────────────────────────────────────────────
 function ReportsSection() {
   const { data: report, isLoading, error } = useQuery<any>({
     queryKey: ["/api/admin/reports"],
@@ -61,169 +42,136 @@ function ReportsSection() {
   const pl = report.parentLinking;
   const bl = report.bookLevels;
 
+  const mono = "text-[10px] font-mono uppercase tracking-wider";
+  const th = `${mono} text-muted-foreground`;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 max-w-[1400px]">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <BarChart2 className="h-6 w-6" /> School Reports
-        </h2>
+        </h1>
         <p className="text-muted-foreground mt-1">
           Operational metrics and data summaries — generated {new Date(report.generatedAt).toLocaleString()}
         </p>
       </div>
 
-      {/* ── Overview Cards ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total Books</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{inv.activeBooks}</div><p className="text-xs text-muted-foreground">{inv.totalStockUnits} units in stock</p></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Students</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{report.students.total}</div><p className="text-xs text-muted-foreground">{cls.total} classes</p></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Payments Verified</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-green-600">{pay.confirmed}</div><p className="text-xs text-muted-foreground">{pay.referenceSubmitted + (pay.needsReview || 0)} awaiting review</p></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Parent Link Rate</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{pl.linkRate}%</div><p className="text-xs text-muted-foreground">{pl.used}/{pl.totalCodes} codes used</p></CardContent>
-        </Card>
+      {/* ── Hero metric cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: "Total Books", value: inv.activeBooks, sub: `${inv.totalStockUnits} units in stock`, tone: "text-foreground" },
+          { label: "Students", value: report.students.total, sub: `${cls.total} classes`, tone: "text-foreground" },
+          { label: "Payments Verified", value: pay.confirmed, sub: `${pay.referenceSubmitted + (pay.needsReview || 0)} awaiting review`, tone: "text-emerald-600" },
+          { label: "Parent Link Rate", value: `${pl.linkRate}%`, sub: `${pl.used}/${pl.totalCodes} codes used`, tone: "text-foreground" },
+        ].map((k) => (
+          <div key={k.label} className="rounded-2xl border border-border bg-card p-5">
+            <div className={th}>{k.label}</div>
+            <div className={cn("text-3xl font-bold mt-1", k.tone)}>{k.value}</div>
+            <p className="text-xs text-muted-foreground mt-1">{k.sub}</p>
+          </div>
+        ))}
       </div>
 
       {/* ── Inventory Report ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" /> Inventory Report</CardTitle>
-          <CardDescription>Stock levels, value, and alerts</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div><span className="text-muted-foreground">Active titles:</span> <strong>{inv.activeBooks}</strong></div>
-            <div><span className="text-muted-foreground">Total stock units:</span> <strong>{inv.totalStockUnits}</strong></div>
-            <div><span className="text-muted-foreground">Stock value:</span> <strong>£{inv.totalStockValue.toLocaleString()}</strong></div>
-            <div><span className="text-muted-foreground">Out of stock:</span> <strong className={inv.outOfStockCount > 0 ? "text-red-600" : ""}>{inv.outOfStockCount}</strong></div>
-          </div>
-          {inv.lowStockBooks.length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold text-orange-600 mb-2 flex items-center gap-1">
-                <AlertTriangle className="h-4 w-4" /> Low Stock Books ({inv.lowStockBooks.length})
-              </h4>
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex items-center gap-2 mb-4"><Package className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Inventory Report</h2></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div><span className="text-muted-foreground">Active titles:</span> <strong>{inv.activeBooks}</strong></div>
+          <div><span className="text-muted-foreground">Total stock units:</span> <strong>{inv.totalStockUnits}</strong></div>
+          <div><span className="text-muted-foreground">Stock value:</span> <strong>£{inv.totalStockValue.toLocaleString()}</strong></div>
+          <div><span className="text-muted-foreground">Out of stock:</span> <strong className={inv.outOfStockCount > 0 ? "text-red-600" : ""}>{inv.outOfStockCount}</strong></div>
+        </div>
+        {inv.lowStockBooks.length > 0 && (
+          <div className="mt-5">
+            <h3 className="text-sm font-semibold text-amber-600 mb-2 flex items-center gap-1">
+              <AlertTriangle className="h-4 w-4" /> Low Stock Books ({inv.lowStockBooks.length})
+            </h3>
+            <div className="rounded-xl border border-border overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead className="text-right">Stock</TableHead>
-                    <TableHead className="text-right">Threshold</TableHead>
+                    <TableHead className={th}>Title</TableHead>
+                    <TableHead className={cn(th, "text-right")}>Stock</TableHead>
+                    <TableHead className={cn(th, "text-right")}>Threshold</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {inv.lowStockBooks.map((b: any) => (
                     <TableRow key={b.id}>
                       <TableCell className="font-medium">{b.title}</TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={b.stock === 0 ? "destructive" : "secondary"}>{b.stock ?? 0}</Badge>
-                      </TableCell>
+                      <TableCell className="text-right"><Badge variant={b.stock === 0 ? "destructive" : "secondary"}>{b.stock ?? 0}</Badge></TableCell>
                       <TableCell className="text-right text-muted-foreground">{b.threshold ?? 10}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </section>
 
       {/* ── Payment Report ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><CreditCard className="h-5 w-5" /> Payment Report</CardTitle>
-          <CardDescription>Payment status breakdown and revenue</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-            <div className="space-y-1">
-              <span className="text-muted-foreground">Total payments</span>
-              <div className="text-xl font-bold">{pay.total}</div>
-            </div>
-            <div className="space-y-1">
-              <span className="text-muted-foreground">Revenue (verified)</span>
-              <div className="text-xl font-bold text-green-600">£{pay.totalRevenue.toLocaleString()}</div>
-            </div>
-            <div className="space-y-1">
-              <span className="text-muted-foreground">Pending revenue</span>
-              <div className="text-xl font-bold text-yellow-600">£{pay.pendingRevenue.toLocaleString()}</div>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-3 mt-4">
-            <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" /> {pay.awaitingReference} Awaiting Ref</Badge>
-            <Badge className="gap-1 bg-blue-600"><ClipboardList className="h-3 w-3" /> {pay.referenceSubmitted} Submitted</Badge>
-            <Badge className="gap-1 bg-green-600"><CheckCircle2 className="h-3 w-3" /> {pay.confirmed} Confirmed</Badge>
-            <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> {pay.rejected} Rejected</Badge>
-            {(pay.needsReview || 0) > 0 && <Badge className="gap-1 bg-orange-500"><AlertTriangle className="h-3 w-3" /> {pay.needsReview} Review</Badge>}
-          </div>
-        </CardContent>
-      </Card>
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex items-center gap-2 mb-4"><CreditCard className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Payment Report</h2></div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+          <div className="space-y-1"><span className="text-muted-foreground">Total payments</span><div className="text-xl font-bold text-foreground">{pay.total}</div></div>
+          <div className="space-y-1"><span className="text-muted-foreground">Revenue (verified)</span><div className="text-xl font-bold text-emerald-600">£{pay.totalRevenue.toLocaleString()}</div></div>
+          <div className="space-y-1"><span className="text-muted-foreground">Pending revenue</span><div className="text-xl font-bold text-amber-600">£{pay.pendingRevenue.toLocaleString()}</div></div>
+        </div>
+        <div className="flex flex-wrap gap-3 mt-4">
+          <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" /> {pay.awaitingReference} Awaiting Ref</Badge>
+          <Badge className="gap-1 bg-blue-600"><ClipboardList className="h-3 w-3" /> {pay.referenceSubmitted} Submitted</Badge>
+          <Badge className="gap-1 bg-emerald-600"><CheckCircle2 className="h-3 w-3" /> {pay.confirmed} Confirmed</Badge>
+          <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> {pay.rejected} Rejected</Badge>
+          {(pay.needsReview || 0) > 0 && <Badge className="gap-1 bg-orange-500"><AlertTriangle className="h-3 w-3" /> {pay.needsReview} Review</Badge>}
+        </div>
+      </section>
 
-      {/* ── Distribution / Allocation Report ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><BoxSelect className="h-5 w-5" /> Distribution Report</CardTitle>
-          <CardDescription>Book allocation and teacher confirmation status</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div><span className="text-muted-foreground">Total allocations:</span> <strong>{alloc.total}</strong></div>
-            <div><span className="text-muted-foreground">Awaiting confirmation:</span> <strong className="text-yellow-600">{alloc.allocated}</strong></div>
-            <div><span className="text-muted-foreground">Confirmed:</span> <strong className="text-green-600">{alloc.confirmed}</strong></div>
-            <div><span className="text-muted-foreground">Confirmation rate:</span> <strong>{alloc.confirmationRate}%</strong></div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* ── Distribution Report ── */}
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex items-center gap-2 mb-4"><BoxSelect className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Distribution Report</h2></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div><span className="text-muted-foreground">Total allocations:</span> <strong>{alloc.total}</strong></div>
+          <div><span className="text-muted-foreground">Awaiting confirmation:</span> <strong className="text-amber-600">{alloc.allocated}</strong></div>
+          <div><span className="text-muted-foreground">Confirmed:</span> <strong className="text-emerald-600">{alloc.confirmed}</strong></div>
+          <div><span className="text-muted-foreground">Confirmation rate:</span> <strong>{alloc.confirmationRate}%</strong></div>
+        </div>
+      </section>
 
       {/* ── Extra Copy Requests ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><ClipboardList className="h-5 w-5" /> Extra Copy Requests</CardTitle>
-          <CardDescription>Teacher requests for additional book copies</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-4">
-            <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" /> {ecr.pending} Pending</Badge>
-            <Badge variant="default" className="gap-1 bg-green-600"><CheckCircle2 className="h-3 w-3" /> {ecr.approved} Approved</Badge>
-            <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> {ecr.rejected} Rejected</Badge>
-          </div>
-          {Object.keys(ecr.byReason).length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold mb-2">By Reason</h4>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(ecr.byReason).map(([reason, count]) => (
-                  <Badge key={reason} variant="outline">{reason.replace(/_/g, " ")}: {count as number}</Badge>
-                ))}
-              </div>
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex items-center gap-2 mb-4"><ClipboardList className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Extra Copy Requests</h2></div>
+        <div className="flex gap-4">
+          <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" /> {ecr.pending} Pending</Badge>
+          <Badge className="gap-1 bg-emerald-600"><CheckCircle2 className="h-3 w-3" /> {ecr.approved} Approved</Badge>
+          <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> {ecr.rejected} Rejected</Badge>
+        </div>
+        {Object.keys(ecr.byReason).length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-sm font-semibold mb-2 text-foreground">By Reason</h3>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(ecr.byReason).map(([reason, count]) => (
+                <Badge key={reason} variant="outline">{reason.replace(/_/g, " ")}: {count as number}</Badge>
+              ))}
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </section>
 
-      {/* ── Class Distribution Report ── */}
+      {/* ── Class Distribution ── */}
       {cls.details.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><GraduationCap className="h-5 w-5" /> Class Distribution</CardTitle>
-            <CardDescription>Per-class student count and book distribution progress</CardDescription>
-          </CardHeader>
-          <CardContent>
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <div className="flex items-center gap-2 mb-4"><GraduationCap className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Class Distribution</h2></div>
+          <div className="rounded-xl border border-border overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Class</TableHead>
-                  <TableHead>Grade</TableHead>
-                  <TableHead className="text-right">Students</TableHead>
-                  <TableHead className="text-right">Allocations</TableHead>
-                  <TableHead className="text-right">Confirmed</TableHead>
-                  <TableHead className="text-right">Completion</TableHead>
+                  <TableHead className={th}>Class</TableHead>
+                  <TableHead className={th}>Grade</TableHead>
+                  <TableHead className={cn(th, "text-right")}>Students</TableHead>
+                  <TableHead className={cn(th, "text-right")}>Allocations</TableHead>
+                  <TableHead className={cn(th, "text-right")}>Confirmed</TableHead>
+                  <TableHead className={cn(th, "text-right")}>Completion</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -235,52 +183,38 @@ function ReportsSection() {
                     <TableCell className="text-right">{c.totalAllocations}</TableCell>
                     <TableCell className="text-right">{c.confirmedAllocations}</TableCell>
                     <TableCell className="text-right">
-                      <Badge variant={c.completionRate === 100 ? "default" : c.completionRate > 50 ? "secondary" : "outline"}>
-                        {c.completionRate}%
-                      </Badge>
+                      <Badge variant={c.completionRate === 100 ? "default" : c.completionRate > 50 ? "secondary" : "outline"}>{c.completionRate}%</Badge>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       )}
 
-      {/* ── Users Summary ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" /> Users Summary</CardTitle>
-          <CardDescription>Users by role in this school</CardDescription>
-        </CardHeader>
-        <CardContent>
+      {/* ── Users + Book Levels ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <div className="flex items-center gap-2 mb-4"><Users className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Users Summary</h2></div>
           <div className="flex flex-wrap gap-3">
             {Object.entries(report.users.byRole).map(([role, count]) => (
-              <Badge key={role} variant="outline" className="text-sm py-1 px-3">
-                {role.replace(/_/g, " ")}: {count as number}
-              </Badge>
+              <Badge key={role} variant="outline" className="text-sm py-1 px-3">{role.replace(/_/g, " ")}: {count as number}</Badge>
             ))}
             <Badge variant="secondary" className="text-sm py-1 px-3">Total: {report.users.total}</Badge>
           </div>
-        </CardContent>
-      </Card>
+        </section>
 
-      {/* ── Book Levels Summary ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Layers className="h-5 w-5" /> Book Levels</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <div className="flex items-center gap-2 mb-4"><Layers className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Book Levels</h2></div>
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div><span className="text-muted-foreground">Book levels created:</span> <strong>{bl.total}</strong></div>
             <div><span className="text-muted-foreground">Assigned to classes:</span> <strong>{bl.assignedToClasses}</strong></div>
           </div>
-        </CardContent>
-      </Card>
+        </section>
+      </div>
     </div>
   );
 }
-
-// ─── MAIN ADMIN PAGE ───────────────────────────────────────────
 
 export { ReportsSection };

@@ -120,7 +120,7 @@ function UserDetailPanel({ userId }: { userId: string }) {
       </button>
 
       {/* Header card */}
-      <Card className="border-border shadow-none">
+      <Card className="border-border shadow-none rounded-2xl">
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div className="space-y-1">
@@ -183,7 +183,7 @@ function UserDetailPanel({ userId }: { userId: string }) {
 
       {/* Linked children */}
       {isParent && (
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><Users className="w-4 h-4" /> Linked Children</CardTitle>
           </CardHeader>
@@ -212,7 +212,7 @@ function UserDetailPanel({ userId }: { userId: string }) {
 
       {/* Assigned classes (teacher) */}
       {isTeacher && (
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><GraduationCap className="w-4 h-4" /> Teacher Profile</CardTitle>
           </CardHeader>
@@ -484,6 +484,20 @@ function UsersList() {
         </Button>
       </div>
 
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: "Total Users", value: users.length, tone: "text-foreground" },
+          { label: "Active", value: users.filter((u: any) => u.status === "active").length, tone: "text-emerald-600" },
+          { label: "Suspended", value: users.filter((u: any) => u.status === "disabled").length, tone: "text-amber-600" },
+          { label: "Parents", value: users.filter((u: any) => normalizeRole(u.role) === "parent" || (u.secondaryRoles || []).includes("parent")).length, tone: "text-foreground" },
+        ].map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{k.label}</div>
+            <div className={cn("text-2xl font-bold mt-0.5", k.tone)}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative max-w-sm w-full">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -502,7 +516,7 @@ function UsersList() {
         )}
       </div>
 
-      <Card className="border-border shadow-none">
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -570,7 +584,7 @@ function UsersList() {
             )}
           </TableBody>
         </Table>
-      </Card>
+      </div>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">

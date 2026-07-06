@@ -1,41 +1,24 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
-  BookOpen, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus,
-  Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight,
-  QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
-  Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
-  XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw, Printer, ShieldAlert, ShieldOff, Ban
+  Search, X, Loader2, MessageSquare, XCircle, RefreshCw, Archive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import {
-  navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
-  normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
-} from "./shared";
+import { formatDateTime } from "./shared";
 
-// ─── COMMUNICATIONS ───────────────────────────────────────────────────────────
+// ─── COMMUNICATIONS (master-detail redesign) ────────────────────────────────
 function CommunicationsSection() {
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
 
-  // ── Thread list query
   const { data: threads = [], isLoading: threadsLoading } = useQuery<any[]>({
     queryKey: ["/api/admin/communications", statusFilter],
     queryFn: async () => {
@@ -46,7 +29,6 @@ function CommunicationsSection() {
     refetchInterval: 15000,
   });
 
-  // ── Thread detail query
   const { data: threadDetail, isLoading: detailLoading } = useQuery<any>({
     queryKey: ["/api/admin/communications", selectedThreadId],
     queryFn: async () => {
@@ -57,7 +39,6 @@ function CommunicationsSection() {
     refetchInterval: selectedThreadId ? 8000 : false,
   });
 
-  // ── Status mutation
   const statusMutation = useMutation({
     mutationFn: async ({ threadId, status, reason }: { threadId: string; status: string; reason?: string }) => {
       const res = await apiRequest("PATCH", `/api/admin/communications/${threadId}/status`, { status, reason });
@@ -72,7 +53,6 @@ function CommunicationsSection() {
     },
   });
 
-  // ── Filter threads by search
   const filteredThreads = threads.filter((t: any) => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
@@ -84,198 +64,148 @@ function CommunicationsSection() {
     );
   });
 
-  const statusBadgeVariant = (status: string) => {
-    switch (status) {
-      case "open": return "default";
-      case "closed": return "secondary";
-      case "archived": return "outline";
-      default: return "default";
-    }
+  const statusTone = (status: string) =>
+    status === "open" ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+    : status === "closed" ? "bg-muted text-muted-foreground border-border"
+    : "bg-amber-100 text-amber-700 border-amber-200";
+
+  const counts = {
+    open: threads.filter((t: any) => t.status === "open").length,
+    closed: threads.filter((t: any) => t.status === "closed").length,
+    archived: threads.filter((t: any) => t.status === "archived").length,
   };
 
-  // ── Detail view
-  if (selectedThreadId) {
-    const thread = threadDetail?.thread;
-    const messages = threadDetail?.messages || [];
+  const thread = threadDetail?.thread;
+  const messages = threadDetail?.messages || [];
 
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setSelectedThreadId(null)}>
-            <ArrowLeft className="h-4 w-4 mr-1" /> Back to threads
-          </Button>
-        </div>
-
-        {detailLoading ? (
-          <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
-        ) : thread ? (
-          <>
-            {/* Thread metadata */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{thread.subject || "No Subject"}</CardTitle>
-                    <CardDescription className="mt-1">Thread #{thread.id}</CardDescription>
-                  </div>
-                  <Badge variant={statusBadgeVariant(thread.status)}>{thread.status}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div><span className="text-muted-foreground">Parent:</span> <span className="font-medium">{thread.parentName || "—"}</span></div>
-                  <div><span className="text-muted-foreground">Teacher:</span> <span className="font-medium">{thread.teacherName || "—"}</span></div>
-                  <div><span className="text-muted-foreground">Student:</span> <span className="font-medium">{thread.studentName || "—"}</span></div>
-                  <div><span className="text-muted-foreground">Created:</span> <span className="font-medium">{formatDateTime(thread.createdAt)}</span></div>
-                </div>
-
-                {/* Admin actions */}
-                <div className="flex gap-2 mt-4 pt-4 border-t">
-                  {thread.status !== "closed" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={statusMutation.isPending}
-                      onClick={() => statusMutation.mutate({ threadId: thread.id, status: "closed" })}
-                    >
-                      <XCircle className="h-4 w-4 mr-1" /> Close Thread
-                    </Button>
-                  )}
-                  {thread.status === "closed" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={statusMutation.isPending}
-                      onClick={() => statusMutation.mutate({ threadId: thread.id, status: "open" })}
-                    >
-                      <RefreshCw className="h-4 w-4 mr-1" /> Reopen Thread
-                    </Button>
-                  )}
-                  {thread.status !== "archived" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={statusMutation.isPending}
-                      onClick={() => statusMutation.mutate({ threadId: thread.id, status: "archived" })}
-                    >
-                      <Archive className="h-4 w-4 mr-1" /> Archive Thread
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Messages */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Messages ({messages.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {messages.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">No messages in this thread.</p>
-                )}
-                {messages.map((msg: any) => (
-                  <div key={msg.id} className="rounded-lg border p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-sm">{msg.senderName || "Unknown"}</span>
-                      <span className="text-xs text-muted-foreground">{formatDateTime(msg.createdAt)}</span>
-                    </div>
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </>
-        ) : (
-          <Card><CardContent className="py-8 text-center text-muted-foreground">Thread not found.</CardContent></Card>
-        )}
-      </div>
-    );
-  }
-
-  // ── List view
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 max-w-[1400px]">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <MessageSquare className="h-6 w-6" /> Communication Oversight
-        </h2>
+        </h1>
         <p className="text-muted-foreground mt-1">Monitor and manage all parent-teacher conversations across the school.</p>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by name or subject..."
-            className="pl-9"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="open">Open</SelectItem>
-            <SelectItem value="closed">Closed</SelectItem>
-            <SelectItem value="archived">Archived</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Open", value: counts.open, tone: "text-emerald-600" },
+          { label: "Closed", value: counts.closed, tone: "text-foreground" },
+          { label: "Archived", value: counts.archived, tone: "text-amber-600" },
+        ].map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{k.label}</div>
+            <div className={cn("text-2xl font-bold mt-0.5", k.tone)}>{k.value}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Thread table */}
-      <Card>
-        <CardContent className="p-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
+        {/* Thread list */}
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+            <div className="relative flex-1 max-w-xs"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Search name or subject…" className="pl-8" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
+                <SelectItem value="archived">Archived</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {threadsLoading ? (
-            <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
+            <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          ) : filteredThreads.length === 0 ? (
+            <div className="py-16 text-center text-sm text-muted-foreground">{searchQuery ? "No threads match your search." : "No communication threads found."}</div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Subject</TableHead>
-                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Parent</TableHead>
-                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Teacher</TableHead>
-                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Student</TableHead>
-                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
-                  <TableHead className="text-center">Messages</TableHead>
-                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Last Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredThreads.map((t: any) => (
-                  <TableRow
-                    key={t.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => setSelectedThreadId(t.id)}
-                  >
-                    <TableCell className="font-medium max-w-[200px] truncate">{t.subject || "No Subject"}</TableCell>
-                    <TableCell>{t.parentName || "—"}</TableCell>
-                    <TableCell>{t.teacherName || "—"}</TableCell>
-                    <TableCell>{t.studentName || "—"}</TableCell>
-                    <TableCell><Badge variant={statusBadgeVariant(t.status)}>{t.status}</Badge></TableCell>
-                    <TableCell className="text-center">{t.totalMessages ?? 0}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{formatDateTime(t.updatedAt)}</TableCell>
-                  </TableRow>
-                ))}
-                {filteredThreads.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                      {searchQuery ? "No threads match your search." : "No communication threads found."}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+            <div className="divide-y divide-border">
+              {filteredThreads.map((t: any) => (
+                <button key={t.id} onClick={() => setSelectedThreadId(t.id)} className={cn("w-full text-left px-5 py-3 hover:bg-muted/20", selectedThreadId === t.id && "bg-primary/5")}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-foreground truncate">{t.subject || "No Subject"}</span>
+                    <Badge variant="outline" className={cn("shrink-0", statusTone(t.status))}>{t.status}</Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+                    <span>{t.parentName || "—"} ↔ {t.teacherName || "—"}</span>
+                    <span>·</span>
+                    <span>{t.studentName || "—"}</span>
+                    <span>·</span>
+                    <span>{t.totalMessages ?? 0} msg</span>
+                    <span>·</span>
+                    <span>{formatDateTime(t.updatedAt)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+
+        {/* Detail panel */}
+        <div className="rounded-2xl border border-border bg-card p-5 h-fit lg:sticky lg:top-4">
+          {!selectedThreadId ? (
+            <div className="text-center py-12"><MessageSquare className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" /><p className="text-sm text-muted-foreground">Select a thread to read messages and manage it.</p></div>
+          ) : detailLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          ) : !thread ? (
+            <div className="text-center py-12 text-sm text-muted-foreground">Thread not found.</div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between">
+                <div className="min-w-0">
+                  <div className="font-semibold text-foreground">{thread.subject || "No Subject"}</div>
+                  <Badge variant="outline" className={cn("mt-1", statusTone(thread.status))}>{thread.status}</Badge>
+                </div>
+                <button onClick={() => setSelectedThreadId(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Parent</div><div className="text-foreground">{thread.parentName || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Teacher</div><div className="text-foreground">{thread.teacherName || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Student</div><div className="text-foreground">{thread.studentName || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Created</div><div className="text-foreground text-xs">{formatDateTime(thread.createdAt)}</div></div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1 border-t border-border pt-3">
+                {thread.status !== "closed" && (
+                  <Button size="sm" variant="outline" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ threadId: thread.id, status: "closed" })}>
+                    <XCircle className="h-4 w-4 mr-1" /> Close
+                  </Button>
+                )}
+                {thread.status === "closed" && (
+                  <Button size="sm" variant="outline" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ threadId: thread.id, status: "open" })}>
+                    <RefreshCw className="h-4 w-4 mr-1" /> Reopen
+                  </Button>
+                )}
+                {thread.status !== "archived" && (
+                  <Button size="sm" variant="outline" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ threadId: thread.id, status: "archived" })}>
+                    <Archive className="h-4 w-4 mr-1" /> Archive
+                  </Button>
+                )}
+              </div>
+
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground mb-2">Messages ({messages.length})</div>
+                <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                  {messages.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No messages in this thread.</p>}
+                  {messages.map((msg: any) => (
+                    <div key={msg.id} className="rounded-lg border border-border bg-muted/20 p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium text-xs text-foreground">{msg.senderName || "Unknown"}</span>
+                        <span className="text-[10px] text-muted-foreground">{formatDateTime(msg.createdAt)}</span>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap text-foreground">{msg.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
-
 
 export { CommunicationsSection };

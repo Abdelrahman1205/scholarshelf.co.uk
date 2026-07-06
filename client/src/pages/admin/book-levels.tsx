@@ -74,11 +74,11 @@ function BookLevelsSection() {
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
+    <div className="space-y-5 max-w-[1400px]">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Book Levels</h1>
-          <p className="text-muted-foreground text-sm mt-1">Create book levels and assign them to classes.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Book Levels</h1>
+          <p className="text-muted-foreground mt-1">Create book levels and assign them to classes.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setAssignOpen(true)}><GraduationCap className="w-4 h-4 mr-2" /> Assign to Class</Button>
@@ -86,9 +86,22 @@ function BookLevelsSection() {
         </div>
       </div>
 
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Book Levels", value: levels.length },
+          { label: "Class Assignments", value: classBookLevels.length },
+          { label: "Books Catalogued", value: books.length },
+        ].map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{k.label}</div>
+            <div className="text-2xl font-bold mt-0.5 text-foreground">{k.value}</div>
+          </div>
+        ))}
+      </div>
+
       {/* Assigned classes */}
       {classBookLevels.length > 0 && (
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardHeader className="pb-2"><CardTitle className="text-sm font-heading">Class Assignments</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-2">
@@ -175,7 +188,7 @@ function LevelCard({ level, expanded, onToggle, books, addItemForm, setAddItemFo
   });
 
   return (
-    <Card className="border-border shadow-none">
+    <Card className="border-border shadow-none rounded-2xl">
       <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors" onClick={onToggle}>
         <div className="flex items-center justify-between">
           <div>
