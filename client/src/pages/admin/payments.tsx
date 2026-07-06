@@ -117,7 +117,7 @@ function PaymentsSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Payment Review</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Payment Review</h1>
           <p className="text-muted-foreground text-sm mt-1">
             Review parent payment references submitted via external payment apps.
             {actionableCount > 0 && <span className="ml-2 text-blue-600 font-medium">{actionableCount} awaiting review</span>}

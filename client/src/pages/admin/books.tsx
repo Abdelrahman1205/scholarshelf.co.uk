@@ -160,11 +160,11 @@ function BooksSection() {
   );
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+    <div className="space-y-5 max-w-[1400px]">
+      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-end">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Books</h1>
-          <p className="text-muted-foreground text-sm mt-1">Manage your book catalogue and stock levels.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Book Catalogue</h1>
+          <p className="text-muted-foreground mt-1">Manage titles, stock levels, and printable barcodes.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => { resetForm(); startScanner(); }}><ScanBarcode className="w-4 h-4 mr-2" /> Scan</Button>
@@ -200,18 +200,18 @@ function BooksSection() {
         </Alert>
       )}
 
-      <Card className="border-border shadow-none">
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
         <Table>
-          <TableHeader className="bg-muted/30">
+          <TableHeader>
             <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Author</TableHead>
-              <TableHead>Book Code</TableHead>
-              <TableHead>ISBN</TableHead>
-              <TableHead>Price</TableHead>
-              <TableHead>Stock</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Title</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Author</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Book Code</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">ISBN</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Price</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Stock</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -248,11 +248,11 @@ function BooksSection() {
               );
             })}
             {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">{search ? "No matching books" : "No books yet. Add your first book above."}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-10">{search ? "No matching books" : "No books yet. Add your first book above."}</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-      </Card>
+      </div>
 
       {/* Scanner Dialog */}
       <Dialog open={scannerOpen} onOpenChange={(open) => { if (!open) stopScanner(); }}>

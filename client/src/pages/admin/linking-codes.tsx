@@ -48,7 +48,7 @@ function LinkingCodesSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Parent Invites</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Parent Invites</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Invites are sent automatically when a student is added with a parent email. Use <strong>Resend</strong> if a parent lost or didn't receive their email.
         </p>

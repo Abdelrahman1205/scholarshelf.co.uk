@@ -45,7 +45,7 @@ function AllocationsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Allocations</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Allocations</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Track book allocations and confirm receipt. Use <strong>Confirm Receipt</strong> for any student — including a teacher's own child.
         </p>
@@ -124,7 +124,7 @@ function ExtraRequestsSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Extra Copy Requests</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Extra Copy Requests</h1>
         <p className="text-muted-foreground text-sm mt-1">Review teacher requests for additional book copies.</p>
       </div>
 

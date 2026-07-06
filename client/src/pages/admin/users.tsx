@@ -476,7 +476,7 @@ function UsersList() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Users</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Users</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage admin, teacher, and parent accounts.</p>
         </div>
         <Button data-testid="button-add-user" onClick={() => { resetForm(); setAddOpen(true); }}>

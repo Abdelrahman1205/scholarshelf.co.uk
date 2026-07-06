@@ -121,7 +121,7 @@ function SetupSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Continue School Setup</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Continue School Setup</h1>
           <p className="text-muted-foreground text-sm mt-1">Finish the remaining onboarding steps for your school tenant.</p>
         </div>
         {canGoDashboard && (

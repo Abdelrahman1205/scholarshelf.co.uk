@@ -93,7 +93,7 @@ function ParentsSection() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Parents</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Parents</h1>
           <p className="text-muted-foreground text-sm mt-1">Monitor parent accounts, child links, and payment readiness.</p>
         </div>
         <div className="flex gap-2">

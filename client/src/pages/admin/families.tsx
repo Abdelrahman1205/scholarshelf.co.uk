@@ -90,7 +90,7 @@ function FamiliesSection() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Families</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Families</h1>
           <p className="text-muted-foreground text-sm mt-1">Group siblings and generate a single family link code for parents.</p>
         </div>
         <Button onClick={() => { setName(""); setAddOpen(true); }}>
