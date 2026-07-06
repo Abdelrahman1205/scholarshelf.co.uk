@@ -121,6 +121,23 @@ export function registerAuthRoutes(app: Express): void {
         }
       }
 
+      // ── MFA gate ──────────────────────────────────────────────
+      // Password (and school code) are correct. If the account has MFA enabled,
+      // do NOT complete the login — issue a short-lived partial-auth marker and
+      // require the TOTP / recovery-code step at /api/auth/mfa/verify. The marker
+      // alone grants no access (requireAuth checks userId, which stays unset).
+      if (user.mfaEnabled) {
+        return req.session.regenerate((err) => {
+          if (err) {
+            console.error("Session regeneration failed:", err);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          req.session.pendingMfa = { userId: user.id, expiresAt: Date.now() + 5 * 60 * 1000 };
+          auditLog(req, "login_mfa_challenge", `user:${user.id}`).catch(() => {});
+          res.json({ mfaRequired: true });
+        });
+      }
+
       req.session.regenerate((err) => {
         if (err) {
           console.error("Session regeneration failed:", err);

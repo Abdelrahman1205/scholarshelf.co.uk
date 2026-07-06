@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { BookOpen, Eye, EyeOff } from "lucide-react";
+import { BookOpen, Eye, EyeOff, ShieldCheck, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,12 @@ export default function LoginPage() {
   const [schoolCode, setSchoolCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [branding, setBranding] = useState<any>(null);
-  const { login, isAuthenticated, user, isLoggingIn, loginError } = useAuth();
+  // MFA challenge state
+  const [mfaStage, setMfaStage] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const { login, isAuthenticated, user, isLoggingIn, loginError, verifyMfa, isVerifyingMfa, verifyMfaError } = useAuth();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
@@ -54,9 +59,10 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const loggedInUser = await login({ username, password, schoolCode: schoolCode.trim() || undefined });
+      const result = await login({ username, password, schoolCode: schoolCode.trim() || undefined });
       window.__schoolBlockedMessage = undefined;
-      setLocation(getRoleRoute(loggedInUser.role));
+      if (result?.mfaRequired) { setMfaStage(true); setMfaCode(""); setRecoveryCode(""); setUseRecovery(false); return; }
+      setLocation(getRoleRoute(result.role));
     } catch {}
   }
 
@@ -65,11 +71,27 @@ export default function LoginPage() {
     setPassword(demoPassword);
     setSchoolCode(demoSchoolCode || "");
     try {
-      const loggedInUser = await login({ username: demoUsername, password: demoPassword, schoolCode: demoSchoolCode });
+      const result = await login({ username: demoUsername, password: demoPassword, schoolCode: demoSchoolCode });
       window.__schoolBlockedMessage = undefined;
-      setLocation(getRoleRoute(loggedInUser.role));
+      if (result?.mfaRequired) { setMfaStage(true); return; }
+      setLocation(getRoleRoute(result.role));
     } catch {}
   }
+
+  async function handleMfaSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      const payload = useRecovery ? { recoveryCode: recoveryCode.trim() } : { token: mfaCode.trim() };
+      const result = await verifyMfa(payload);
+      setLocation(getRoleRoute(result.role));
+    } catch {}
+  }
+
+  const mfaErrorMessage = verifyMfaError
+    ? verifyMfaError.message.includes("429")
+      ? "Too many attempts. Please sign in again."
+      : "Invalid code. Please try again."
+    : null;
 
   const errorMessage = loginError
     ? loginError.message.includes("401")
@@ -80,6 +102,83 @@ export default function LoginPage() {
         ? "Too many attempts. Please wait a moment."
         : "Sign in failed. Please try again."
     : null;
+
+  if (mfaStage) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-background">
+        <div className="w-full max-w-[360px]">
+          <div className="flex items-center gap-3 mb-7">
+            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-foreground tracking-tight">Two-factor authentication</h2>
+              <p className="text-xs text-muted-foreground">{useRecovery ? "Enter a recovery code" : "Enter the 6-digit code from your authenticator app"}</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleMfaSubmit} className="space-y-4">
+            {!useRecovery ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="mfa-code" className="text-sm font-medium">Authentication code</Label>
+                <Input
+                  id="mfa-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  required
+                  autoFocus
+                  className="h-11 bg-card text-center text-lg font-mono tracking-[0.4em]"
+                />
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="mfa-recovery" className="text-sm font-medium">Recovery code</Label>
+                <Input
+                  id="mfa-recovery"
+                  placeholder="xxxx-xxxx-xxxx-xxxx"
+                  value={recoveryCode}
+                  onChange={(e) => setRecoveryCode(e.target.value)}
+                  required
+                  autoFocus
+                  className="h-11 bg-card font-mono"
+                />
+              </div>
+            )}
+
+            {mfaErrorMessage && (
+              <p className="text-sm text-destructive bg-destructive/8 border border-destructive/15 px-3 py-2.5 rounded-md" role="alert">
+                {mfaErrorMessage}
+              </p>
+            )}
+
+            <Button type="submit" className="w-full h-10 font-medium" disabled={isVerifyingMfa}>
+              {isVerifyingMfa ? "Verifying…" : "Verify"}
+            </Button>
+          </form>
+
+          <div className="mt-4 flex items-center justify-between">
+            <button
+              type="button"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+              onClick={() => { setMfaStage(false); setMfaCode(""); setRecoveryCode(""); }}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+            </button>
+            <button
+              type="button"
+              className="text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+              onClick={() => { setUseRecovery(!useRecovery); setMfaCode(""); setRecoveryCode(""); }}
+            >
+              {useRecovery ? "Use authenticator app" : "Use a recovery code"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex">

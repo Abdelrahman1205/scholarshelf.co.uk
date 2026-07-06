@@ -39,6 +39,17 @@ declare module "express-session" {
     /** Support mode: owner enters a school context for troubleshooting */
     supportSchoolId: string | null;
     supportSchoolName: string | null;
+    /**
+     * Partial-auth marker set after a correct password when the account has MFA
+     * enabled. The user is NOT authenticated (no userId) until they pass the
+     * TOTP/recovery challenge at /api/auth/mfa/verify.
+     */
+    pendingMfa?: {
+      userId: string;
+      expiresAt: number;
+    } | null;
+    /** Secret generated during MFA enrolment, held server-side until the user confirms a code. */
+    pendingMfaSetupSecret?: string | null;
   }
 }
 

@@ -53,9 +53,24 @@ export function useAuth() {
       return res.json();
     },
     onSuccess: (data) => {
+      // If the account has MFA enabled, the server returns { mfaRequired: true }
+      // instead of a user — do NOT populate the auth cache; the caller drives the
+      // TOTP challenge and completes login via verifyMfa.
+      if (data?.mfaRequired) return;
       // Set cache directly so AuthGuard sees the user immediately on navigate.
       // invalidateQueries would blank the cache first, causing AuthGuard to
       // redirect back to /login before the refetch completes.
+      queryClient.setQueryData(["/api/auth/me"], data);
+    },
+  });
+
+  // Completes an MFA-challenged login with a TOTP token or a recovery code.
+  const verifyMfaMutation = useMutation({
+    mutationFn: async (payload: { token?: string; recoveryCode?: string }) => {
+      const res = await apiRequest("POST", "/api/auth/mfa/verify", payload);
+      return res.json();
+    },
+    onSuccess: (data) => {
       queryClient.setQueryData(["/api/auth/me"], data);
     },
   });
@@ -148,6 +163,9 @@ export function useAuth() {
     logout: logoutMutation.mutateAsync,
     loginError: loginMutation.error,
     isLoggingIn: loginMutation.isPending,
+    verifyMfa: verifyMfaMutation.mutateAsync,
+    isVerifyingMfa: verifyMfaMutation.isPending,
+    verifyMfaError: verifyMfaMutation.error,
     signUpParent: signUpParentMutation.mutateAsync,
     isSigningUp: signUpParentMutation.isPending,
     signUpError: signUpParentMutation.error,

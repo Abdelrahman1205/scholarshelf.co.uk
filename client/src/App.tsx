@@ -19,6 +19,7 @@ import RegisterPage from "@/pages/register";
 import AcceptInvitePage from "@/pages/accept-invite";
 import ForgotPasswordPage from "@/pages/forgot-password";
 import ResetPasswordPage from "@/pages/reset-password";
+import SecurityPage from "@/pages/security";
 
 function AuthGuard({ children, allowedRoles }: { children: React.ReactNode; allowedRoles: string[] }) {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -132,6 +133,13 @@ function Router() {
             </Layout>
           </AuthGuard>
         )}
+      </Route>
+
+      {/* Account security (2FA) — any authenticated user */}
+      <Route path="/security">
+        <AuthGuard allowedRoles={["admin", "school_admin", "owner", "platform_admin", "it_personnel", "teacher", "parent", "finance"]}>
+          <SecurityPage />
+        </AuthGuard>
       </Route>
 
       <Route component={NotFound} />

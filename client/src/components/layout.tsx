@@ -5,7 +5,7 @@ import {
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, X,
   ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell, Globe, Activity,
-  Image as ImageIcon
+  Image as ImageIcon, ShieldCheck
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -435,6 +435,15 @@ export default function Layout({ children }: LayoutProps) {
               {inSupportMode ? "Support" : activeContext}
             </div>
           </div>
+          <button
+            onClick={() => navigateTo("/security")}
+            data-testid="button-security"
+            className="h-7 w-7 flex items-center justify-center rounded text-sidebar-foreground/40 hover:text-sidebar-primary hover:bg-sidebar-primary/10 transition-colors flex-shrink-0"
+            title="Security & 2FA"
+            aria-label="Security and two-factor authentication"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={handleLogout}
             data-testid="button-logout"

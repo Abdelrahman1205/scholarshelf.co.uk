@@ -269,11 +269,17 @@ export const users = pgTable("users", {
   schoolId: varchar("school_id", { length: 36 }),
   emailVerifiedAt: timestamp("email_verified_at"),
   lastLoginAt: timestamp("last_login_at"),
+  // Multi-factor authentication (TOTP). Secret + recovery-code hashes are only
+  // populated once a user completes enrolment; never exposed to the client.
+  mfaEnabled: boolean("mfa_enabled").default(false).notNull(),
+  mfaSecret: text("mfa_secret"),
+  mfaRecoveryCodes: text("mfa_recovery_codes"), // JSON array of SHA-256 recovery-code hashes
+  mfaEnrolledAt: timestamp("mfa_enrolled_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, emailVerifiedAt: true, lastLoginAt: true, createdAt: true, updatedAt: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, emailVerifiedAt: true, lastLoginAt: true, createdAt: true, updatedAt: true, mfaEnabled: true, mfaSecret: true, mfaRecoveryCodes: true, mfaEnrolledAt: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
