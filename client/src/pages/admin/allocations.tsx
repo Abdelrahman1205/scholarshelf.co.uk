@@ -42,16 +42,37 @@ function AllocationsSection() {
   const pendingAllocations = allocations.filter((a: any) => !["received"].includes(a.status));
   const receivedAllocations = allocations.filter((a: any) => a.status === "received");
 
+  const counts = {
+    total: allocations.length,
+    received: allocations.filter((a: any) => a.status === "received").length,
+    pending: allocations.filter((a: any) => a.status !== "received" && a.status !== "absent").length,
+    absent: allocations.filter((a: any) => a.status === "absent").length,
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 max-w-[1400px]">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Allocations</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Track book allocations and confirm receipt. Use <strong>Confirm Receipt</strong> for any student — including a teacher's own child.
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Distribution &amp; Allocations</h1>
+        <p className="text-muted-foreground mt-1">
+          Track book allocations and confirm receipt for any student — including a teacher's own child.
         </p>
       </div>
 
-      <Card className="border-border shadow-none">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: "Total", value: counts.total },
+          { label: "Received", value: counts.received, tone: "text-emerald-600" },
+          { label: "Pending", value: counts.pending, tone: "text-amber-600" },
+          { label: "Absent", value: counts.absent },
+        ].map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{k.label}</div>
+            <div className={cn("text-2xl font-bold mt-0.5", (k as any).tone || "text-foreground")}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -87,11 +108,11 @@ function AllocationsSection() {
               </TableRow>
             ))}
             {allocations.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No allocations yet. Confirm a payment to create allocations.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-10">No allocations yet. Confirm a payment to create allocations.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-      </Card>
+      </div>
     </div>
   );
 }
@@ -122,13 +143,13 @@ function ExtraRequestsSection() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 max-w-[1400px]">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Extra Copy Requests</h1>
-        <p className="text-muted-foreground text-sm mt-1">Review teacher requests for additional book copies.</p>
+        <p className="text-muted-foreground mt-1">Review teacher requests for additional book copies.</p>
       </div>
 
-      <Card className="border-border shadow-none">
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -165,11 +186,11 @@ function ExtraRequestsSection() {
               </TableRow>
             ))}
             {requests.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No extra copy requests.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">No extra copy requests.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-      </Card>
+      </div>
     </div>
   );
 }
