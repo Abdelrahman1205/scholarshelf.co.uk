@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -142,19 +143,53 @@ function StudentsSection() {
   return (
     <div className="space-y-5 max-w-[1400px]">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Student Management</h1>
-          <p className="text-muted-foreground mt-1">Manage enrolments, assign classes, and track parent connections.</p>
+      <div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+          <span>School Data</span>
+          <MaterialSymbol name="chevron_right" className="text-sm" />
+          <span className="text-foreground font-medium">Students</span>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setImportStep("input"); setCsvText(""); setImportPreview(null); setImportOpen(true); }}>
-            <Upload className="w-4 h-4 mr-2" /> Import CSV/XLSX
-          </Button>
-          <Button onClick={() => { setForm({ name: "", classId: "", parentEmail: "" }); setAddOpen(true); }}>
-            <Plus className="w-4 h-4 mr-2" /> Add Student
-          </Button>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">Student Management</h1>
+            <p className="text-muted-foreground mt-1">Manage enrolments, assign classes, and track parent connections.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => { setImportStep("input"); setCsvText(""); setImportPreview(null); setImportOpen(true); }}>
+              <MaterialSymbol name="upload_file" className="text-base mr-2" /> Import CSV
+            </Button>
+            <Button onClick={() => { setForm({ name: "", classId: "", parentEmail: "" }); setAddOpen(true); }}>
+              <MaterialSymbol name="person_add" className="text-base mr-2" /> Add Student
+            </Button>
+          </div>
         </div>
+      </div>
+
+      {/* Roster stats strip — design: Active Roster / Unassigned / View Archive */}
+      <div className="rounded-xl border border-border bg-card px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-bold text-foreground">{activeStudents.length.toLocaleString()}</span>
+          <span className="text-xs text-muted-foreground">Active Roster</span>
+        </div>
+        <div className="w-px h-6 bg-border hidden sm:block" />
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-bold text-foreground">{activeStudents.filter((s: any) => !s.classId).length}</span>
+          <span className="text-xs text-muted-foreground">Unassigned</span>
+        </div>
+        <div className="w-px h-6 bg-border hidden sm:block" />
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-bold text-foreground">{Object.keys(overrideMap).length}</span>
+          <span className="text-xs text-muted-foreground">Bundle Overrides</span>
+        </div>
+        <button
+          onClick={() => setShowArchived(!showArchived)}
+          className={cn(
+            "ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors",
+            showArchived ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-surface-container-low",
+          )}
+        >
+          <MaterialSymbol name="archive" className="text-sm" /> {showArchived ? `Viewing Archive (${archivedStudents.length})` : `View Archive (${archivedStudents.length})`}
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_320px] gap-4">
@@ -244,17 +279,29 @@ function StudentsSection() {
                 <button onClick={() => setDetailStudent(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
               </div>
 
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Book Level</div>
-                <div className="rounded-lg border border-border px-3 py-2.5 flex items-center justify-between">
-                  <span className="text-sm text-foreground">
-                    {detailLevel ? bookLevels.find((l: any) => l.id === detailLevel.bookLevelId)?.name || "Override set" : "Class default"}
+              {/* Bundle Override — design: dynamic_form panel */}
+              <div className="rounded-lg border border-border overflow-hidden">
+                <div className="px-3 py-2.5 bg-surface-container-low border-b border-border flex items-center justify-between">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                    <MaterialSymbol name="dynamic_form" className="text-sm" /> Bundle Override
                   </span>
-                  {detailLevel && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">Override</span>}
+                  {detailLevel && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-error-container text-on-error-container">Manual Override Active</span>
+                  )}
                 </div>
-                <button onClick={() => openOverride(detailStudent)} className="text-xs text-primary hover:underline mt-1.5 inline-flex items-center gap-1">
-                  <Layers className="w-3 h-3" /> Set book level override
-                </button>
+                <div className="px-3 py-2.5 space-y-2">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground">Assigned Bundle</div>
+                    <div className="text-sm text-foreground font-medium mt-0.5">
+                      {detailLevel
+                        ? bookLevels.find((l: any) => l.id === detailLevel.bookLevelId)?.name || "Override set"
+                        : "Class default"}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" className="w-full justify-center" onClick={() => openOverride(detailStudent)}>
+                    <MaterialSymbol name="edit" className="text-base mr-1.5" /> Update Assignment
+                  </Button>
+                </div>
               </div>
 
               <div className="flex flex-col gap-2 pt-1">
@@ -342,15 +389,21 @@ function StudentsSection() {
       <Dialog open={overrideOpen} onOpenChange={setOverrideOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Book level — {overrideStudent?.name}</DialogTitle>
-            <DialogDescription>Override the class default with a specific book level for this student.</DialogDescription>
+            <DialogTitle className="flex items-center gap-2"><MaterialSymbol name="dynamic_form" className="text-xl text-on-secondary-container" /> Bundle Override — {overrideStudent?.name}</DialogTitle>
+            <DialogDescription>Override the class default with a specific target curriculum bundle for this student.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-2">
-            <Label>Book level</Label>
+            <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Target Curriculum Level</Label>
             <Select value={overrideLevelId} onValueChange={setOverrideLevelId}>
-              <SelectTrigger><SelectValue placeholder="Select a level…" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select a bundle…" /></SelectTrigger>
               <SelectContent>{bookLevels.map((l: any) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
             </Select>
+            {overrideStudent && overrideMap[overrideStudent.id] && (
+              <div className="rounded-lg bg-secondary-container/40 border border-secondary-container p-2.5 flex gap-2 text-xs text-on-secondary-container mt-1">
+                <MaterialSymbol name="info" className="text-base shrink-0" />
+                <span>A manual override is currently active for this student. Clearing it reverts to the class default bundle.</span>
+              </div>
+            )}
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
             {overrideStudent && overrideMap[overrideStudent.id] && (
@@ -411,11 +464,19 @@ function StudentsSection() {
                     e.target.value = "";
                   }}
                 />
-                <Button variant="outline" className="w-full" type="button" onClick={() => fileInputRef.current?.click()}>
-                  <Upload className="w-4 h-4 mr-2" /> Choose CSV / XLSX file
-                </Button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full rounded-xl border-2 border-dashed border-border bg-muted/20 hover:bg-muted/40 hover:border-primary/40 transition-colors py-8 flex flex-col items-center justify-center gap-2 text-center"
+                >
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <div className="text-sm font-medium text-foreground">Click to upload a CSV or XLSX file</div>
+                  <div className="text-xs text-muted-foreground">Include a <span className="font-mono">parent_email</span> column to auto-send invites</div>
+                </button>
               </div>
-              <div className="text-center text-xs text-muted-foreground">or paste below</div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border" />or paste rows below<div className="h-px flex-1 bg-border" /></div>
               <Textarea rows={6} value={csvText} onChange={(e) => setCsvText(e.target.value)} placeholder="name,class,parent_email&#10;Amelia Carter,Year 7,parent@example.com" className="font-mono text-xs" />
             </div>
           ) : (
@@ -426,8 +487,13 @@ function StudentsSection() {
                   {importPreview.rows.some((r: any) => !r.valid) && <span className="text-amber-700"><AlertTriangle className="w-4 h-4 inline mr-1" />{importPreview.rows.filter((r: any) => !r.valid).length} with issues</span>}
                 </div>
               )}
+              <div className="rounded-xl border border-border overflow-hidden">
               <Table>
-                <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Class</TableHead><TableHead>Parent email</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Name</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Class</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Parent email</TableHead>
+                </TableRow></TableHeader>
                 <TableBody>
                   {importPreview?.rows.map((row: any, i: number) => (
                     <TableRow key={i} className={row.valid ? "" : "bg-amber-50"}>
@@ -438,6 +504,7 @@ function StudentsSection() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </div>
           )}
           <DialogFooter>

@@ -1,9 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import {
-  Search, Plus, ScanBarcode, X, Loader2, Package, Pencil, Trash2,
-  Printer, BookOpen, AlertTriangle, QrCode,
-} from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -18,13 +16,23 @@ import { cn } from "@/lib/utils";
 import { BarcodeDisplay } from "./students";
 import { Html5Qrcode } from "html5-qrcode";
 
-// ─── BOOKS (master-detail rebuild) ──────────────────────────────────────────
+// ─── BOOKS — Global Book Inventory (ScholarShelf design) ────────────────────
+
+type StockFilter = "all" | "in" | "low" | "out";
+
+function stockState(b: any): StockFilter {
+  const qty = b.stockQuantity || 0;
+  if (qty <= 0) return "out";
+  if (qty <= (b.lowStockThreshold || 10)) return "low";
+  return "in";
+}
+
 function BooksSection() {
   const { toast } = useToast();
   const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [lowOnly, setLowOnly] = useState(false);
+  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -91,23 +99,39 @@ function BooksSection() {
     win.document.close();
   }
 
+  function exportCsv() {
+    const rows = [["Title", "Author", "ISBN", "Book Code", "Price", "Stock", "Low Stock Threshold", "Reorder Qty", "Active"]];
+    filtered.forEach((b: any) => rows.push([b.title, b.author || "", b.isbn || "", b.bookCode || "", b.price || "0", String(b.stockQuantity || 0), String(b.lowStockThreshold || 10), String(b.reorderQuantity || 50), b.isActive ? "yes" : "no"]));
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = "inventory.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const createMutation = useMutation({ mutationFn: (data: any) => apiRequest("POST", "/api/books", data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setAddOpen(false); resetForm(); toast({ title: "Book added" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
   const updateMutation = useMutation({ mutationFn: (data: any) => apiRequest("PATCH", `/api/books/${selectedBook?.id}`, data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setEditOpen(false); toast({ title: "Book updated" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
   const deleteMutation = useMutation({ mutationFn: () => apiRequest("DELETE", `/api/books/${selectedBook?.id}`), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setDeleteOpen(false); setDetailBook(null); toast({ title: "Book deleted" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
   const stockMutation = useMutation({ mutationFn: (data: any) => apiRequest("POST", `/api/books/${selectedBook?.id}/stock`, data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setStockOpen(false); toast({ title: "Stock updated" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
 
   function resetForm() { setForm({ title: "", author: "", isbn: "", price: "", description: "", isActive: true, stockQuantity: 0, lowStockThreshold: 10, reorderQuantity: 50 }); }
-  const isLow = (b: any) => (b.stockQuantity || 0) <= (b.lowStockThreshold || 10);
+  const isLow = (b: any) => stockState(b) !== "in";
 
   const filtered = books.filter((b: any) => {
     const q = search.toLowerCase();
     const matchesSearch = !q || b.title?.toLowerCase().includes(q) || b.author?.toLowerCase().includes(q) || b.isbn?.toLowerCase().includes(q) || b.bookCode?.toLowerCase().includes(q);
     const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? b.isActive : !b.isActive);
-    const matchesLow = !lowOnly || isLow(b);
-    return matchesSearch && matchesStatus && matchesLow;
+    const matchesStock = stockFilter === "all" || stockState(b) === stockFilter;
+    return matchesSearch && matchesStatus && matchesStock;
   });
 
+  const totalUnits = books.reduce((s: number, b: any) => s + (b.stockQuantity || 0), 0);
+  const lowCount = books.filter((b: any) => stockState(b) === "low").length;
+  const outCount = books.filter((b: any) => stockState(b) === "out").length;
+  const inStockPct = books.length ? Math.round((books.filter((b: any) => stockState(b) === "in").length / books.length) * 100) : 0;
+
   const openEdit = (b: any) => { setSelectedBook(b); setForm({ title: b.title || "", author: b.author || "", isbn: b.isbn || "", price: b.price || "", description: b.description || "", isActive: b.isActive ?? true, stockQuantity: b.stockQuantity || 0, lowStockThreshold: b.lowStockThreshold || 10, reorderQuantity: b.reorderQuantity || 50 }); setEditOpen(true); };
+
   const bookFormFields = (
     <>
       {isbnLooking && <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded-md"><Loader2 className="h-4 w-4 animate-spin" /> Looking up book details…</div>}
@@ -130,101 +154,223 @@ function BooksSection() {
 
   const b = detailBook;
 
+  const kpis = [
+    { icon: "auto_stories", label: "Total Titles", value: books.length, chip: null, iconCls: "bg-secondary-container text-on-secondary-container" },
+    { icon: "inventory_2", label: "Units in Stock", value: totalUnits, chip: null, iconCls: "bg-tertiary-fixed text-on-tertiary-fixed-variant" },
+    { icon: "warning", label: "Low Stock", value: lowCount, chip: lowCount > 0 ? "Action Required" : null, iconCls: "bg-error-container text-on-error-container" },
+    { icon: "remove_shopping_cart", label: "Out of Stock", value: outCount, chip: null, iconCls: "bg-surface-container-high text-muted-foreground" },
+  ];
+
+  const stockPills: { key: StockFilter; label: string }[] = [
+    { key: "all", label: "All Statuses" },
+    { key: "in", label: "In Stock" },
+    { key: "low", label: "Low Stock" },
+    { key: "out", label: "Out of Stock" },
+  ];
+
   return (
     <div className="space-y-5 max-w-[1400px]">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Book Catalogue</h1>
-          <p className="text-muted-foreground mt-1">Manage titles, stock levels, and printable barcodes.</p>
+      {/* Breadcrumb + header */}
+      <div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+          <span>Books &amp; Stock</span>
+          <MaterialSymbol name="chevron_right" className="text-sm" />
+          <span className="text-foreground font-medium">Books</span>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { resetForm(); startScanner(); }}><ScanBarcode className="w-4 h-4 mr-2" /> Scan</Button>
-          <Button onClick={() => { resetForm(); setAddOpen(true); }}><Plus className="w-4 h-4 mr-2" /> Add Book</Button>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">Global Book Inventory</h1>
+            <p className="text-muted-foreground mt-1">Directory of all books in the school reading scheme.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={exportCsv}><MaterialSymbol name="download" className="text-base mr-2" /> Export CSV</Button>
+            <Button variant="outline" onClick={() => { resetForm(); startScanner(); }}><MaterialSymbol name="barcode_scanner" className="text-base mr-2" /> Scan</Button>
+            <Button onClick={() => { resetForm(); setAddOpen(true); }}><MaterialSymbol name="add" className="text-base mr-2" /> Add Book</Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_320px] gap-4">
-        {/* Filters */}
-        <div className="rounded-2xl border border-border bg-card p-5 h-fit space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-foreground">Filters</h2>
-            <button onClick={() => { setSearch(""); setStatusFilter("all"); setLowOnly(false); }} className="text-xs text-primary hover:underline">Reset</button>
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center justify-between">
+              <span className={cn("inline-flex items-center justify-center w-9 h-9 rounded-lg", k.iconCls)}>
+                <MaterialSymbol name={k.icon} className="text-xl" />
+              </span>
+              {k.chip && <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-error-container text-on-error-container">{k.chip}</span>}
+            </div>
+            <div className="text-2xl font-bold mt-3 text-foreground">{k.value.toLocaleString()}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{k.label}</div>
           </div>
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Quick Find</div>
-            <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Title, author, ISBN, code…" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
-          </div>
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Status</div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
-            </Select>
-          </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} className="rounded border-border" />
-            <span className="text-foreground">Low stock only</span>
-          </label>
-        </div>
+        ))}
+      </div>
 
-        {/* Table */}
-        <div className="rounded-2xl border border-border bg-card overflow-hidden">
-          <div className="px-5 py-3 border-b border-border text-sm"><strong className="text-foreground">{filtered.length}</strong> <span className="text-muted-foreground">book{filtered.length !== 1 ? "s" : ""}</span></div>
+      {/* Filter bar */}
+      <div className="rounded-xl border border-border bg-card px-4 py-3 flex flex-wrap items-center gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Stock Status:</span>
+        <div className="flex items-center gap-1 bg-surface-container rounded-full p-1">
+          {stockPills.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setStockFilter(p.key)}
+              className={cn(
+                "px-3 py-1 rounded-full text-xs font-medium transition-colors",
+                stockFilter === p.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <div className="w-px h-6 bg-border hidden sm:block" />
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-[130px] h-8 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="all">All Books</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+        </Select>
+        <div className="relative ml-auto min-w-[220px] flex-1 sm:flex-none">
+          <MaterialSymbol name="search" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-base text-muted-foreground" />
+          <Input placeholder="Title, author, ISBN, code…" className="pl-8 h-8" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_330px] gap-4 items-start">
+        {/* Inventory table */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between text-sm">
+            <div><strong className="text-foreground">{filtered.length}</strong> <span className="text-muted-foreground">of {books.length} book{books.length !== 1 ? "s" : ""}</span></div>
+          </div>
           <div className="overflow-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Title</th>
+                <tr className="border-b border-border bg-surface-container-low">
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Book Title</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hidden md:table-cell">ISBN-13</th>
                   <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Price</th>
-                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Stock</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Stock Level</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={3} className="text-center text-muted-foreground py-10">{search ? "No matching books." : "No books yet — add your first."}</td></tr>
-                ) : filtered.map((book: any) => (
-                  <tr key={book.id} onClick={() => setDetailBook(book)} className={cn("border-b border-border cursor-pointer hover:bg-muted/20", detailBook?.id === book.id && "bg-primary/5")}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-foreground">{book.title}</div>
-                      <div className="text-xs text-muted-foreground font-mono">{book.bookCode || "—"}{book.author ? ` · ${book.author}` : ""}</div>
-                    </td>
-                    <td className="px-4 py-3 font-medium">£{parseFloat(book.price || "0").toFixed(2)}</td>
-                    <td className="px-4 py-3"><span className={isLow(book) ? "text-amber-600 font-semibold" : "text-foreground"}>{book.stockQuantity || 0}</span>{isLow(book) && <AlertTriangle className="h-3 w-3 text-amber-500 inline ml-1" />}</td>
-                  </tr>
-                ))}
+                  <tr><td colSpan={5} className="text-center text-muted-foreground py-10">{search ? "No matching books." : "No books yet — add your first."}</td></tr>
+                ) : filtered.map((book: any) => {
+                  const st = stockState(book);
+                  const target = Math.max(book.reorderQuantity || 50, book.stockQuantity || 0, 1);
+                  const pct = Math.min(100, Math.round(((book.stockQuantity || 0) / target) * 100));
+                  return (
+                    <tr key={book.id} onClick={() => setDetailBook(book)} className={cn("border-b border-border last:border-0 cursor-pointer hover:bg-surface-container-low transition-colors", detailBook?.id === book.id && "bg-secondary-container/30")}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-surface-container text-muted-foreground shrink-0">
+                            <MaterialSymbol name="menu_book" className="text-lg" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="font-medium text-foreground truncate">{book.title}</div>
+                            <div className="text-xs text-muted-foreground truncate">{book.author || "—"}{!book.isActive && <span className="ml-2 text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-surface-container-high">Inactive</span>}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground hidden md:table-cell">{book.isbn || book.bookCode || "—"}</td>
+                      <td className="px-4 py-3 font-medium">£{parseFloat(book.price || "0").toFixed(2)}</td>
+                      <td className="px-4 py-3 min-w-[140px]">
+                        {st === "out" ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-on-error-container bg-error-container px-2 py-0.5 rounded-full">Out of Stock</span>
+                        ) : st === "low" ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-on-error-container">
+                            <MaterialSymbol name="warning" className="text-sm" /> Low Stock ({book.stockQuantity})
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <div className="h-1.5 w-20 rounded-full bg-surface-container-high overflow-hidden"><div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} /></div>
+                            <span className="text-xs font-mono text-muted-foreground">{book.stockQuantity}/{target}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button onClick={(e) => { e.stopPropagation(); openEdit(book); }} className="p-1.5 rounded-lg text-muted-foreground hover:bg-surface-container hover:text-foreground transition-colors" aria-label="Edit book">
+                          <MaterialSymbol name="edit" className="text-lg" />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setDetailBook(book); }} className="p-1.5 rounded-lg text-muted-foreground hover:bg-surface-container hover:text-foreground transition-colors" aria-label="Book details">
+                          <MaterialSymbol name="more_vert" className="text-lg" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          {/* Inventory health strip */}
+          {books.length > 0 && (
+            <div className="px-5 py-3 border-t border-border flex items-center gap-4">
+              <div className="flex-1">
+                <div className="h-1.5 rounded-full bg-error-container overflow-hidden"><div className="h-full rounded-full bg-primary" style={{ width: `${inStockPct}%` }} /></div>
+              </div>
+              <div className="text-xs text-muted-foreground whitespace-nowrap"><strong className="text-foreground">{inStockPct}%</strong> In Stock · <strong className="text-on-error-container">{100 - inStockPct}%</strong> Under Reorder Point</div>
+            </div>
+          )}
         </div>
 
-        {/* Detail panel */}
-        <div className="rounded-2xl border border-border bg-card p-5 h-fit">
+        {/* Detail panel — Book Details & Stock design */}
+        <div className="rounded-xl border border-border bg-card p-5 h-fit lg:sticky lg:top-4">
           {!b ? (
-            <div className="text-center py-12"><BookOpen className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" /><p className="text-sm text-muted-foreground">Select a book to see details.</p></div>
+            <div className="text-center py-12">
+              <MaterialSymbol name="auto_stories" className="text-4xl text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground mt-2">Select a book to see details.</p>
+            </div>
           ) : (
             <div className="space-y-4">
               <div className="flex items-start justify-between">
-                <div><div className="font-semibold text-foreground">{b.title}</div><div className="text-xs text-muted-foreground">{b.author || "—"}</div></div>
-                <button onClick={() => setDetailBook(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+                <div>
+                  <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-secondary-container text-on-secondary-container">{b.isActive ? "Active Title" : "Inactive"}</span>
+                  <div className="font-semibold text-foreground text-lg mt-2 leading-snug">{b.title}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{b.author || "—"}</div>
+                </div>
+                <button onClick={() => setDetailBook(null)} className="text-muted-foreground hover:text-foreground" aria-label="Close details"><X className="w-4 h-4" /></button>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Code</div><div className="font-mono text-foreground">{b.bookCode || "—"}</div></div>
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">ISBN</div><div className="font-mono text-foreground">{b.isbn || "—"}</div></div>
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Price</div><div className="text-foreground">£{parseFloat(b.price || "0").toFixed(2)}</div></div>
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Stock</div><div className={isLow(b) ? "text-amber-600 font-semibold" : "text-foreground"}>{b.stockQuantity || 0}</div></div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm border-y border-border py-3">
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">ISBN-13</div><div className="font-mono text-xs text-foreground mt-0.5">{b.isbn || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Book Code</div><div className="font-mono text-xs text-foreground mt-0.5">{b.bookCode || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Price</div><div className="text-foreground mt-0.5">£{parseFloat(b.price || "0").toFixed(2)}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Status</div><div className="text-foreground mt-0.5">{b.isActive ? "Active" : "Inactive"}</div></div>
               </div>
+
+              {/* Real-time stock tiles */}
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Real-time Stock</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-lg bg-surface-container-low border border-border p-2.5 text-center">
+                    <MaterialSymbol name="inventory_2" className="text-base text-on-secondary-container" />
+                    <div className={cn("text-lg font-bold", isLow(b) ? "text-on-error-container" : "text-foreground")}>{b.stockQuantity || 0}</div>
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground">Available</div>
+                  </div>
+                  <div className="rounded-lg bg-surface-container-low border border-border p-2.5 text-center">
+                    <MaterialSymbol name="warning" className="text-base text-muted-foreground" />
+                    <div className="text-lg font-bold text-foreground">{b.lowStockThreshold || 10}</div>
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground">Low Alert</div>
+                  </div>
+                  <div className="rounded-lg bg-surface-container-low border border-border p-2.5 text-center">
+                    <MaterialSymbol name="orders" className="text-base text-muted-foreground" />
+                    <div className="text-lg font-bold text-foreground">{b.reorderQuantity || 50}</div>
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground">Reorder Qty</div>
+                  </div>
+                </div>
+              </div>
+
               {b.bookCode && (
-                <div className="rounded-lg border border-border p-3 flex flex-col items-center gap-1" id="barcode-print-area">
+                <div className="rounded-lg border border-border bg-surface-container-lowest p-3 flex flex-col items-center gap-1" id="barcode-print-area">
                   <BarcodeDisplay value={b.bookCode} />
                   <p className="text-xs font-mono">{b.bookCode}</p>
                 </div>
               )}
+
               <div className="flex flex-col gap-2">
-                <Button variant="outline" size="sm" className="justify-start" onClick={() => { setSelectedBook(b); setStockForm({ quantity: 0, type: "purchase", reason: "" }); setStockOpen(true); }}><Package className="w-4 h-4 mr-2" /> Adjust stock</Button>
-                {b.bookCode && <Button variant="outline" size="sm" className="justify-start" onClick={() => printBarcode(b)}><Printer className="w-4 h-4 mr-2" /> Print barcode</Button>}
-                <Button variant="outline" size="sm" className="justify-start" onClick={() => openEdit(b)}><Pencil className="w-4 h-4 mr-2" /> Edit book</Button>
-                <Button variant="outline" size="sm" className="justify-start text-destructive hover:text-destructive" onClick={() => { setSelectedBook(b); setDeleteOpen(true); }}><Trash2 className="w-4 h-4 mr-2" /> Delete book</Button>
+                <Button size="sm" className="justify-start" onClick={() => { setSelectedBook(b); setStockForm({ quantity: 0, type: "purchase", reason: "" }); setStockOpen(true); }}><MaterialSymbol name="add_box" className="text-base mr-2" /> Adjust Stock</Button>
+                {b.bookCode && <Button variant="outline" size="sm" className="justify-start" onClick={() => printBarcode(b)}><MaterialSymbol name="print" className="text-base mr-2" /> Print Barcode</Button>}
+                <Button variant="outline" size="sm" className="justify-start" onClick={() => openEdit(b)}><MaterialSymbol name="edit" className="text-base mr-2" /> Edit Details</Button>
+                <Button variant="outline" size="sm" className="justify-start text-destructive hover:text-destructive" onClick={() => { setSelectedBook(b); setDeleteOpen(true); }}><MaterialSymbol name="delete" className="text-base mr-2" /> Delete Book</Button>
               </div>
             </div>
           )}
@@ -234,7 +380,7 @@ function BooksSection() {
       {/* Scanner dialog */}
       <Dialog open={scannerOpen} onOpenChange={(open) => { if (!open) stopScanner(); }}>
         <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Scan Book Code</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><MaterialSymbol name="barcode_scanner" className="text-xl" /> Scan Book Code</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div id="barcode-reader" className="w-full rounded-lg overflow-hidden bg-black min-h-[280px]" />
             {scannerError && <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{scannerError}</div>}

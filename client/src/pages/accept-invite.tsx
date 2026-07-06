@@ -1,14 +1,15 @@
 import { useState, useEffect } from "react";
 import { useLocation, useSearch, useRoute } from "wouter";
-import { BookOpen, Eye, EyeOff, UserCheck, ArrowLeft } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
 import { getRoleRoute } from "@/lib/role-routes";
 
+// ─── STAFF INVITATION ACCEPTANCE (ScholarShelf design) ───────────────────────
 export default function AcceptInvitePage() {
   const search = useSearch();
   const [pathMatch, pathParams] = useRoute<{ token: string }>("/accept-invite/:token");
@@ -63,18 +64,19 @@ export default function AcceptInvitePage() {
     applyBrandingToDocument(inviteInfo?.schoolBranding || null);
   }, [inviteInfo?.schoolBranding]);
 
+  const schoolName = inviteInfo?.schoolName || "ScholarShelf";
+
   if (!token) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4">
-        <Card className="w-full max-w-md">
-          <CardContent className="pt-6 text-center">
-            <p className="text-destructive mb-4">Invalid invite link. No token was provided.</p>
-            <a href="/login" className="text-sm text-primary hover:underline cursor-pointer"
-              onClick={(e) => { e.preventDefault(); setLocation("/login"); }}>
-              Go to sign in
-            </a>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center">
+          <MaterialSymbol name="link_off" className="text-4xl text-muted-foreground/40" />
+          <p className="text-destructive mt-3 mb-4">Invalid invite link. No token was provided.</p>
+          <a href="/login" className="text-sm text-on-secondary-container hover:underline cursor-pointer"
+            onClick={(e) => { e.preventDefault(); setLocation("/login"); }}>
+            Go to sign in
+          </a>
+        </div>
       </div>
     );
   }
@@ -105,40 +107,60 @@ export default function AcceptInvitePage() {
     : "");
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 via-white to-blue-50 p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-primary/10 mb-4">
-            {inviteInfo?.schoolBranding?.logoUrl ? (
-              <img
-                src={inviteInfo.schoolBranding.logoUrl}
-                alt={`${inviteInfo?.schoolName || "School"} logo`}
-                className="h-10 w-10 object-contain"
-              />
-            ) : (
-              <BookOpen className="h-8 w-8 text-primary" />
-            )}
-          </div>
-          <h1 className="font-heading text-3xl font-bold tracking-tight">{inviteInfo?.schoolName || "Scholar Shelf"}</h1>
-          <p className="text-muted-foreground mt-1">Accept Your Invitation</p>
+    <div className="min-h-screen flex bg-background">
+      {/* Brand panel — design: navy split screen */}
+      <div className="hidden lg:flex lg:w-[44%] bg-primary text-primary-foreground flex-col justify-between p-10">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-primary-foreground/10">
+            {inviteInfo?.schoolBranding?.logoUrl
+              ? <img src={inviteInfo.schoolBranding.logoUrl} alt={`${schoolName} logo`} className="h-6 w-6 object-contain" />
+              : <MaterialSymbol name="school" className="text-2xl" />}
+          </span>
+          <span className="text-lg font-bold tracking-tight">{schoolName}</span>
         </div>
+        <div className="space-y-4 max-w-sm">
+          <h2 className="text-3xl font-bold leading-tight">Empowering academic logistics.</h2>
+          <p className="text-primary-foreground/70 text-sm leading-relaxed">
+            The central hub for book distribution, inventory tracking, and administrative excellence.
+          </p>
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-full bg-primary-foreground/10">
+            <MaterialSymbol name="verified" className="text-sm" /> Staff Portal · Secure
+          </span>
+        </div>
+        <p className="text-primary-foreground/50 text-xs">
+          ScholarShelf streamlines learning resource management for your school.
+        </p>
+      </div>
 
-        <Card>
-          <CardHeader className="text-center pb-4">
-            <CardTitle className="text-lg">Set Up Your Account</CardTitle>
-            <CardDescription>
+      {/* Acceptance form */}
+      <div className="flex-1 flex items-center justify-center p-4 sm:p-8">
+        <div className="w-full max-w-md">
+          {/* Mobile brand header */}
+          <div className="lg:hidden text-center mb-6">
+            <span className="inline-flex items-center justify-center h-14 w-14 rounded-2xl bg-secondary-container mb-3">
+              {inviteInfo?.schoolBranding?.logoUrl
+                ? <img src={inviteInfo.schoolBranding.logoUrl} alt={`${schoolName} logo`} className="h-8 w-8 object-contain" />
+                : <MaterialSymbol name="school" className="text-3xl text-on-secondary-container" />}
+            </span>
+            <h1 className="font-heading text-2xl font-bold tracking-tight">{schoolName}</h1>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-6 sm:p-8">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-3 py-1 rounded-full bg-secondary-container text-on-secondary-container">
+              <MaterialSymbol name="mail" className="text-sm" /> Invitation Pending
+            </span>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground mt-3">Welcome to {schoolName}</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               {inviteLoading
-                ? "Checking your secure invite..."
-                : inviteInfo?.schoolName
-                  ? `You've been invited to join ${inviteInfo.schoolName}. Complete your profile below.`
-                  : "You've been invited to join Scholar Shelf. Complete your profile below."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+                ? "Checking your secure invite…"
+                : "Complete your profile to activate your account."}
+            </p>
+
+            <form onSubmit={handleSubmit} className="space-y-4 mt-6">
               {inviteInfo?.email && (
-                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                  Invitation email: <span className="font-medium text-foreground">{inviteInfo.email}</span>
+                <div className="rounded-lg border border-border bg-surface-container-low px-3 py-2 text-sm text-muted-foreground flex items-center gap-2">
+                  <MaterialSymbol name="alternate_email" className="text-base" />
+                  <span className="truncate">Invitation for <span className="font-medium text-foreground">{inviteInfo.email}</span></span>
                 </div>
               )}
               <div className="space-y-2">
@@ -150,7 +172,7 @@ export default function AcceptInvitePage() {
                 <Input id="username" type="text" placeholder="Choose a username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">Set Your Password</Label>
                 <div className="relative">
                   <Input id="password" type={showPassword ? "text" : "password"} placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
                   <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"}>
@@ -164,23 +186,23 @@ export default function AcceptInvitePage() {
               </div>
 
               {errorMessage && (
-                <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{errorMessage}</div>
+                <div className="text-sm text-on-error-container bg-error-container px-3 py-2 rounded-lg">{errorMessage}</div>
               )}
 
               <Button type="submit" className="w-full" disabled={isAcceptingInvite}>
-                <UserCheck className="mr-2 h-4 w-4" />
-                {isAcceptingInvite ? "Setting up account..." : "Accept Invite & Sign In"}
+                <MaterialSymbol name="key" className="text-base mr-2" />
+                {isAcceptingInvite ? "Setting up account…" : "Complete Registration"}
               </Button>
             </form>
 
-            <div className="mt-4 text-center">
-              <a href="/login" className="text-sm text-primary hover:underline cursor-pointer inline-flex items-center gap-1"
+            <div className="mt-5 text-center">
+              <a href="/login" className="text-sm text-muted-foreground hover:text-foreground cursor-pointer inline-flex items-center gap-1"
                 onClick={(e) => { e.preventDefault(); setLocation("/login"); }}>
-                <ArrowLeft className="h-3 w-3" /> Already have an account? Sign in
+                <MaterialSymbol name="arrow_back" className="text-sm" /> Back to Login
               </a>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </div>
   );

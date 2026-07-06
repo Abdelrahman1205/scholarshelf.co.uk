@@ -1,32 +1,16 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import {
-  BookOpen, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus,
-  Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight,
-  QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
-  Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
-  XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw, Printer, ShieldAlert, ShieldOff, Ban
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import {
-  navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
-  normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
-} from "./shared";
 
 const YEAR_GROUP_OPTIONS = [
   "Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6",
@@ -34,38 +18,32 @@ const YEAR_GROUP_OPTIONS = [
   "Reception", "Nursery", "Sixth Form",
 ];
 
-// ─── CLASSES ──────────────────────────────────────────────────────────────────
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "?";
+}
+
+// ─── CLASSES — Class Management & Teacher Assignment (ScholarShelf design) ───
 function ClassesSection() {
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<any>(null);
+  const [yearFilter, setYearFilter] = useState("all");
   const emptyForm = { name: "", academicYear: "2026-2027", yearGroup: "", teacherId: "" };
   const [form, setForm] = useState(emptyForm);
 
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
+  const { data: classBookLevels = [] } = useQuery<any[]>({ queryKey: ["/api/class-book-levels"], queryFn: getQueryFn({ on401: "throw" }) });
   const teachers = users.filter((u: any) => u.role === "teacher");
 
-  // Group classes by year group for display
-  const grouped: Record<string, any[]> = {};
-  const noGroup: any[] = [];
-  for (const cls of classes) {
-    if (cls.yearGroup) {
-      (grouped[cls.yearGroup] = grouped[cls.yearGroup] || []).push(cls);
-    } else {
-      noGroup.push(cls);
-    }
-  }
-  const sortedGroups = Object.keys(grouped).sort((a, b) => {
-    const ai = YEAR_GROUP_OPTIONS.indexOf(a);
-    const bi = YEAR_GROUP_OPTIONS.indexOf(b);
-    if (ai !== -1 && bi !== -1) return ai - bi;
-    if (ai !== -1) return -1;
-    if (bi !== -1) return 1;
-    return a.localeCompare(b);
-  });
+  const studentCount = (classId: string) => students.filter((s: any) => s.classId === classId).length;
+  const unassignedCount = classes.filter((c: any) => !c.teacherId).length;
+  const coverage = classes.length ? Math.round(((classes.length - unassignedCount) / classes.length) * 100) : 0;
+  const avgStudents = classes.length ? Math.round(students.length / classes.length) : 0;
+  const activeBundles = new Set(classBookLevels.map((cbl: any) => cbl.bookLevelId || cbl.bookLevel?.id)).size;
 
   const buildPayload = (f: typeof emptyForm) => ({
     ...f,
@@ -91,34 +69,33 @@ function ClassesSection() {
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
-  const ClassRow = ({ cls }: { cls: any }) => (
-    <TableRow key={cls.id}>
-      <TableCell className="font-medium">{cls.name}</TableCell>
-      <TableCell>
-        {cls.yearGroup
-          ? <Badge variant="secondary" className="text-xs">{cls.yearGroup}</Badge>
-          : <span className="text-muted-foreground text-sm">—</span>}
-      </TableCell>
-      <TableCell className="text-muted-foreground">{cls.academicYear || "—"}</TableCell>
-      <TableCell className="text-muted-foreground">{users.find((u: any) => u.id === cls.teacherId)?.name || "Not assigned"}</TableCell>
-      <TableCell className="text-right space-x-1">
-        <Button variant="ghost" size="sm" onClick={() => {
-          setSelectedClass(cls);
-          setForm({ name: cls.name || "", academicYear: cls.academicYear || "2026-2027", yearGroup: cls.yearGroup || "", teacherId: cls.teacherId || "none" });
-          setEditOpen(true);
-        }}>
-          <Pencil className="w-4 h-4" />
-        </Button>
-        <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }}>
-          <Trash2 className="w-4 h-4" />
-        </Button>
-      </TableCell>
-    </TableRow>
-  );
+  function exportCsv() {
+    const rows = [["Class Name", "Year Group", "Academic Year", "Teacher", "Students"]];
+    filtered.forEach((c: any) => rows.push([c.name, c.yearGroup || "", c.academicYear || "", users.find((u: any) => u.id === c.teacherId)?.name || "Unassigned", String(studentCount(c.id))]));
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = "classes.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
 
-  const FormFields = () => (
+  const openEdit = (cls: any) => {
+    setSelectedClass(cls);
+    setForm({ name: cls.name || "", academicYear: cls.academicYear || "2026-2027", yearGroup: cls.yearGroup || "", teacherId: cls.teacherId || "none" });
+    setEditOpen(true);
+  };
+
+  const yearGroups = Array.from(new Set(classes.map((c: any) => c.yearGroup).filter(Boolean))).sort((a: any, b: any) => {
+    const ai = YEAR_GROUP_OPTIONS.indexOf(a); const bi = YEAR_GROUP_OPTIONS.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1; if (bi !== -1) return 1;
+    return String(a).localeCompare(String(b));
+  });
+  const filtered = classes.filter((c: any) => yearFilter === "all" || c.yearGroup === yearFilter);
+
+  const FormFields = (
     <div className="grid gap-4 py-4">
-      <div className="grid gap-2"><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+      <div className="grid gap-2"><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Year 3 Blue" /></div>
       <div className="grid gap-2">
         <Label>Year Group</Label>
         <Select value={form.yearGroup || "none"} onValueChange={(v) => setForm({ ...form, yearGroup: v })}>
@@ -131,7 +108,7 @@ function ClassesSection() {
       </div>
       <div className="grid gap-2"><Label>Academic Year</Label><Input value={form.academicYear} onChange={(e) => setForm({ ...form, academicYear: e.target.value })} /></div>
       <div className="grid gap-2">
-        <Label>Teacher</Label>
+        <Label>Assigned Teacher</Label>
         <Select value={form.teacherId} onValueChange={(v) => setForm({ ...form, teacherId: v })}>
           <SelectTrigger><SelectValue placeholder="Select teacher (optional)" /></SelectTrigger>
           <SelectContent>
@@ -143,69 +120,148 @@ function ClassesSection() {
     </div>
   );
 
-  const ClassCard = ({ cls }: { cls: any }) => (
-    <div className="group rounded-2xl border border-border bg-card p-4 hover:border-primary/30 transition">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><GraduationCap className="w-4.5 h-4.5 text-primary" /></div>
-          <div className="min-w-0">
-            <div className="font-semibold text-foreground truncate">{cls.name}</div>
-            <div className="text-xs text-muted-foreground">{cls.academicYear || "—"}</div>
-          </div>
-        </div>
-        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={() => { setSelectedClass(cls); setForm({ name: cls.name || "", academicYear: cls.academicYear || "2026-2027", yearGroup: cls.yearGroup || "", teacherId: cls.teacherId || "none" }); setEditOpen(true); }} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="w-3.5 h-3.5" /></button>
-          <button onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
-        </div>
-      </div>
-      <div className="flex items-center gap-2 mt-3 flex-wrap">
-        {cls.yearGroup && <Badge variant="secondary" className="text-xs">{cls.yearGroup}</Badge>}
-        <Badge variant="outline" className="text-xs font-normal">{users.find((u: any) => u.id === cls.teacherId)?.name || "No teacher"}</Badge>
-      </div>
-    </div>
-  );
+  const kpis = [
+    { icon: "school", label: "Total Classes", value: String(classes.length), note: null, iconCls: "bg-secondary-container text-on-secondary-container" },
+    { icon: "group", label: "Avg Students", value: String(avgStudents), note: "Target range: 20-30", iconCls: "bg-tertiary-fixed text-on-tertiary-fixed-variant" },
+    { icon: "person_check", label: "Teacher Coverage", value: `${coverage}%`, note: unassignedCount > 0 ? `${unassignedCount} class${unassignedCount !== 1 ? "es" : ""} unassigned` : "All classes covered", warn: unassignedCount > 0, iconCls: unassignedCount > 0 ? "bg-error-container text-on-error-container" : "bg-secondary-container text-on-secondary-container" },
+    { icon: "inventory_2", label: "Active Bundles", value: String(activeBundles), note: "Standard Distribution", iconCls: "bg-surface-container-high text-muted-foreground" },
+  ] as any[];
 
   return (
     <div className="space-y-5 max-w-[1400px]">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Classes</h1>
-          <p className="text-muted-foreground mt-1">Manage school classes and teacher assignments.</p>
+      {/* Header */}
+      <div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+          <span>School Data</span>
+          <MaterialSymbol name="chevron_right" className="text-sm" />
+          <span className="text-foreground font-medium">Classes</span>
         </div>
-        <Button onClick={() => { setForm(emptyForm); setAddOpen(true); }}>
-          <Plus className="w-4 h-4 mr-2" /> Add Class
-        </Button>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">Class Management</h1>
+            <p className="text-muted-foreground mt-1">Manage academic class structures, teacher assignments, and student enrollment levels.</p>
+          </div>
+          <Button onClick={() => { setForm(emptyForm); setAddOpen(true); }}>
+            <MaterialSymbol name="add" className="text-base mr-2" /> Create New Class
+          </Button>
+        </div>
       </div>
 
-      {classes.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-16 text-center">
-          <GraduationCap className="w-8 h-8 text-muted-foreground/30 mb-2" />
-          <p className="text-sm text-muted-foreground">No classes yet. Add your first class.</p>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {sortedGroups.map((yg) => (
-            <div key={yg}>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">{yg} <span className="text-muted-foreground/60">· {grouped[yg].length}</span></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{grouped[yg].map((cls: any) => <ClassCard key={cls.id} cls={cls} />)}</div>
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{k.label}</span>
+              <span className={cn("inline-flex items-center justify-center w-8 h-8 rounded-lg", k.iconCls)}>
+                <MaterialSymbol name={k.icon} className="text-lg" />
+              </span>
             </div>
-          ))}
-          {noGroup.length > 0 && (
-            <div>
-              {sortedGroups.length > 0 && <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Ungrouped</div>}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{noGroup.map((cls: any) => <ClassCard key={cls.id} cls={cls} />)}</div>
-            </div>
-          )}
+            <div className="text-2xl font-bold mt-2 text-foreground">{k.value}</div>
+            {k.note && (
+              <div className={cn("text-xs mt-0.5 flex items-center gap-1", k.warn ? "text-on-error-container" : "text-muted-foreground")}>
+                {k.warn && <MaterialSymbol name="warning" className="text-sm" />}{k.note}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Active classes table */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <MaterialSymbol name="list" className="text-lg text-muted-foreground" /> Active Classes
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Select value={yearFilter} onValueChange={setYearFilter}>
+              <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Year Groups</SelectItem>
+                {yearGroups.map((yg: any) => <SelectItem key={yg} value={yg}>{yg}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" className="h-8" onClick={exportCsv}><MaterialSymbol name="download" className="text-base mr-1.5" /> Export</Button>
+          </div>
         </div>
-      )}
+        {classes.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <MaterialSymbol name="school" className="text-5xl text-muted-foreground/30" />
+            <p className="text-sm text-muted-foreground mt-3">No classes yet. Create your first class.</p>
+            <Button className="mt-4" onClick={() => { setForm(emptyForm); setAddOpen(true); }}><MaterialSymbol name="add" className="text-base mr-2" /> Create New Class</Button>
+          </div>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border bg-surface-container-low">
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Class Name</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hidden md:table-cell">Year Group</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Assigned Teacher</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Students</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Status</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((cls: any) => {
+                  const teacher = users.find((u: any) => u.id === cls.teacherId);
+                  const count = studentCount(cls.id);
+                  return (
+                    <tr key={cls.id} className="border-b border-border last:border-0 hover:bg-surface-container-low transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-foreground">{cls.name}</div>
+                        <div className="text-xs text-muted-foreground">{cls.academicYear || "—"}</div>
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        {cls.yearGroup ? <Badge variant="secondary" className="text-xs">{cls.yearGroup}</Badge> : <span className="text-muted-foreground text-sm">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {teacher ? (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-secondary-container text-on-secondary-container text-[10px] font-bold shrink-0">{initials(teacher.name || "?")}</span>
+                            <span className="text-sm text-foreground">{teacher.name}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <MaterialSymbol name="person_off" className="text-lg" />
+                            <span className="text-sm italic">Unassigned</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-foreground">{count}</td>
+                      <td className="px-4 py-3">
+                        <span className={cn("inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full", teacher ? "bg-secondary-container text-on-secondary-container" : "bg-error-container text-on-error-container")}>
+                          {teacher ? "Active" : "Setup"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <button onClick={() => openEdit(cls)} className="p-1.5 rounded-lg text-muted-foreground hover:bg-surface-container hover:text-foreground transition-colors" aria-label="Edit class">
+                          <MaterialSymbol name="edit" className="text-lg" />
+                        </button>
+                        <button onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }} className="p-1.5 rounded-lg text-muted-foreground hover:bg-error-container hover:text-on-error-container transition-colors" aria-label="Delete class">
+                          <MaterialSymbol name="delete" className="text-lg" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="px-5 py-3 border-t border-border text-xs text-muted-foreground">
+              Showing {filtered.length} of {classes.length} classes
+            </div>
+          </div>
+        )}
+      </div>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader><DialogTitle>Add New Class</DialogTitle></DialogHeader>
-          <FormFields />
+          <DialogHeader><DialogTitle>Create New Class</DialogTitle></DialogHeader>
+          {FormFields}
           <DialogFooter>
-            <Button onClick={() => createMutation.mutate(buildPayload(form))} disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Adding..." : "Add Class"}
+            <Button onClick={() => createMutation.mutate(buildPayload(form))} disabled={!form.name.trim() || createMutation.isPending}>
+              {createMutation.isPending ? "Creating…" : "Create Class"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -214,10 +270,10 @@ function ClassesSection() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader><DialogTitle>Edit Class</DialogTitle></DialogHeader>
-          <FormFields />
+          {FormFields}
           <DialogFooter>
             <Button onClick={() => updateMutation.mutate(buildPayload(form))} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+              {updateMutation.isPending ? "Saving…" : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -238,7 +294,5 @@ function ClassesSection() {
     </div>
   );
 }
-
-// ─── STUDENTS ──────────────────────────────────────────────────
 
 export { ClassesSection };

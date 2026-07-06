@@ -1,17 +1,34 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, Download, Loader2, ClipboardList, CreditCard, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./shared";
 
-// ─── PAYMENTS (master-detail redesign) ──────────────────────────────────────
+// ─── PAYMENTS — Review & Collection Lifecycle (ScholarShelf design) ─────────
+
+const LIFECYCLE_STEPS = [
+  { key: "pending", label: "Pending Approval", icon: "hourglass_empty" },
+  { key: "confirmed", label: "Confirmed", icon: "check_circle" },
+  { key: "ready_for_collection", label: "Ready for Collection", icon: "local_shipping" },
+  { key: "collected", label: "Collected", icon: "inventory" },
+];
+
+function lifecycleIndex(status: string): number {
+  if (status === "collected") return 3;
+  if (status === "ready_for_collection") return 2;
+  if (status === "confirmed") return 1;
+  if (["reference_submitted", "needs_review", "pending", "awaiting_payment"].includes(status)) return 0;
+  return -1; // rejected / cancelled
+}
+
 function PaymentsSection() {
   const { toast } = useToast();
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
@@ -66,26 +83,34 @@ function PaymentsSection() {
 
   const initials = (name?: string) => (name || "?").split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
   const p = selectedPayment;
+  const stepIdx = p ? lifecycleIndex(p.status) : -1;
 
   return (
     <div className="space-y-5 max-w-[1400px]">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Payment Review</h1>
-          <p className="text-muted-foreground mt-1">Verify parent submissions and manage the collection lifecycle.{actionableCount > 0 && <span className="ml-1 text-primary font-medium">{actionableCount} awaiting action.</span>}</p>
+      <div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+          <span>Orders</span>
+          <MaterialSymbol name="chevron_right" className="text-sm" />
+          <span className="text-foreground font-medium">Payments</span>
         </div>
-        <Button variant="outline" onClick={exportCSV} disabled={filteredPayments.length === 0}>
-          <Download className="w-4 h-4 mr-2" /> Export CSV
-        </Button>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">Payment Transactions</h1>
+            <p className="text-muted-foreground mt-1">Review incoming payment references and manage the collection lifecycle.{actionableCount > 0 && <span className="ml-1 text-foreground font-medium">{actionableCount} awaiting action.</span>}</p>
+          </div>
+          <Button variant="outline" onClick={exportCSV} disabled={filteredPayments.length === 0}>
+            <MaterialSymbol name="download" className="text-base mr-2" /> Export CSV
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_340px] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_360px] gap-4 items-start">
         {/* Filters */}
-        <div className="rounded-2xl border border-border bg-card p-5 h-fit space-y-5">
+        <div className="rounded-xl border border-border bg-card p-5 h-fit space-y-5">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-foreground">Filters</h2>
-            <button onClick={() => { setStatusFilter("all"); setClassFilter("all"); }} className="text-xs text-primary hover:underline">Reset</button>
+            <h2 className="font-semibold text-foreground flex items-center gap-1.5"><MaterialSymbol name="filter_list" className="text-lg text-muted-foreground" /> Filters</h2>
+            <button onClick={() => { setStatusFilter("all"); setClassFilter("all"); }} className="text-xs text-on-secondary-container hover:underline">Reset</button>
           </div>
           <div>
             <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Status</div>
@@ -115,12 +140,12 @@ function PaymentsSection() {
         </div>
 
         {/* Table */}
-        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-5 py-3 border-b border-border text-sm"><strong className="text-foreground">{filteredPayments.length}</strong> <span className="text-muted-foreground">payment{filteredPayments.length !== 1 ? "s" : ""}</span></div>
           <div className="overflow-auto">
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="bg-surface-container-low">
                   <TableHead className="text-[10px] font-mono uppercase tracking-wider">Student</TableHead>
                   <TableHead className="text-[10px] font-mono uppercase tracking-wider">Amount</TableHead>
                   <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
@@ -130,10 +155,10 @@ function PaymentsSection() {
                 {filteredPayments.length === 0 ? (
                   <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-10">No payments match these filters.</TableCell></TableRow>
                 ) : filteredPayments.map((pay: any) => (
-                  <TableRow key={pay.id} onClick={() => { setSelectedPayment(pay); setReviewNote(""); }} className={cn("cursor-pointer", selectedPayment?.id === pay.id && "bg-primary/5", isActionable(pay.status) && "bg-blue-50/40")}>
+                  <TableRow key={pay.id} onClick={() => { setSelectedPayment(pay); setReviewNote(""); }} className={cn("cursor-pointer", selectedPayment?.id === pay.id && "bg-secondary-container/30", isActionable(pay.status) && selectedPayment?.id !== pay.id && "bg-surface-container-low")}>
                     <TableCell>
                       <div className="flex items-center gap-2.5">
-                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-[11px] font-semibold text-primary shrink-0">{initials(pay.studentName)}</div>
+                        <div className="h-8 w-8 rounded-full bg-secondary-container flex items-center justify-center text-[11px] font-semibold text-on-secondary-container shrink-0">{initials(pay.studentName)}</div>
                         <div className="min-w-0">
                           <div className="font-medium text-foreground truncate">{pay.studentName || "—"}</div>
                           <div className="text-xs text-muted-foreground font-mono truncate">{pay.paymentReference}</div>
@@ -149,84 +174,136 @@ function PaymentsSection() {
           </div>
         </div>
 
-        {/* Detail panel */}
-        <div className="rounded-2xl border border-border bg-card p-5 h-fit">
+        {/* Detail panel — design: transaction review + lifecycle */}
+        <div className="rounded-xl border border-border bg-card h-fit overflow-hidden lg:sticky lg:top-4">
           {!p ? (
-            <div className="text-center py-12">
-              <CreditCard className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
-              <p className="text-sm text-muted-foreground">Select a payment to review.</p>
+            <div className="text-center py-12 px-5">
+              <MaterialSymbol name="receipt_long" className="text-4xl text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground mt-2">Select a payment to review.</p>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between">
+            <div>
+              {/* Transaction header */}
+              <div className="p-5 border-b border-border bg-surface-container-low">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Transaction ID</div>
+                    <div className="font-mono font-bold text-foreground">{p.paymentReference || "—"}</div>
+                  </div>
+                  <button onClick={clearDetail} className="text-muted-foreground hover:text-foreground" aria-label="Close details"><X className="w-4 h-4" /></button>
+                </div>
+                <div className="mt-3 flex items-end justify-between">
+                  <div>
+                    <div className="text-3xl font-bold text-foreground">£{parseFloat(p.totalAmount || "0").toFixed(2)}</div>
+                    <div className="text-xs text-muted-foreground">Total Amount Due</div>
+                  </div>
+                  <StatusBadge status={p.status} />
+                </div>
+                {p.paymentReferenceSubmittedAt && (
+                  <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
+                    <MaterialSymbol name="account_balance" className="text-sm" /> Reference submitted {new Date(p.paymentReferenceSubmittedAt).toLocaleString()}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Lifecycle stepper */}
+                {stepIdx >= 0 && (
+                  <div className="rounded-lg border border-border p-3">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Collection Lifecycle</div>
+                    <div className="flex items-center">
+                      {LIFECYCLE_STEPS.map((s, i) => (
+                        <div key={s.key} className={cn("flex items-center", i < LIFECYCLE_STEPS.length - 1 && "flex-1")}>
+                          <div className="flex flex-col items-center gap-1">
+                            <span className={cn(
+                              "inline-flex items-center justify-center w-7 h-7 rounded-full border",
+                              i < stepIdx && "bg-secondary-container text-on-secondary-container border-secondary-container",
+                              i === stepIdx && "bg-primary text-primary-foreground border-primary",
+                              i > stepIdx && "bg-surface-container-low text-muted-foreground border-border",
+                            )}>
+                              <MaterialSymbol name={i < stepIdx ? "check" : s.icon} className="text-base" />
+                            </span>
+                            <span className={cn("text-[9px] font-mono uppercase text-center leading-tight max-w-[64px]", i === stepIdx ? "text-foreground font-semibold" : "text-muted-foreground")}>{s.label}</span>
+                          </div>
+                          {i < LIFECYCLE_STEPS.length - 1 && <div className={cn("h-0.5 flex-1 mx-1 -mt-4", i < stepIdx ? "bg-primary" : "bg-border")} />}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Student covered */}
                 <div>
-                  <div className="font-semibold text-foreground">{p.studentName || "—"}</div>
-                  <div className="text-xs text-muted-foreground font-mono">{p.paymentReference}</div>
-                </div>
-                <button onClick={clearDetail} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Parent</div><div className="text-foreground truncate">{p.parentIdentifier}</div></div>
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Amount</div><div className="font-bold text-primary">£{parseFloat(p.totalAmount || "0").toFixed(2)}</div></div>
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Status</div><StatusBadge status={p.status} /></div>
-                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Class</div><div className="text-foreground">{p.className || "—"}</div></div>
-              </div>
-
-              <div className="rounded-lg border border-border p-3 space-y-1">
-                <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground">External Payment Reference</div>
-                {p.paymentReferenceNumber ? (
-                  <>
-                    <p className="font-mono text-lg font-bold text-foreground">{p.paymentReferenceNumber}</p>
-                    <p className="text-xs text-muted-foreground">Submitted {p.paymentReferenceSubmittedAt ? new Date(p.paymentReferenceSubmittedAt).toLocaleString() : "—"}</p>
-                  </>
-                ) : <p className="text-sm text-muted-foreground italic">Parent hasn't submitted a reference yet.</p>}
-              </div>
-
-              {p.paymentReviewedAt && (
-                <div className="rounded-lg border border-dashed border-border p-3 bg-muted/20 text-sm space-y-1">
-                  <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground">Previous Review</div>
-                  <p>Reviewed {new Date(p.paymentReviewedAt).toLocaleString()}{p.paymentReviewedBy && <span className="text-muted-foreground"> by {p.paymentReviewedBy}</span>}</p>
-                  {p.paymentReviewNote && <p><span className="text-muted-foreground">Note:</span> {p.paymentReviewNote}</p>}
-                </div>
-              )}
-
-              {p.notes && <div className="text-sm"><span className="text-muted-foreground">Parent notes:</span> {p.notes}</div>}
-
-              {isActionable(p.status) && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Review note (optional)</Label>
-                  <Textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="Note about this decision…" rows={2} />
-                </div>
-              )}
-
-              {isReviewActionable(p.status) && (
-                <div className="flex flex-col gap-2 pt-1">
-                  <Button variant="success" onClick={() => confirmMutation.mutate(p.id)} disabled={anyPending}>
-                    {confirmMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Confirm &amp; Allocate
-                  </Button>
-                  <div className="flex gap-2">
-                    <Button variant="warning" className="flex-1" onClick={() => needsReviewMutation.mutate(p.id)} disabled={anyPending}>Flag</Button>
-                    <Button variant="destructive" className="flex-1" onClick={() => rejectMutation.mutate(p.id)} disabled={anyPending}>
-                      {rejectMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Reject
-                    </Button>
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Student Covered</div>
+                  <div className="flex items-center gap-3 rounded-lg border border-border p-3">
+                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-secondary-container text-on-secondary-container text-[10px] font-bold shrink-0">{initials(p.studentName)}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-sm text-foreground truncate">{p.studentName || "—"}</div>
+                      <div className="text-xs text-muted-foreground truncate">{p.className || "—"}{p.parentIdentifier ? ` · ${p.parentIdentifier}` : ""}</div>
+                    </div>
                   </div>
                 </div>
-              )}
 
-              {isFulfilmentActionable(p.status) && (
-                <div className="flex flex-col gap-2 pt-1">
-                  {p.status === "confirmed" && (
-                    <Button variant="default" onClick={() => readyMutation.mutate(p.id)} disabled={anyPending}>
-                      {readyMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Mark Ready for Collection
-                    </Button>
-                  )}
-                  <Button variant="success" onClick={() => collectedMutation.mutate(p.id)} disabled={anyPending}>
-                    {collectedMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Mark Collected
-                  </Button>
-                  <Button variant="destructive" onClick={() => cancelMutation.mutate(p.id)} disabled={anyPending}>Cancel Order</Button>
+                {/* External payment reference */}
+                <div className="rounded-lg border border-border p-3 space-y-1">
+                  <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground flex items-center gap-1"><MaterialSymbol name="receipt_long" className="text-sm" /> External Payment Reference</div>
+                  {p.paymentReferenceNumber ? (
+                    <p className="font-mono text-lg font-bold text-foreground">{p.paymentReferenceNumber}</p>
+                  ) : <p className="text-sm text-muted-foreground italic">Parent hasn't submitted a reference yet.</p>}
                 </div>
-              )}
+
+                {/* Previous review */}
+                {p.paymentReviewedAt && (
+                  <div className="rounded-lg border border-dashed border-border p-3 bg-surface-container-low text-sm space-y-1">
+                    <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground flex items-center gap-1"><MaterialSymbol name="history" className="text-sm" /> Review Notes</div>
+                    <p>Reviewed {new Date(p.paymentReviewedAt).toLocaleString()}{p.paymentReviewedBy && <span className="text-muted-foreground"> by {p.paymentReviewedBy}</span>}</p>
+                    {p.paymentReviewNote && <p><span className="text-muted-foreground">Note:</span> {p.paymentReviewNote}</p>}
+                  </div>
+                )}
+
+                {p.notes && <div className="text-sm"><span className="text-muted-foreground">Parent notes:</span> {p.notes}</div>}
+
+                {isActionable(p.status) && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Review note (optional)</Label>
+                    <Textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="Note about this decision…" rows={2} />
+                  </div>
+                )}
+
+                {/* Review actions — design: Reject / Review / Confirm Payment */}
+                {isReviewActionable(p.status) && (
+                  <div className="flex flex-col gap-2 pt-1">
+                    <Button variant="success" onClick={() => confirmMutation.mutate(p.id)} disabled={anyPending}>
+                      {confirmMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <MaterialSymbol name="check_circle" className="text-base mr-1" />} Confirm Payment
+                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="warning" className="flex-1" onClick={() => needsReviewMutation.mutate(p.id)} disabled={anyPending}>
+                        <MaterialSymbol name="flag" className="text-base mr-1" /> Review
+                      </Button>
+                      <Button variant="destructive" className="flex-1" onClick={() => rejectMutation.mutate(p.id)} disabled={anyPending}>
+                        {rejectMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <MaterialSymbol name="cancel" className="text-base mr-1" />} Reject
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Fulfilment actions — design: Mark for Collection / Collected */}
+                {isFulfilmentActionable(p.status) && (
+                  <div className="flex flex-col gap-2 pt-1">
+                    {p.status === "confirmed" && (
+                      <Button onClick={() => readyMutation.mutate(p.id)} disabled={anyPending}>
+                        {readyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <MaterialSymbol name="local_shipping" className="text-base mr-1" />} Mark for Collection
+                      </Button>
+                    )}
+                    <Button variant="success" onClick={() => collectedMutation.mutate(p.id)} disabled={anyPending}>
+                      {collectedMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <MaterialSymbol name="inventory" className="text-base mr-1" />} Mark Collected
+                    </Button>
+                    <Button variant="destructive" onClick={() => cancelMutation.mutate(p.id)} disabled={anyPending}>
+                      <MaterialSymbol name="cancel" className="text-base mr-1" /> Cancel Order
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
