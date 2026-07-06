@@ -56,12 +56,12 @@ function LinkingCodesSection() {
 
       <Card className="border-border shadow-none">
         <Table>
-          <TableHeader className="bg-muted/30">
+          <TableHeader>
             <TableRow>
-              <TableHead>Student</TableHead>
-              <TableHead>Parent Email</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Expires</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Student</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Parent Email</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Expires</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>

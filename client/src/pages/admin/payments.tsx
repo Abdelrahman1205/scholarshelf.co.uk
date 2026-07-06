@@ -161,17 +161,17 @@ function PaymentsSection() {
 
       <Card className="border-border shadow-none">
         <Table>
-          <TableHeader className="bg-muted/30">
+          <TableHeader>
             <TableRow>
-              <TableHead>Order Ref</TableHead>
-              <TableHead>Student</TableHead>
-              <TableHead>Class</TableHead>
-              <TableHead>Payment Ref #</TableHead>
-              <TableHead>Parent</TableHead>
-              <TableHead>Amount</TableHead>
-              <TableHead>Submitted</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Order Ref</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Student</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Class</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Payment Ref #</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Parent</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Amount</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Submitted</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

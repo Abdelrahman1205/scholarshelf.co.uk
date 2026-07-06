@@ -191,10 +191,10 @@ function LevelCard({ level, expanded, onToggle, books, addItemForm, setAddItemFo
             <Table>
               <TableHeader className="bg-muted/20">
                 <TableRow>
-                  <TableHead>Book</TableHead>
-                  <TableHead>Qty</TableHead>
-                  <TableHead>Price</TableHead>
-                  <TableHead className="text-right">Remove</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Book</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Qty</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Price</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Remove</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

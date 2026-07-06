@@ -100,12 +100,12 @@ function FamiliesSection() {
 
       <Card className="border-border shadow-none">
         <Table>
-          <TableHeader className="bg-muted/30">
+          <TableHeader>
             <TableRow>
               <TableHead className="w-8"></TableHead>
-              <TableHead>Family Name</TableHead>
-              <TableHead>Members</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Family Name</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Members</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

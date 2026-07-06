@@ -152,20 +152,20 @@ function ParentsSection() {
       {!isLoading && !isError && (
         <Card className="border-border shadow-none">
           <Table>
-            <TableHeader className="bg-muted/30">
+            <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>School</TableHead>
-                <TableHead>Linked Children</TableHead>
-                <TableHead>Linked Student Names</TableHead>
-                <TableHead>Payments</TableHead>
-                <TableHead>Last Payment</TableHead>
-                <TableHead>Signup/Invite</TableHead>
-                <TableHead>Collection</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Last Login</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Name</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Email</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">School</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Linked Children</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Linked Student Names</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Payments</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Last Payment</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Signup/Invite</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Collection</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Created</TableHead>
+                <TableHead className="text-[10px] font-mono uppercase tracking-wider">Last Login</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

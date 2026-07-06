@@ -157,13 +157,13 @@ function ClassesSection() {
 
       <Card className="border-border shadow-none">
         <Table>
-          <TableHeader className="bg-muted/30">
+          <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Year Group</TableHead>
-              <TableHead>Academic Year</TableHead>
-              <TableHead>Teacher</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Name</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Year Group</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Academic Year</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Teacher</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

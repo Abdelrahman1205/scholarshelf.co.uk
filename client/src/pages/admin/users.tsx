@@ -504,18 +504,18 @@ function UsersList() {
 
       <Card className="border-border shadow-none">
         <Table>
-          <TableHeader className="bg-muted/30">
+          <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Username</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>School</TableHead>
-              <TableHead>Linked Children</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Last Login</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Name</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Username</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Email</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Role</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">School</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Linked Children</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Created</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Last Login</TableHead>
+              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

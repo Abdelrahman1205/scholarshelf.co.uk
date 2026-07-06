@@ -64,7 +64,7 @@ function ReportsSection() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+        <h2 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <BarChart2 className="h-6 w-6" /> School Reports
         </h2>
         <p className="text-muted-foreground mt-1">

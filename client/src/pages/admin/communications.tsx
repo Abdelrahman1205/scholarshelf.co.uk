@@ -197,7 +197,7 @@ function CommunicationsSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+        <h2 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <MessageSquare className="h-6 w-6" /> Communication Oversight
         </h2>
         <p className="text-muted-foreground mt-1">Monitor and manage all parent-teacher conversations across the school.</p>
@@ -236,13 +236,13 @@ function CommunicationsSection() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Subject</TableHead>
-                  <TableHead>Parent</TableHead>
-                  <TableHead>Teacher</TableHead>
-                  <TableHead>Student</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Subject</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Parent</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Teacher</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Student</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
                   <TableHead className="text-center">Messages</TableHead>
-                  <TableHead>Last Updated</TableHead>
+                  <TableHead className="text-[10px] font-mono uppercase tracking-wider">Last Updated</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
