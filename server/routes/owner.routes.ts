@@ -5,7 +5,7 @@
  * Extracted from routes.ts monolith.
  */
 import type { Express, Request, Response, NextFunction } from "express";
-import { storage } from "../storage.js";
+import { storage, getStorageMode } from "../storage.js";
 import {
   requireAuth, requireRole,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
@@ -873,6 +873,68 @@ export function registerOwnerRoutes(app: Express): void {
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to load email status" });
     }
+  });
+
+  // ═══ SYSTEM HEALTH ════════════════════════════════════════════
+  // Real infrastructure telemetry for the platform owner.
+  app.get("/api/owner/system-health", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {
+    const startedAt = Date.now();
+
+    // Database round-trip (real query) → latency + connectivity
+    let dbOk = false;
+    let dbLatencyMs: number | null = null;
+    let schoolsCount = 0;
+    try {
+      const t = Date.now();
+      const schools = await storage.getSchools();
+      dbLatencyMs = Date.now() - t;
+      schoolsCount = schools.length;
+      dbOk = true;
+    } catch {
+      dbOk = false;
+    }
+
+    const storageMode = getStorageMode();
+    const emailConfigured = isResendConfigured();
+    const mem = process.memoryUsage();
+
+    const overallStatus = !dbOk
+      ? "down"
+      : emailConfigured
+      ? "operational"
+      : "degraded";
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      overallStatus,
+      database: {
+        label: "PostgreSQL Cluster (Neon)",
+        status: dbOk ? "healthy" : "down",
+        storageMode,
+        latencyMs: dbLatencyMs,
+        schools: schoolsCount,
+      },
+      email: {
+        label: "Resend Infrastructure",
+        provider: "Resend",
+        status: emailConfigured ? "operational" : "not_configured",
+      },
+      rateLimiter: {
+        label: "Rate Limiter",
+        store: storageMode === "database" ? "postgres" : "memory",
+        status: storageMode === "database" ? "distributed" : "in_memory",
+      },
+      runtime: {
+        node: process.version,
+        platform: `${process.platform}/${process.arch}`,
+        env: process.env.NODE_ENV || "development",
+        uptimeSeconds: Math.round(process.uptime()),
+        rssMb: Math.round(mem.rss / 1024 / 1024),
+        heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+      },
+      responseTimeMs: Date.now() - startedAt,
+    });
   });
 
   app.get("/api/owner/activity", requireRole(...PLATFORM_OWNER_ROLES), async (_req, res) => {

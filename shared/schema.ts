@@ -174,6 +174,24 @@ export const schoolWebsiteSections = pgTable("school_website_sections", {
 export type SchoolWebsiteSection = typeof schoolWebsiteSections.$inferSelect;
 export type InsertSchoolWebsiteSection = typeof schoolWebsiteSections.$inferInsert;
 
+// ── Media library (uploaded assets for the school website / CMS, managed by IT) ──
+export const mediaAssets = pgTable("media_assets", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  kind: text("kind").default("image").notNull(), // image | document | video
+  sizeBytes: integer("size_bytes").default(0).notNull(),
+  dataUri: text("data_uri").notNull(), // base64 data URI (same storage approach as branding)
+  title: text("title"),
+  caption: text("caption"),
+  createdAt: timestamp("created_at").defaultNow(),
+  uploadedBy: varchar("uploaded_by", { length: 36 }).references(() => users.id),
+});
+
+export type MediaAsset = typeof mediaAssets.$inferSelect;
+export type InsertMediaAsset = typeof mediaAssets.$inferInsert;
+
 // Safe-URL validators for CMS content. A section is published to a PUBLIC page,
 // so a stored URL must not carry active content. We allow only navigable schemes
 // and reject javascript:, data:, vbscript:, file:, etc. — closing the stored-XSS

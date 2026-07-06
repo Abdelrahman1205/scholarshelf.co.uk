@@ -4,7 +4,8 @@ import {
   Database, BookOpen, GraduationCap, Users, Settings, LogOut, LayoutDashboard,
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, X,
-  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell, Globe
+  ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell, Globe, Activity,
+  Image as ImageIcon
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -50,6 +51,7 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "Email Status", href: "/admin/email-status", icon: Key },
       { label: "Activity Logs", href: "/admin/activity", icon: History },
       { label: "Settings", href: "/admin/owner-settings", icon: Settings },
+      { label: "System Health", href: "/admin/system-health", icon: Activity },
       { label: "DB Console", href: "/admin/db-console", icon: Database },
     ],
   },
@@ -98,6 +100,7 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
     navItems: [
       { label: "Website Control", href: "/admin/website", icon: LayoutDashboard },
       { label: "Page Sections", href: "/admin/website-content", icon: Globe },
+      { label: "Media Library", href: "/admin/media", icon: ImageIcon },
       { label: "Branding", href: "/admin/branding", icon: Palette },
     ],
   },

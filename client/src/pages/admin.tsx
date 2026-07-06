@@ -35,8 +35,10 @@ import { BrandingSection }          from "./admin/branding";
 import { ReportsSection }           from "./admin/reports";
 import { FamiliesSection }          from "./admin/families";
 import { DbConsoleSection }        from "./admin/db-console";
+import { SystemHealthSection }     from "./admin/system-health";
 import { ItDashboardSection }      from "./admin/it-dashboard";
 import { WebsiteSection }           from "./admin/website";
+import { MediaLibrarySection }      from "./admin/media-library";
 
 // Re-export UserDetailPanel so any external import still works
 export { UserDetailPanel };
@@ -51,6 +53,7 @@ export default function AdminPage({ section }: { section: string }) {
   const sections: Record<string, ReactNode> = {
     website:            <ItDashboardSection />,
     "website-content":  <WebsiteSection />,
+    media:              <MediaLibrarySection />,
     owner:              <OwnerDashboardSection />,
     schools:            <SchoolsSection />,
     "school-details":   <OwnerSchoolDetailsSection />,
@@ -68,6 +71,7 @@ export default function AdminPage({ section }: { section: string }) {
     parents:            <ParentsSection />,
     families:           <FamiliesSection />,
     "db-console":       <DbConsoleSection />,
+    "system-health":    <SystemHealthSection />,
     codes:              <LinkingCodesSection />,
     payments:           <PaymentsSection />,
     allocations:        <AllocationsSection />,
@@ -81,12 +85,12 @@ export default function AdminPage({ section }: { section: string }) {
   const ownerOnlySections = new Set([
     "owner", "schools", "school-details", "pending-setups",
     "admin-invites", "email-status", "activity", "owner-settings",
-    "db-console",
+    "db-console", "system-health",
   ]);
 
   let resolvedSection = section;
 
-  const itAllowedSections = new Set(["website", "website-content", "branding"]);
+  const itAllowedSections = new Set(["website", "website-content", "media", "branding"]);
   // The public-website control surface belongs to IT (and platform owners for
   // support). School admins run EduBook operations, not the website — so even a
   // direct URL to a website section is redirected to their dashboard.
