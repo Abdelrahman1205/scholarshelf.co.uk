@@ -78,11 +78,11 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-0.5">Overview of your classes and book distribution.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-medium text-muted-foreground">Classes</span>
@@ -91,7 +91,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
             <div className="text-2xl font-bold tracking-tight">{isLoading ? "—" : classes.length}</div>
           </CardContent>
         </Card>
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-medium text-muted-foreground">Students</span>
@@ -100,7 +100,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
             <div className="text-2xl font-bold tracking-tight">{isLoading ? "—" : totalStudents}</div>
           </CardContent>
         </Card>
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-medium text-muted-foreground">Distributed</span>
@@ -109,7 +109,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
             <div className="text-2xl font-bold tracking-tight text-emerald-600">{isLoading ? "—" : `${pct}%`}</div>
           </CardContent>
         </Card>
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-medium text-muted-foreground">Pending</span>
@@ -120,7 +120,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
         </Card>
       </div>
       {(pending > 0 || pendingReqs > 0) && (
-        <Card className="border-border shadow-none">
+        <Card className="border-border shadow-none rounded-2xl">
           <CardHeader className="pb-3 pt-4 px-4">
             <CardTitle className="text-sm font-semibold">Action Required</CardTitle>
           </CardHeader>
@@ -260,7 +260,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Book Distribution</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Book Distribution</h1>
           <p className="text-muted-foreground mt-1">Confirm textbook receipt and track absent students.</p>
         </div>
         {classes.length > 0 && (
@@ -292,7 +292,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
       ) : (
         <>
           <div className="grid grid-cols-3 gap-3">
-            <Card className="border-border shadow-none">
+            <Card className="border-border shadow-none rounded-2xl">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-medium text-muted-foreground">Class Size</span>
@@ -301,7 +301,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
                 <div className="text-2xl font-bold tracking-tight">{allocLoading ? "—" : groups.length}</div>
               </CardContent>
             </Card>
-            <Card className="border-border shadow-none">
+            <Card className="border-border shadow-none rounded-2xl">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-medium text-muted-foreground">Distributed</span>
@@ -310,7 +310,7 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
                 <div className="text-2xl font-bold tracking-tight text-emerald-600">{allocLoading ? "—" : `${pct}%`}</div>
               </CardContent>
             </Card>
-            <Card className="border-border shadow-none">
+            <Card className="border-border shadow-none rounded-2xl">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-medium text-muted-foreground">Pending</span>
@@ -497,7 +497,7 @@ function ExtraRequestsSection({ classes }: { classes: ClassItem[] }) {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Extra Copy Requests</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Extra Copy Requests</h1>
           <p className="text-muted-foreground mt-1">Request additional book copies from the school admin.</p>
         </div>
         <Button onClick={() => setOpen(true)} className="gap-2">
@@ -884,7 +884,7 @@ function TeacherMessagesSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Parent Messages</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Parent Messages</h1>
         <p className="text-muted-foreground mt-1">Secure communication with parents regarding their children.</p>
       </div>
 

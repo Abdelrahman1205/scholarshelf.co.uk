@@ -98,7 +98,7 @@ function FinanceDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Finance Dashboard</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Finance Dashboard</h1>
         <p className="text-muted-foreground mt-1">Payment overview and financial health of your school.</p>
       </div>
 
@@ -143,7 +143,7 @@ function FinanceDashboard() {
       </div>
 
       {/* Status breakdown */}
-      <Card>
+      <Card className="rounded-2xl border-border shadow-none">
         <CardHeader>
           <CardTitle className="text-lg">Payment Status Breakdown</CardTitle>
           <CardDescription>Distribution of all payments by current status</CardDescription>
@@ -248,7 +248,7 @@ function PaymentReviewSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Payment Review</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Payment Review</h1>
         <p className="text-muted-foreground mt-1">Review, confirm, reject, or flag payment submissions.</p>
       </div>
 
@@ -286,7 +286,7 @@ function PaymentReviewSection() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
+        <Card className="rounded-2xl border-border shadow-none">
           <CardContent className="p-0">
             <Table>
               <TableHeader>
@@ -451,7 +451,7 @@ function ReportsSection() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Financial Reports</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Financial Reports</h1>
         <p className="text-muted-foreground mt-1">Revenue analysis and payment performance.</p>
       </div>
 
@@ -487,7 +487,7 @@ function ReportsSection() {
       </div>
 
       {stats.monthly.length > 0 && (
-        <Card>
+        <Card className="rounded-2xl border-border shadow-none">
           <CardHeader>
             <CardTitle className="text-lg">Monthly Revenue</CardTitle>
             <CardDescription>Confirmed payments by month (last 6 months)</CardDescription>
@@ -520,7 +520,7 @@ function ReportsSection() {
       )}
 
       {/* Collection rate */}
-      <Card>
+      <Card className="rounded-2xl border-border shadow-none">
         <CardHeader>
           <CardTitle className="text-lg">Collection Performance</CardTitle>
         </CardHeader>

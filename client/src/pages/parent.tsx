@@ -929,7 +929,7 @@ function ParentMessagesSection({ children }: { children: any[] }) {
           </Button>
         </div>
 
-        <Card>
+        <Card className="rounded-2xl border-border shadow-none">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
@@ -1009,14 +1009,14 @@ function ParentMessagesSection({ children }: { children: any[] }) {
       {threadsQuery.isLoading ? (
         <Card><CardContent className="p-8 text-center text-muted-foreground">Loading messages...</CardContent></Card>
       ) : threads.length === 0 ? (
-        <Card>
+        <Card className="rounded-2xl border-border shadow-none">
           <CardContent className="p-8 text-center">
             <MessageSquare className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-muted-foreground">No messages yet. Start a conversation with a teacher.</p>
           </CardContent>
         </Card>
       ) : (
-        <Card>
+        <Card className="rounded-2xl border-border shadow-none">
           <CardContent className="p-0">
             <Table>
               <TableHeader>
