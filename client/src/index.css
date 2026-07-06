@@ -80,14 +80,14 @@
   /* Tighter radius for professional look */
   --radius: 0.5rem;
 
-  /* Dark sidebar — slate-900 style */
-  --sidebar: 222 47% 11%;
-  --sidebar-foreground: 215 20% 68%;
-  --sidebar-primary: 243 75% 65%;
+  /* Light sidebar — ScholarShelf design (white bg, navy active pill) */
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 220 6% 40%;
+  --sidebar-primary: 217 62% 9%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 222 30% 17%;
-  --sidebar-accent-foreground: 210 40% 96%;
-  --sidebar-border: 222 30% 16%;
+  --sidebar-accent: 210 20% 96%;
+  --sidebar-accent-foreground: 217 62% 9%;
+  --sidebar-border: 210 12% 90%;
   --sidebar-ring: 243 75% 59%;
 }
 

@@ -23,6 +23,7 @@ interface NavItem {
   href: string;
   icon: typeof Settings;
   match?: string[];
+  group?: string;
 }
 
 interface NotificationItem {
@@ -75,21 +76,21 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
   admin: {
     label: "School Admin",
     navItems: [
-      { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
-      { label: "Books", href: "/admin/books", icon: BookOpen },
-      { label: "Book Levels", href: "/admin/levels", icon: Layers },
-      { label: "Classes", href: "/admin/classes", icon: GraduationCap },
-      { label: "Students", href: "/admin/students", icon: Users },
-      { label: "Parents", href: "/admin/parents", icon: Users },
-      { label: "Families", href: "/admin/families", icon: Users },
-      { label: "Parent Invites", href: "/admin/codes", icon: Key },
-      { label: "Payments", href: "/admin/payments", icon: CreditCard },
-      { label: "Allocations", href: "/admin/allocations", icon: BoxSelect },
-      { label: "Extra Requests", href: "/admin/requests", icon: ClipboardList },
-      { label: "Communications", href: "/admin/communications", icon: MessageSquare },
-      { label: "Reports", href: "/admin/reports", icon: BarChart2 },
-      { label: "Users", href: "/admin/users", icon: UserPlus },
-      { label: "Branding", href: "/admin/branding", icon: Palette },
+      { label: "Dashboard", href: "/admin", icon: LayoutDashboard, group: "Overview" },
+      { label: "Students", href: "/admin/students", icon: Users, group: "School Data" },
+      { label: "Parents", href: "/admin/parents", icon: Users, group: "School Data" },
+      { label: "Families", href: "/admin/families", icon: Users, group: "School Data" },
+      { label: "Classes", href: "/admin/classes", icon: GraduationCap, group: "School Data" },
+      { label: "Books", href: "/admin/books", icon: BookOpen, group: "Books & Stock" },
+      { label: "Book Levels", href: "/admin/levels", icon: Layers, group: "Books & Stock" },
+      { label: "Payments", href: "/admin/payments", icon: CreditCard, group: "Orders" },
+      { label: "Allocations", href: "/admin/allocations", icon: BoxSelect, group: "Orders" },
+      { label: "Extra Requests", href: "/admin/requests", icon: ClipboardList, group: "Orders" },
+      { label: "Communications", href: "/admin/communications", icon: MessageSquare, group: "Communication" },
+      { label: "Parent Invites", href: "/admin/codes", icon: Key, group: "Communication" },
+      { label: "Reports", href: "/admin/reports", icon: BarChart2, group: "Insights" },
+      { label: "Users", href: "/admin/users", icon: UserPlus, group: "Admin" },
+      { label: "Branding", href: "/admin/branding", icon: Palette, group: "Admin" },
     ],
   },
   it_personnel: {
@@ -220,6 +221,7 @@ export default function Layout({ children }: LayoutProps) {
       label: adminSetupComplete ? "Setup Summary" : "Continue Setup",
       href: "/admin/setup",
       icon: Settings,
+      group: "Overview",
     };
 
     return adminSetupComplete
@@ -319,37 +321,49 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {config && (
+        {/* Single top label only when items are NOT grouped (non-admin roles) */}
+        {config && !navItems.some((i) => i.group) && (
           <div className="px-3 mb-2 text-[10px] uppercase tracking-widest font-medium text-sidebar-foreground/40">
             {config.label}
           </div>
         )}
-        {navItems.map((item) => {
+        {navItems.map((item, idx) => {
           const Icon = item.icon;
           const active = isNavActive(item.href, location);
+          const prevGroup = idx > 0 ? navItems[idx - 1].group : undefined;
+          const showGroupHeader = item.group && item.group !== prevGroup;
           return (
-            <a
-              key={item.href}
-              href={item.href}
-              onClick={(e) => {
-                e.preventDefault();
-                navigateTo(item.href);
-              }}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-100",
-                active
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            <div key={item.href}>
+              {showGroupHeader && (
+                <div className={cn(
+                  "px-3 mb-1 text-[10px] uppercase tracking-widest font-semibold text-sidebar-foreground/40",
+                  idx > 0 && "mt-4"
+                )}>
+                  {item.group}
+                </div>
               )}
-            >
-              <Icon className="h-4 w-4 flex-shrink-0" />
-              <span className="truncate">{item.label}</span>
-              {active && totalNotifications > 0 && notificationItems.find(n => n.href === item.href) && (
-                <span className="ml-auto text-[10px] font-bold bg-sidebar-primary-foreground/20 text-sidebar-primary-foreground px-1.5 py-0.5 rounded-full">
-                  {notificationItems.find(n => n.href === item.href)?.count}
-                </span>
-              )}
-            </a>
+              <a
+                href={item.href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigateTo(item.href);
+                }}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-100",
+                  active
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                )}
+              >
+                <Icon className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">{item.label}</span>
+                {active && totalNotifications > 0 && notificationItems.find(n => n.href === item.href) && (
+                  <span className="ml-auto text-[10px] font-bold bg-sidebar-primary-foreground/20 text-sidebar-primary-foreground px-1.5 py-0.5 rounded-full">
+                    {notificationItems.find(n => n.href === item.href)?.count}
+                  </span>
+                )}
+              </a>
+            </div>
           );
         })}
 
