@@ -206,7 +206,7 @@ function ReportsSection() {
         </section>
 
         <section className="rounded-2xl border border-border bg-card p-6">
-          <div className="flex items-center gap-2 mb-4"><Layers className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Book Levels</h2></div>
+          <div className="flex items-center gap-2 mb-4"><Layers className="h-5 w-5 text-primary" /><h2 className="font-semibold text-foreground">Bundles</h2></div>
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div><span className="text-muted-foreground">Book levels created:</span> <strong>{bl.total}</strong></div>
             <div><span className="text-muted-foreground">Assigned to classes:</span> <strong>{bl.assignedToClasses}</strong></div>

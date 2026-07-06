@@ -77,8 +77,8 @@ function BookLevelsSection() {
     <div className="space-y-5 max-w-[1400px]">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Book Levels</h1>
-          <p className="text-muted-foreground mt-1">Create book levels and assign them to classes.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Bundles</h1>
+          <p className="text-muted-foreground mt-1">Create book bundles and assign them to classes.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setAssignOpen(true)}><GraduationCap className="w-4 h-4 mr-2" /> Assign to Class</Button>
@@ -88,7 +88,7 @@ function BookLevelsSection() {
 
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: "Book Levels", value: levels.length },
+          { label: "Bundles", value: levels.length },
           { label: "Class Assignments", value: classBookLevels.length },
           { label: "Books Catalogued", value: books.length },
         ].map((k) => (
@@ -127,9 +127,9 @@ function BookLevelsSection() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Layers className="h-12 w-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-base font-semibold text-muted-foreground">No Book Levels</h3>
-            <p className="text-sm text-muted-foreground mt-1">Create a book level to group books into bundles for classes.</p>
-            <Button className="mt-4" onClick={() => setAddOpen(true)}><Plus className="w-4 h-4 mr-2" /> Create First Level</Button>
+            <h3 className="text-base font-semibold text-muted-foreground">No Bundles</h3>
+            <p className="text-sm text-muted-foreground mt-1">Create a bundle to group books together for classes.</p>
+            <Button className="mt-4" onClick={() => setAddOpen(true)}><Plus className="w-4 h-4 mr-2" /> Create First Bundle</Button>
           </CardContent>
         </Card>
       ) : (
@@ -145,12 +145,12 @@ function BookLevelsSection() {
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader><DialogTitle>New Book Level</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>New Bundle</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2"><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Year 3 Books" /></div>
             <div className="grid gap-2"><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
           </div>
-          <DialogFooter><Button onClick={() => createLevelMutation.mutate(form)} disabled={createLevelMutation.isPending}>{createLevelMutation.isPending ? "Creating..." : "Create Level"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => createLevelMutation.mutate(form)} disabled={createLevelMutation.isPending}>{createLevelMutation.isPending ? "Creating..." : "Create Bundle"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -108,7 +108,7 @@ function DashboardSection() {
     { label: "Parents Linked", value: summary.parentsLinked ?? 0, icon: Users, href: "/admin/parents" },
     { label: "Students Without Invites", value: summary.parentCodesNotSent ?? 0, icon: Key, href: "/admin/codes", warn: (summary.parentCodesNotSent ?? 0) > 0 },
     { label: "Extra Requests", value: summary.extraCopyRequestsPending ?? 0, icon: ClipboardList, href: "/admin/requests" },
-    { label: "Book Levels", value: summary.totalBookLevels ?? 0, icon: Layers, href: "/admin/levels" },
+    { label: "Bundles", value: summary.totalBookLevels ?? 0, icon: Layers, href: "/admin/levels" },
   ];
 
   const quickActions = [
