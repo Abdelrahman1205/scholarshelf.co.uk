@@ -320,7 +320,7 @@ export default function Layout({ children }: LayoutProps) {
       )}
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 min-h-0 px-3 py-3 space-y-px overflow-y-auto">
         {/* Single top label only when items are NOT grouped (non-admin roles) */}
         {config && !navItems.some((i) => i.group) && (
           <div className="px-3 mb-2 text-[10px] uppercase tracking-widest font-medium text-sidebar-foreground/40">
@@ -336,8 +336,8 @@ export default function Layout({ children }: LayoutProps) {
             <div key={item.href}>
               {showGroupHeader && (
                 <div className={cn(
-                  "px-3 mb-1 text-[10px] uppercase tracking-widest font-semibold text-sidebar-foreground/40",
-                  idx > 0 && "mt-4"
+                  "px-3 mb-0.5 text-[10px] uppercase tracking-widest font-semibold text-sidebar-foreground/40",
+                  idx > 0 && "mt-2.5"
                 )}>
                   {item.group}
                 </div>
@@ -349,7 +349,7 @@ export default function Layout({ children }: LayoutProps) {
                   navigateTo(item.href);
                 }}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-100",
+                  "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors duration-100",
                   active
                     ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
