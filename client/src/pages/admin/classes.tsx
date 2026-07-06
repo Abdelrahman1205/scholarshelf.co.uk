@@ -143,48 +143,61 @@ function ClassesSection() {
     </div>
   );
 
+  const ClassCard = ({ cls }: { cls: any }) => (
+    <div className="group rounded-2xl border border-border bg-card p-4 hover:border-primary/30 transition">
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><GraduationCap className="w-4.5 h-4.5 text-primary" /></div>
+          <div className="min-w-0">
+            <div className="font-semibold text-foreground truncate">{cls.name}</div>
+            <div className="text-xs text-muted-foreground">{cls.academicYear || "—"}</div>
+          </div>
+        </div>
+        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => { setSelectedClass(cls); setForm({ name: cls.name || "", academicYear: cls.academicYear || "2026-2027", yearGroup: cls.yearGroup || "", teacherId: cls.teacherId || "none" }); setEditOpen(true); }} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="w-3.5 h-3.5" /></button>
+          <button onClick={() => { setSelectedClass(cls); setDeleteOpen(true); }} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        {cls.yearGroup && <Badge variant="secondary" className="text-xs">{cls.yearGroup}</Badge>}
+        <Badge variant="outline" className="text-xs font-normal">{users.find((u: any) => u.id === cls.teacherId)?.name || "No teacher"}</Badge>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
+    <div className="space-y-5 max-w-[1400px]">
+      <div className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Classes</h1>
-          <p className="text-muted-foreground text-sm mt-1">Manage school classes and teacher assignments.</p>
+          <p className="text-muted-foreground mt-1">Manage school classes and teacher assignments.</p>
         </div>
         <Button onClick={() => { setForm(emptyForm); setAddOpen(true); }}>
           <Plus className="w-4 h-4 mr-2" /> Add Class
         </Button>
       </div>
 
-      <Card className="border-border shadow-none">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Name</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Year Group</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Academic Year</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Teacher</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {classes.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No classes found. Add your first class above.</TableCell></TableRow>
-            )}
-            {sortedGroups.map((yg) => (
-              <>
-                <TableRow key={`group-${yg}`} className="bg-muted/20 hover:bg-muted/20">
-                  <TableCell colSpan={5} className="py-1.5 px-4">
-                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{yg}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">({grouped[yg].length} class{grouped[yg].length !== 1 ? "es" : ""})</span>
-                  </TableCell>
-                </TableRow>
-                {grouped[yg].map((cls: any) => <ClassRow key={cls.id} cls={cls} />)}
-              </>
-            ))}
-            {noGroup.map((cls: any) => <ClassRow key={cls.id} cls={cls} />)}
-          </TableBody>
-        </Table>
-      </Card>
+      {classes.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-16 text-center">
+          <GraduationCap className="w-8 h-8 text-muted-foreground/30 mb-2" />
+          <p className="text-sm text-muted-foreground">No classes yet. Add your first class.</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {sortedGroups.map((yg) => (
+            <div key={yg}>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">{yg} <span className="text-muted-foreground/60">· {grouped[yg].length}</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{grouped[yg].map((cls: any) => <ClassCard key={cls.id} cls={cls} />)}</div>
+            </div>
+          ))}
+          {noGroup.length > 0 && (
+            <div>
+              {sortedGroups.length > 0 && <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Ungrouped</div>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{noGroup.map((cls: any) => <ClassCard key={cls.id} cls={cls} />)}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">

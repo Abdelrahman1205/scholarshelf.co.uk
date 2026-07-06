@@ -1,57 +1,42 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
-  BookOpen, PackageSearch, Layers, Key, CreditCard, BoxSelect, Search, Plus,
-  Mail, UserPlus, Trash2, Pencil, AlertTriangle, ChevronDown, ChevronRight,
-  QrCode, Download, ScanBarcode, Camera, X, Loader2, GraduationCap, Users,
-  Package, TrendingUp, TrendingDown, ClipboardList, CheckCircle2, Clock,
-  XCircle, Eye, History, BarChart2, Settings, MessageSquare, ArrowLeft,
-  Archive, RefreshCw, Printer, ShieldAlert, ShieldOff, Ban
+  Search, Plus, ScanBarcode, X, Loader2, Package, Pencil, Trash2,
+  Printer, BookOpen, AlertTriangle, QrCode,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
+import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import {
-  navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
-  normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
-} from "./shared";
 import { BarcodeDisplay } from "./students";
-
 import { Html5Qrcode } from "html5-qrcode";
-import JsBarcode from "jsbarcode";
-// ─── BOOKS ────────────────────────────────────────────────────────────────────
+
+// ─── BOOKS (master-detail rebuild) ──────────────────────────────────────────
 function BooksSection() {
   const { toast } = useToast();
   const { user } = useAuth();
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [lowOnly, setLowOnly] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
   const [selectedBook, setSelectedBook] = useState<any>(null);
+  const [detailBook, setDetailBook] = useState<any>(null);
   const [form, setForm] = useState({ title: "", author: "", isbn: "", price: "", description: "", isActive: true, stockQuantity: 0, lowStockThreshold: 10, reorderQuantity: 50 });
   const [stockForm, setStockForm] = useState({ quantity: 0, type: "purchase", reason: "" });
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [isbnLooking, setIsbnLooking] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const [barcodeBook, setBarcodeBook] = useState<any>(null);
-  const [barcodeOpen, setBarcodeOpen] = useState(false);
-  const [scanInput, setScanInput] = useState("");
-  const [scanResult, setScanResult] = useState<any>(null);
-  const [scanNotFound, setScanNotFound] = useState(false);
 
   const { data: books = [] } = useQuery<any[]>({ queryKey: ["/api/books"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -62,14 +47,21 @@ function BooksSection() {
       if (res.ok) {
         const data = await res.json();
         setForm((prev) => ({ ...prev, isbn: data.isbn || prev.isbn, title: data.title || prev.title, author: data.author || prev.author, description: data.description || prev.description }));
-        toast({ title: "Book Found", description: `"${data.title}" auto-filled.` });
+        toast({ title: "Book found", description: `"${data.title}" auto-filled.` });
       } else {
         setForm((prev) => ({ ...prev, isbn }));
-        toast({ title: "ISBN Scanned", description: "Book not found in database — please fill in manually." });
+        toast({ title: "ISBN scanned", description: "Not found — please fill in manually." });
       }
-    } catch {
-      setForm((prev) => ({ ...prev, isbn }));
-    } finally { setIsbnLooking(false); }
+    } catch { setForm((prev) => ({ ...prev, isbn })); } finally { setIsbnLooking(false); }
+  }
+
+  async function handleScanInput(code: string) {
+    if (!code.trim()) return;
+    try {
+      const res = await fetch(`/api/books/scan/${encodeURIComponent(code.trim())}`, { credentials: "include" });
+      if (res.ok) { const book = await res.json(); setDetailBook(book); toast({ title: "Book found", description: book.title }); }
+      else toast({ title: "Not found", description: `No book matches "${code}".`, variant: "destructive" });
+    } catch { toast({ title: "Scan failed", variant: "destructive" }); }
   }
 
   async function startScanner() {
@@ -79,27 +71,15 @@ function BooksSection() {
         const html5Qr = new Html5Qrcode("barcode-reader");
         scannerRef.current = html5Qr;
         await html5Qr.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 300, height: 150 } } as any,
-          (decodedText) => { const code = decodedText.trim(); stopScanner(); setScanInput(code); handleScanInput(code); }, () => {});
+          (decodedText) => { const code = decodedText.trim(); stopScanner(); handleScanInput(code); }, () => {});
       } catch (err: any) { setScannerError(err?.message || "Could not access camera."); setScannerOpen(false); }
     }, 100);
   }
-
   async function stopScanner() {
     if (scannerRef.current) { try { await scannerRef.current.stop(); scannerRef.current.clear(); } catch {} scannerRef.current = null; }
     setScannerOpen(false);
   }
-
-  useEffect(() => { return () => { if (scannerRef.current) { try { scannerRef.current.stop(); scannerRef.current.clear(); } catch {} } }; }, []);
-
-  async function handleScanInput(code: string) {
-    if (!code.trim()) return;
-    setScanNotFound(false); setScanResult(null);
-    try {
-      const res = await fetch(`/api/books/scan/${encodeURIComponent(code.trim())}`, { credentials: "include" });
-      if (res.ok) { const book = await res.json(); setScanResult(book); setScanNotFound(false); }
-      else { setScanNotFound(true); }
-    } catch { setScanNotFound(true); }
-  }
+  useEffect(() => () => { if (scannerRef.current) { try { scannerRef.current.stop(); scannerRef.current.clear(); } catch {} } }, []);
 
   function printBarcode(book: any) {
     const svg = document.querySelector("#barcode-print-area svg");
@@ -111,41 +91,30 @@ function BooksSection() {
     win.document.close();
   }
 
-  const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/books", data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setAddOpen(false); resetForm(); toast({ title: "Book added" }); },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("PATCH", `/api/books/${selectedBook?.id}`, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setEditOpen(false); toast({ title: "Book updated" }); },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", `/api/books/${selectedBook?.id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setDeleteOpen(false); toast({ title: "Book deleted" }); },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
-  });
-
-  const stockMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/books/${selectedBook?.id}/stock`, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setStockOpen(false); toast({ title: "Stock updated" }); },
-    onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
-  });
+  const createMutation = useMutation({ mutationFn: (data: any) => apiRequest("POST", "/api/books", data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setAddOpen(false); resetForm(); toast({ title: "Book added" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
+  const updateMutation = useMutation({ mutationFn: (data: any) => apiRequest("PATCH", `/api/books/${selectedBook?.id}`, data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setEditOpen(false); toast({ title: "Book updated" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
+  const deleteMutation = useMutation({ mutationFn: () => apiRequest("DELETE", `/api/books/${selectedBook?.id}`), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setDeleteOpen(false); setDetailBook(null); toast({ title: "Book deleted" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
+  const stockMutation = useMutation({ mutationFn: (data: any) => apiRequest("POST", `/api/books/${selectedBook?.id}/stock`, data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/books"] }); setStockOpen(false); toast({ title: "Stock updated" }); }, onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }) });
 
   function resetForm() { setForm({ title: "", author: "", isbn: "", price: "", description: "", isActive: true, stockQuantity: 0, lowStockThreshold: 10, reorderQuantity: 50 }); }
+  const isLow = (b: any) => (b.stockQuantity || 0) <= (b.lowStockThreshold || 10);
 
-  const filtered = books.filter((b: any) => b.title?.toLowerCase().includes(search.toLowerCase()) || b.author?.toLowerCase().includes(search.toLowerCase()) || b.isbn?.toLowerCase().includes(search.toLowerCase()) || b.bookCode?.toLowerCase().includes(search.toLowerCase()));
+  const filtered = books.filter((b: any) => {
+    const q = search.toLowerCase();
+    const matchesSearch = !q || b.title?.toLowerCase().includes(q) || b.author?.toLowerCase().includes(q) || b.isbn?.toLowerCase().includes(q) || b.bookCode?.toLowerCase().includes(q);
+    const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? b.isActive : !b.isActive);
+    const matchesLow = !lowOnly || isLow(b);
+    return matchesSearch && matchesStatus && matchesLow;
+  });
 
+  const openEdit = (b: any) => { setSelectedBook(b); setForm({ title: b.title || "", author: b.author || "", isbn: b.isbn || "", price: b.price || "", description: b.description || "", isActive: b.isActive ?? true, stockQuantity: b.stockQuantity || 0, lowStockThreshold: b.lowStockThreshold || 10, reorderQuantity: b.reorderQuantity || 50 }); setEditOpen(true); };
   const bookFormFields = (
     <>
-      {isbnLooking && <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded-md"><Loader2 className="h-4 w-4 animate-spin" /> Looking up book details...</div>}
+      {isbnLooking && <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded-md"><Loader2 className="h-4 w-4 animate-spin" /> Looking up book details…</div>}
       <div className="grid gap-2"><Label>Title *</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2"><Label>Author</Label><Input value={form.author} onChange={(e) => setForm({ ...form, author: e.target.value })} /></div>
-        <div className="grid gap-2"><Label>ISBN</Label><Input value={form.isbn} onChange={(e) => setForm({ ...form, isbn: e.target.value })} /></div>
+        <div className="grid gap-2"><Label>ISBN</Label><Input value={form.isbn} onChange={(e) => setForm({ ...form, isbn: e.target.value })} onBlur={(e) => e.target.value && lookupIsbn(e.target.value)} /></div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2"><Label>Price (£)</Label><Input type="number" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
@@ -159,9 +128,12 @@ function BooksSection() {
     </>
   );
 
+  const b = detailBook;
+
   return (
     <div className="space-y-5 max-w-[1400px]">
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-end">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Book Catalogue</h1>
           <p className="text-muted-foreground mt-1">Manage titles, stock levels, and printable barcodes.</p>
@@ -172,92 +144,97 @@ function BooksSection() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input type="search" placeholder="Search by title, author, ISBN, or book code..." className="pl-9 bg-card" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_320px] gap-4">
+        {/* Filters */}
+        <div className="rounded-2xl border border-border bg-card p-5 h-fit space-y-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-foreground">Filters</h2>
+            <button onClick={() => { setSearch(""); setStatusFilter("all"); setLowOnly(false); }} className="text-xs text-primary hover:underline">Reset</button>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Quick Find</div>
+            <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Title, author, ISBN, code…" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+          </div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Status</div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+            </Select>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} className="rounded border-border" />
+            <span className="text-foreground">Low stock only</span>
+          </label>
         </div>
-        <div className="relative max-w-xs">
-          <ScanBarcode className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Scan or type book code..." className="pl-9 bg-card font-mono" value={scanInput} onChange={(e) => setScanInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { handleScanInput(scanInput); } }} />
+
+        {/* Table */}
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="px-5 py-3 border-b border-border text-sm"><strong className="text-foreground">{filtered.length}</strong> <span className="text-muted-foreground">book{filtered.length !== 1 ? "s" : ""}</span></div>
+          <div className="overflow-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Title</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Price</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Stock</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={3} className="text-center text-muted-foreground py-10">{search ? "No matching books." : "No books yet — add your first."}</td></tr>
+                ) : filtered.map((book: any) => (
+                  <tr key={book.id} onClick={() => setDetailBook(book)} className={cn("border-b border-border cursor-pointer hover:bg-muted/20", detailBook?.id === book.id && "bg-primary/5")}>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-foreground">{book.title}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{book.bookCode || "—"}{book.author ? ` · ${book.author}` : ""}</div>
+                    </td>
+                    <td className="px-4 py-3 font-medium">£{parseFloat(book.price || "0").toFixed(2)}</td>
+                    <td className="px-4 py-3"><span className={isLow(book) ? "text-amber-600 font-semibold" : "text-foreground"}>{book.stockQuantity || 0}</span>{isLow(book) && <AlertTriangle className="h-3 w-3 text-amber-500 inline ml-1" />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Detail panel */}
+        <div className="rounded-2xl border border-border bg-card p-5 h-fit">
+          {!b ? (
+            <div className="text-center py-12"><BookOpen className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" /><p className="text-sm text-muted-foreground">Select a book to see details.</p></div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between">
+                <div><div className="font-semibold text-foreground">{b.title}</div><div className="text-xs text-muted-foreground">{b.author || "—"}</div></div>
+                <button onClick={() => setDetailBook(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Code</div><div className="font-mono text-foreground">{b.bookCode || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">ISBN</div><div className="font-mono text-foreground">{b.isbn || "—"}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Price</div><div className="text-foreground">£{parseFloat(b.price || "0").toFixed(2)}</div></div>
+                <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Stock</div><div className={isLow(b) ? "text-amber-600 font-semibold" : "text-foreground"}>{b.stockQuantity || 0}</div></div>
+              </div>
+              {b.bookCode && (
+                <div className="rounded-lg border border-border p-3 flex flex-col items-center gap-1" id="barcode-print-area">
+                  <BarcodeDisplay value={b.bookCode} />
+                  <p className="text-xs font-mono">{b.bookCode}</p>
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <Button variant="outline" size="sm" className="justify-start" onClick={() => { setSelectedBook(b); setStockForm({ quantity: 0, type: "purchase", reason: "" }); setStockOpen(true); }}><Package className="w-4 h-4 mr-2" /> Adjust stock</Button>
+                {b.bookCode && <Button variant="outline" size="sm" className="justify-start" onClick={() => printBarcode(b)}><Printer className="w-4 h-4 mr-2" /> Print barcode</Button>}
+                <Button variant="outline" size="sm" className="justify-start" onClick={() => openEdit(b)}><Pencil className="w-4 h-4 mr-2" /> Edit book</Button>
+                <Button variant="outline" size="sm" className="justify-start text-destructive hover:text-destructive" onClick={() => { setSelectedBook(b); setDeleteOpen(true); }}><Trash2 className="w-4 h-4 mr-2" /> Delete book</Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-      {scanResult && (
-        <Alert className="border-emerald-200 bg-emerald-50">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          <AlertTitle className="text-emerald-800">Book Found</AlertTitle>
-          <AlertDescription className="text-emerald-700">
-            <strong>{scanResult.title}</strong> by {scanResult.author || "Unknown"} — Stock: {scanResult.stockQuantity || 0} — Code: <span className="font-mono">{scanResult.bookCode}</span>
-            <Button variant="ghost" size="sm" className="ml-2" onClick={() => { setScanResult(null); setScanInput(""); }}>Dismiss</Button>
-          </AlertDescription>
-        </Alert>
-      )}
-      {scanNotFound && (
-        <Alert variant="destructive">
-          <XCircle className="h-4 w-4" />
-          <AlertTitle>Not Found</AlertTitle>
-          <AlertDescription>No book matches code "{scanInput}". <Button variant="ghost" size="sm" onClick={() => { setScanNotFound(false); setScanInput(""); }}>Dismiss</Button></AlertDescription>
-        </Alert>
-      )}
 
-      <div className="rounded-2xl border border-border bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Title</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Author</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Book Code</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">ISBN</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Price</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Stock</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
-              <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((book: any) => {
-              const isLow = (book.stockQuantity || 0) <= (book.lowStockThreshold || 10);
-              return (
-                <TableRow key={book.id}>
-                  <TableCell className="font-medium">{book.title}</TableCell>
-                  <TableCell className="text-muted-foreground">{book.author || "—"}</TableCell>
-                  <TableCell className="text-sm font-mono">
-                    {book.bookCode ? (
-                      <Button variant="ghost" size="sm" className="h-auto py-0.5 px-1 font-mono text-xs" onClick={() => { setBarcodeBook(book); setBarcodeOpen(true); }}>{book.bookCode}</Button>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-sm font-mono">{book.isbn || "—"}</TableCell>
-                  <TableCell>£{parseFloat(book.price).toFixed(2)}</TableCell>
-                  <TableCell>
-                    <span className={isLow ? "text-amber-600 font-semibold" : ""}>{book.stockQuantity || 0}</span>
-                    {isLow && <AlertTriangle className="h-3 w-3 text-amber-500 inline ml-1" />}
-                  </TableCell>
-                  <TableCell><Badge variant={book.isActive ? "default" : "secondary"} className={book.isActive ? "bg-emerald-100 text-emerald-700 border-emerald-200" : ""}>{book.isActive ? "Active" : "Inactive"}</Badge></TableCell>
-                  <TableCell className="text-right space-x-1">
-                    <Button variant="ghost" size="sm" title="Adjust Stock" onClick={() => { setSelectedBook(book); setStockForm({ quantity: 0, type: "purchase", reason: "" }); setStockOpen(true); }}>
-                      <Package className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => { setSelectedBook(book); setForm({ title: book.title || "", author: book.author || "", isbn: book.isbn || "", price: book.price || "", description: book.description || "", isActive: book.isActive ?? true, stockQuantity: book.stockQuantity || 0, lowStockThreshold: book.lowStockThreshold || 10, reorderQuantity: book.reorderQuantity || 50 }); setEditOpen(true); }}>
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedBook(book); setDeleteOpen(true); }}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {filtered.length === 0 && (
-              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-10">{search ? "No matching books" : "No books yet. Add your first book above."}</TableCell></TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Scanner Dialog */}
+      {/* Scanner dialog */}
       <Dialog open={scannerOpen} onOpenChange={(open) => { if (!open) stopScanner(); }}>
         <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Scan Book Code (CODE128)</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Scan Book Code</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div id="barcode-reader" className="w-full rounded-lg overflow-hidden bg-black min-h-[280px]" />
             {scannerError && <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{scannerError}</div>}
@@ -266,31 +243,28 @@ function BooksSection() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Dialog */}
+      {/* Add dialog */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader><DialogTitle>Add New Book</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">{bookFormFields}</div>
-          <DialogFooter><Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending}>{createMutation.isPending ? "Adding..." : "Add Book"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => createMutation.mutate(form)} disabled={!form.title.trim() || createMutation.isPending}>{createMutation.isPending ? "Adding…" : "Add Book"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Edit Dialog */}
+      {/* Edit dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader><DialogTitle>Edit Book</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">{bookFormFields}</div>
-          <DialogFooter><Button onClick={() => updateMutation.mutate(form)} disabled={updateMutation.isPending}>{updateMutation.isPending ? "Saving..." : "Save Changes"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => updateMutation.mutate(form)} disabled={updateMutation.isPending}>{updateMutation.isPending ? "Saving…" : "Save Changes"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Stock Adjustment Dialog */}
+      {/* Stock dialog */}
       <Dialog open={stockOpen} onOpenChange={setStockOpen}>
         <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Adjust Stock — {selectedBook?.title}</DialogTitle>
-            <DialogDescription>Current stock: {selectedBook?.stockQuantity || 0}</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Adjust Stock — {selectedBook?.title}</DialogTitle><DialogDescription>Current stock: {selectedBook?.stockQuantity || 0}</DialogDescription></DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label>Type</Label>
@@ -307,43 +281,22 @@ function BooksSection() {
             <div className="grid gap-2"><Label>Quantity</Label><Input type="number" min="1" value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: parseInt(e.target.value) || 0 })} /></div>
             <div className="grid gap-2"><Label>Reason (optional)</Label><Input value={stockForm.reason} onChange={(e) => setStockForm({ ...stockForm, reason: e.target.value })} /></div>
           </div>
-          <DialogFooter><Button onClick={() => stockMutation.mutate(stockForm)} disabled={stockMutation.isPending}>{stockMutation.isPending ? "Updating..." : "Update Stock"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => stockMutation.mutate(stockForm)} disabled={stockMutation.isPending}>{stockMutation.isPending ? "Updating…" : "Update Stock"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Dialog */}
+      {/* Delete dialog */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete Book</AlertDialogTitle><AlertDialogDescription>Are you sure you want to delete "{selectedBook?.title}"?</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>Delete Book</AlertDialogTitle><AlertDialogDescription>Delete "{selectedBook?.title}"? This cannot be undone.</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Barcode View/Print Dialog */}
-      <Dialog open={barcodeOpen} onOpenChange={setBarcodeOpen}>
-        <DialogContent className="sm:max-w-[420px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><ScanBarcode className="h-5 w-5" /> Book Barcode (CODE128)</DialogTitle>
-            <DialogDescription>{barcodeBook?.title}{barcodeBook?.author ? ` — ${barcodeBook.author}` : ""}</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col items-center gap-2 py-4" id="barcode-print-area">
-            {(user as any)?.schoolName && <p className="text-xs text-muted-foreground">{(user as any).schoolName}</p>}
-            {barcodeBook?.bookCode && <BarcodeDisplay value={barcodeBook.bookCode} />}
-            <p className="text-sm font-mono font-medium">{barcodeBook?.bookCode}</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBarcodeOpen(false)}>Close</Button>
-            <Button onClick={() => printBarcode(barcodeBook)}><Printer className="w-4 h-4 mr-2" /> Print Label</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
-
-// ─── BOOK LEVELS ───────────────────────────────────────────────
 
 export { BooksSection };
