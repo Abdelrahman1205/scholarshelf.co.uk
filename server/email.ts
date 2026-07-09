@@ -655,3 +655,42 @@ export async function sendUnpaidReminderEmail(
     wrapEmail("Payment reminder", body, branding)
   );
 }
+
+// ---------------------------------------------------------------------------
+// 13. Teacher — book list (bundle) updated for a class
+// ---------------------------------------------------------------------------
+export async function sendClassBookListUpdatedEmail(
+  to: string,
+  teacherName: string,
+  className: string,
+  bundleName: string,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const firstName = (teacherName || "").trim().split(/\s+/)[0] || "there";
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Book list updated for ${className}</h2>
+    <p>Hi ${firstName}, the book list for your class has been updated on Scholar Shelf.</p>
+    <table style="border-collapse:collapse;width:100%;margin:20px 0;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Class</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${className}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Assigned bundle</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${bundleName}</td>
+      </tr>
+    </table>
+    <p>Please review the updated list so you know which books your class will receive.</p>
+    <p style="text-align:center;margin:26px 0;">
+      <a href="https://scholarshelf.co.uk/teacher" style="background:#1e3a5f;color:#ffffff;text-decoration:none;padding:11px 26px;border-radius:6px;font-weight:bold;display:inline-block;">Open my class</a>
+    </p>
+    <p style="color:#6b7280;font-size:13px;margin-top:20px;">
+      You're receiving this because you're the assigned teacher for this class.
+    </p>
+  `;
+  return sendEmail(
+    to,
+    `Scholar Shelf: Book list updated for ${className}`,
+    wrapEmail("Book list updated", body, branding)
+  );
+}

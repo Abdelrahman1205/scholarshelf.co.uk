@@ -28,6 +28,7 @@ import {
   canViewBranding, canManageBranding, canManageBrandingOperation, resolveTenantBranding,
   getBrandingPermissionSet,
 } from "../middleware/auth.js";
+import { sendClassBookListUpdatedEmail } from "../email.js";
 
 
 export function registerBookRoutes(app: Express): void {
@@ -304,6 +305,29 @@ export function registerBookRoutes(app: Express): void {
       }
 
       const cbl = await storage.assignClassBookLevel(req.body);
+
+      // Notify the class's assigned teacher that their book list changed (fire-and-forget).
+      try {
+        const [classes, bookLevels] = await Promise.all([
+          storage.getClasses(sid),
+          storage.getBookLevels(sid),
+        ]);
+        const cls = classes.find((c) => c.id === cbl.classId);
+        const bundle = bookLevels.find((b) => b.id === cbl.bookLevelId);
+        if (cls?.teacherId) {
+          const teacher = await storage.getUserById(cls.teacherId);
+          if (teacher?.email) {
+            sendClassBookListUpdatedEmail(
+              teacher.email,
+              teacher.name,
+              cls.name,
+              bundle?.name || "a book bundle",
+              await getEmailBrandingForSchool(req, sid),
+            ).catch(() => {});
+          }
+        }
+      } catch { /* never block assignment on email */ }
+
       res.status(201).json(cbl);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
