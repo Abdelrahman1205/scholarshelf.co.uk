@@ -385,3 +385,157 @@ export async function sendPaymentRejectedEmail(
     wrapEmail("Payment rejected", body, branding)
   );
 }
+
+// ---------------------------------------------------------------------------
+// 7. Welcome (parent account created)
+// ---------------------------------------------------------------------------
+export async function sendWelcomeParentEmail(
+  to: string,
+  parentName: string,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const firstName = (parentName || "").trim().split(/\s+/)[0] || "there";
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Welcome to Scholar Shelf, ${firstName} 👋</h2>
+    <p>Your parent account is ready. Scholar Shelf is where your school manages the books your child needs each year — you can link your children, review their book lists, pay, and collect, all in one place.</p>
+    <p><strong>Getting started:</strong></p>
+    <ol style="padding-left:20px;color:#374151;">
+      <li>Sign in at <a href="https://scholarshelf.co.uk/login" style="color:#1e3a5f;">scholarshelf.co.uk/login</a></li>
+      <li>Go to <strong>Link Child</strong> and enter the linking code your school sent you</li>
+      <li>Review the book list and complete payment when you're ready</li>
+    </ol>
+    <p style="text-align:center;margin:28px 0;">
+      <a href="https://scholarshelf.co.uk/login"
+         style="background:#1e3a5f;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-weight:bold;display:inline-block;">
+        Go to my account
+      </a>
+    </p>
+    <p style="color:#6b7280;font-size:13px;margin-top:24px;">
+      If you didn't create this account, you can safely ignore this email.
+    </p>
+  `;
+  return sendEmail(to, "Welcome to Scholar Shelf", wrapEmail("Welcome to Scholar Shelf", body, branding));
+}
+
+// ---------------------------------------------------------------------------
+// 8. Payment instructions (order created → how to pay)
+// ---------------------------------------------------------------------------
+export async function sendPaymentInstructionsEmail(
+  to: string,
+  paymentReference: string,
+  totalAmount: string,
+  paymentAppName: string | null | undefined,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const appName = (paymentAppName || "").trim();
+  const appLine = appName
+    ? `<p>Please pay using your school's payment app: <strong>${appName}</strong>.</p>`
+    : `<p>Please follow your school's usual payment method to complete this order.</p>`;
+
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Your order is ready — here's how to pay</h2>
+    <p>Thanks for placing your Scholar Shelf book order. To complete it, please make your payment and then submit your reference in the app.</p>
+    <table style="border-collapse:collapse;width:100%;margin:20px 0;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Amount due</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">£${totalAmount}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Payment reference</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${paymentReference}</td>
+      </tr>
+    </table>
+    ${appLine}
+    <p><strong>Important:</strong> use the payment reference <strong>${paymentReference}</strong> so your school can match your payment to your order.</p>
+    <p style="text-align:center;margin:28px 0;">
+      <a href="https://scholarshelf.co.uk/login"
+         style="background:#1e3a5f;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-weight:bold;display:inline-block;">
+        Submit my payment reference
+      </a>
+    </p>
+    <p style="color:#6b7280;font-size:13px;margin-top:24px;">
+      Once you've paid, sign in and submit your reference so your school can confirm it.
+      You'll get an email when your payment is verified.
+    </p>
+  `;
+  return sendEmail(
+    to,
+    `Scholar Shelf: Payment instructions (Ref: ${paymentReference})`,
+    wrapEmail("How to pay", body, branding)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 9. Books ready for collection
+// ---------------------------------------------------------------------------
+export async function sendBooksReadyForCollectionEmail(
+  to: string,
+  paymentReference: string,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const schoolName = (branding?.schoolName || "").trim();
+  const whereLine = schoolName
+    ? `Your books are ready to collect from <strong>${schoolName}</strong>.`
+    : `Your books are ready to collect from your school.`;
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Your books are ready to collect 📚</h2>
+    <p>${whereLine}</p>
+    <table style="border-collapse:collapse;width:100%;margin:20px 0;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Order reference</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${paymentReference}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Status</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#16a34a;font-weight:bold;">Ready for collection</td>
+      </tr>
+    </table>
+    <p>Please bring your order reference when collecting. Your school will let you know their collection times if you're unsure.</p>
+    <p style="color:#6b7280;font-size:13px;margin-top:24px;">
+      Thank you for using Scholar Shelf.
+    </p>
+  `;
+  return sendEmail(
+    to,
+    `Scholar Shelf: Your books are ready to collect (Ref: ${paymentReference})`,
+    wrapEmail("Ready for collection", body, branding)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 10. Collection completed (receipt)
+// ---------------------------------------------------------------------------
+export async function sendCollectionCompletedEmail(
+  to: string,
+  paymentReference: string,
+  totalAmount: string,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const collectedOn = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Books collected — you're all set ✓</h2>
+    <p>This confirms your Scholar Shelf books have been collected. Keep this email as your receipt.</p>
+    <table style="border-collapse:collapse;width:100%;margin:20px 0;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Order reference</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${paymentReference}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Amount paid</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">£${totalAmount}</td>
+      </tr>
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Collected on</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;">${collectedOn}</td>
+      </tr>
+    </table>
+    <p style="color:#6b7280;font-size:13px;margin-top:24px;">
+      If anything looks wrong with your order, please contact your school directly.
+    </p>
+  `;
+  return sendEmail(
+    to,
+    `Scholar Shelf: Books collected — receipt (Ref: ${paymentReference})`,
+    wrapEmail("Collection complete", body, branding)
+  );
+}

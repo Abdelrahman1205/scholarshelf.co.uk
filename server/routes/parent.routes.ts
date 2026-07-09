@@ -30,7 +30,7 @@ import {
   getBrandingPermissionSet,
 } from "../middleware/auth.js";
 import {
-  sendPaymentSubmittedEmail, isResendConfigured,
+  sendPaymentSubmittedEmail, isResendConfigured, sendPaymentInstructionsEmail,
 } from "../email.js";
 
 /**
@@ -254,6 +254,19 @@ export function registerParentRoutes(app: Express): void {
         userId: req.session.userId!,
         metadata: `Order created: ref=${reference}, amount=£${total.toFixed(2)}, baskets=${basketIds.length}`,
       });
+
+      // Payment-instructions email (fire-and-forget). Includes the amount, the
+      // reference to quote, and the school's payment app name if configured.
+      try {
+        const school = paymentSchoolId ? await storage.getSchoolById(paymentSchoolId) : undefined;
+        sendPaymentInstructionsEmail(
+          user.email,
+          reference,
+          total.toFixed(2),
+          school?.paymentAppName ?? null,
+          paymentSchoolId ? await getEmailBrandingForSchool(req, paymentSchoolId) : undefined,
+        ).catch(() => {});
+      } catch { /* never block order creation on email */ }
 
       res.status(201).json(payment);
     } catch (e: any) {

@@ -39,7 +39,7 @@ import crypto from "crypto";
 import {
   sendInviteEmail, sendSchoolSetupInviteEmail, sendPasswordResetEmail,
   sendParentCodeEmail, sendPaymentSubmittedEmail, sendPaymentVerifiedEmail,
-  sendPaymentRejectedEmail, isResendConfigured,
+  sendPaymentRejectedEmail, isResendConfigured, sendWelcomeParentEmail,
 } from "../email.js";
 import {
   signInSchema, signUpParentSchema, acceptInviteSchema,
@@ -205,6 +205,11 @@ export function registerAuthRoutes(app: Express): void {
       });
 
       await auditLog(req, "parent_registered", `user:${user.id}`);
+
+      // Welcome email (fire-and-forget — never block signup on email delivery).
+      if (user.email) {
+        sendWelcomeParentEmail(user.email, user.name).catch(() => {});
+      }
 
       req.session.regenerate((err) => {
         if (err) {

@@ -31,6 +31,7 @@ import {
 
 import {
   sendPaymentSubmittedEmail, sendPaymentVerifiedEmail, sendPaymentRejectedEmail,
+  sendBooksReadyForCollectionEmail, sendCollectionCompletedEmail,
   isResendConfigured,
 } from "../email.js";
 
@@ -186,6 +187,14 @@ export function registerPaymentRoutes(app: Express): void {
         metadata: `Order marked ready for collection: id=${payment.id}, ref=${payment.paymentReference}`,
       });
 
+      if (payment?.parentIdentifier) {
+        sendBooksReadyForCollectionEmail(
+          payment.parentIdentifier,
+          payment.paymentReference || payment.id,
+          await getEmailBrandingForSchool(req, payment.schoolId),
+        ).catch(() => {});
+      }
+
       res.json(payment);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -203,6 +212,15 @@ export function registerPaymentRoutes(app: Express): void {
         userId: req.session.userId!,
         metadata: `Order collected: id=${payment.id}, ref=${payment.paymentReference}`,
       });
+
+      if (payment?.parentIdentifier) {
+        sendCollectionCompletedEmail(
+          payment.parentIdentifier,
+          payment.paymentReference || payment.id,
+          payment.totalAmount || "0.00",
+          await getEmailBrandingForSchool(req, payment.schoolId),
+        ).catch(() => {});
+      }
 
       res.json(payment);
     } catch (e: any) {
