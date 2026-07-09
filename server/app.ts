@@ -148,6 +148,40 @@ async function ensureBootstrapSchema() {
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_at timestamp`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_by varchar(36)`);
+    // Family-first enrollment columns (additive only)
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS family_id varchar(36)`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS date_of_birth text`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS gender text`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS grade_level text`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS preferred_reading_level text`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS photo_url text`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS family_code text`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS household_name text`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS primary_contact_guardian_id varchar(36)`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS primary_phone text`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS primary_email text`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS address text`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'enrolled'`);
+    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS updated_at timestamp DEFAULT now()`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS families_family_code_key ON families(family_code)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS guardians (
+        id varchar(36) PRIMARY KEY,
+        school_id varchar(36),
+        family_id varchar(36) NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        full_name text NOT NULL,
+        relationship text,
+        email text,
+        phone text,
+        is_primary_contact boolean NOT NULL DEFAULT false,
+        portal_access_status text NOT NULL DEFAULT 'none',
+        created_at timestamp DEFAULT now(),
+        updated_at timestamp DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS guardians_family_id_idx ON guardians(family_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS guardians_school_id_idx ON guardians(school_id)`);
     // teacher_profiles table (used by getUserWithDetail and getTeacherProfile)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS teacher_profiles (

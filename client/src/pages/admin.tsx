@@ -34,6 +34,7 @@ import { CommunicationsSection }    from "./admin/communications";
 import { BrandingSection }          from "./admin/branding";
 import { ReportsSection }           from "./admin/reports";
 import { FamiliesSection }          from "./admin/families";
+import { FamilyEnrollmentSection }  from "./admin/family-enrollment";
 import { DbConsoleSection }        from "./admin/db-console";
 import { SystemHealthSection }     from "./admin/system-health";
 import { ItDashboardSection }      from "./admin/it-dashboard";
@@ -70,6 +71,7 @@ export default function AdminPage({ section }: { section: string }) {
     students:           <StudentsSection />,
     parents:            <ParentsSection />,
     families:           <FamiliesSection />,
+    "family-enroll":    <FamilyEnrollmentSection />,
     "db-console":       <DbConsoleSection />,
     "system-health":    <SystemHealthSection />,
     codes:              <LinkingCodesSection />,

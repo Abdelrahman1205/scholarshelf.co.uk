@@ -364,6 +364,14 @@ export const students = pgTable("students", {
   classId: varchar("class_id", { length: 36 }).references(() => classes.id),
   studentCode: text("student_code").unique(),
   schoolId: varchar("school_id", { length: 36 }),
+  // Family-first fields (additive / nullable — a student belongs to one family)
+  familyId: varchar("family_id", { length: 36 }),
+  dateOfBirth: text("date_of_birth"),                 // ISO yyyy-mm-dd
+  gender: text("gender"),
+  gradeLevel: text("grade_level"),
+  preferredReadingLevel: text("preferred_reading_level"),
+  photoUrl: text("photo_url"),
+  status: text("status").default("active").notNull(), // active | inactive | alumni
   isArchived: boolean("is_archived").default(false).notNull(),
   archivedAt: timestamp("archived_at"),
   archivedBy: varchar("archived_by", { length: 36 }),
@@ -438,12 +446,21 @@ export const insertStudentBookLevelSchema = createInsertSchema(studentBookLevels
 export type InsertStudentBookLevel = z.infer<typeof insertStudentBookLevelSchema>;
 export type StudentBookLevel = typeof studentBookLevels.$inferSelect;
 
-// === FAMILIES ===
+// === FAMILIES (family-first enrollment: the central household record) ===
 export const families = pgTable("families", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
-  name: text("name").notNull(),
+  name: text("name").notNull(),                       // legacy display name (kept in sync with householdName)
   schoolId: varchar("school_id", { length: 36 }),
+  // Family-first fields (all additive / nullable so existing rows keep working)
+  familyCode: text("family_code").unique(),           // friendly household reference shown in the UI (never the UUID)
+  householdName: text("household_name"),
+  primaryContactGuardianId: varchar("primary_contact_guardian_id", { length: 36 }),
+  primaryPhone: text("primary_phone"),
+  primaryEmail: text("primary_email"),
+  address: text("address"),
+  status: text("status").default("enrolled").notNull(), // draft | ready | enrolled
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const familyStudents = pgTable("family_students", {
@@ -452,10 +469,28 @@ export const familyStudents = pgTable("family_students", {
   studentId: varchar("student_id", { length: 36 }).references(() => students.id, { onDelete: "cascade" }).notNull(),
 });
 
-export const insertFamilySchema = createInsertSchema(families).omit({ id: true, createdAt: true });
+// Guardians / parents attached directly to a family record.
+export const guardians = pgTable("guardians", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }),
+  familyId: varchar("family_id", { length: 36 }).references(() => families.id, { onDelete: "cascade" }).notNull(),
+  fullName: text("full_name").notNull(),
+  relationship: text("relationship"),                 // Mother | Father | Guardian | Other
+  email: text("email"),
+  phone: text("phone"),
+  isPrimaryContact: boolean("is_primary_contact").default(false).notNull(),
+  portalAccessStatus: text("portal_access_status").default("none").notNull(), // none | invited | active
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertFamilySchema = createInsertSchema(families).omit({ id: true, createdAt: true, updatedAt: true, familyCode: true });
 export type InsertFamily = z.infer<typeof insertFamilySchema>;
 export type Family = typeof families.$inferSelect;
 export type FamilyStudent = typeof familyStudents.$inferSelect;
+export const insertGuardianSchema = createInsertSchema(guardians).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertGuardian = z.infer<typeof insertGuardianSchema>;
+export type Guardian = typeof guardians.$inferSelect;
 
 export const childLinkingCodes = pgTable("child_linking_codes", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),

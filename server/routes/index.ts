@@ -25,6 +25,7 @@ import { registerNotificationRoutes } from "./notification.routes.js";
 import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
 import { registerFamilyRoutes } from "./family.routes.js";
+import { registerFamilyEnrollmentRoutes } from "./family-enrollment.routes.js";
 import { registerPublicRoutes } from "./public.routes.js";
 import { registerWebsiteRoutes } from "./website.routes.js";
 import { registerDbConsoleRoutes } from "./db-console.routes.js";
@@ -243,6 +244,7 @@ export async function registerRoutes(
 
   // Family groups + family link codes
   registerFamilyRoutes(app);
+  registerFamilyEnrollmentRoutes(app);
 
   // Owner: support mode, school lifecycle, owner invites, pending setups
   registerOwnerRoutes(app);
