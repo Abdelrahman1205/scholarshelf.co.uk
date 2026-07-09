@@ -49,8 +49,11 @@ function FamilyEnrollmentSection() {
   const familyComplete = !!linkedFamily || family.householdName.trim().length > 0;
   const validGuardians = guardians.filter((g) => g.fullName.trim() && (g.email.trim() || g.phone.trim()));
   const guardiansComplete = linkedFamily ? true : validGuardians.length > 0;
+  // A student is "added" as soon as they have a name — DOB/grade validated on submit
+  const namedStudents = students.filter((s) => s.fullName.trim().length > 0);
+  // A student is "ready to enroll" only when all required fields are present
   const validStudents = students.filter((s) => s.fullName.trim() && s.dateOfBirth.trim() && s.gradeLevel.trim());
-  const studentsComplete = validStudents.length > 0;
+  const studentsComplete = namedStudents.length > 0;
   const readyToEnroll = familyComplete && guardiansComplete && studentsComplete;
   const currentStep = !familyComplete ? 1 : !guardiansComplete ? 2 : !studentsComplete ? 3 : 4;
 
@@ -228,7 +231,7 @@ function FamilyEnrollmentSection() {
           <section className="rounded-2xl border border-border bg-card p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2"><GraduationCap className="w-5 h-5 text-primary" /><h2 className="font-semibold text-foreground">Students in this Family</h2></div>
-              <Badge variant="secondary">{validStudents.length} Student(s) Added</Badge>
+              <Badge variant="secondary">{namedStudents.length} Student(s) Added</Badge>
             </div>
             <div className="space-y-4">
               {students.map((s, i) => (
@@ -243,12 +246,21 @@ function FamilyEnrollmentSection() {
                       <input type="file" accept="image/*" className="hidden" onChange={onPhoto(i)} />
                     </label>
                     <div className="flex-1 grid grid-cols-2 md:grid-cols-3 gap-2">
-                      <div className="grid gap-1"><Label className={mono}>Full Name</Label><Input value={s.fullName} onChange={(e) => setStudent(i, { fullName: e.target.value })} /></div>
-                      <div className="grid gap-1"><Label className={mono}>Date of Birth</Label><Input type="date" value={s.dateOfBirth} onChange={(e) => setStudent(i, { dateOfBirth: e.target.value })} /></div>
+                      <div className="grid gap-1">
+                        <Label className={mono}>Full Name <span className="text-destructive">*</span></Label>
+                        <Input value={s.fullName} onChange={(e) => setStudent(i, { fullName: e.target.value })} />
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className={mono}>Date of Birth <span className="text-destructive">*</span></Label>
+                        <Input type="date" value={s.dateOfBirth} onChange={(e) => setStudent(i, { dateOfBirth: e.target.value })} className={s.fullName.trim() && !s.dateOfBirth.trim() ? "border-amber-400" : ""} />
+                      </div>
                       <div className="grid gap-1"><Label className={mono}>Gender</Label>
                         <Select value={s.gender} onValueChange={(v) => setStudent(i, { gender: v })}><SelectTrigger><SelectValue placeholder="—" /></SelectTrigger><SelectContent>{["Female", "Male", "Other"].map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select>
                       </div>
-                      <div className="grid gap-1"><Label className={mono}>Grade Level</Label><Input placeholder="e.g. 3rd Grade" value={s.gradeLevel} onChange={(e) => setStudent(i, { gradeLevel: e.target.value })} /></div>
+                      <div className="grid gap-1">
+                        <Label className={mono}>Grade Level <span className="text-destructive">*</span></Label>
+                        <Input placeholder="e.g. 3rd Grade" value={s.gradeLevel} onChange={(e) => setStudent(i, { gradeLevel: e.target.value })} className={s.fullName.trim() && !s.gradeLevel.trim() ? "border-amber-400" : ""} />
+                      </div>
                       <div className="grid gap-1"><Label className={mono}>Reading Level</Label><Input placeholder="e.g. M" value={s.preferredReadingLevel} onChange={(e) => setStudent(i, { preferredReadingLevel: e.target.value })} /></div>
                       <div className="grid gap-1"><Label className={mono}>Campus / Class</Label>
                         <Select value={s.classId} onValueChange={(v) => setStudent(i, { classId: v })}><SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger><SelectContent>{classes.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select>
@@ -260,7 +272,10 @@ function FamilyEnrollmentSection() {
               ))}
             </div>
             <Button variant="outline" className="w-full mt-4 border-dashed" onClick={() => setStudents((ss) => [...ss, emptyStudent()])}><Plus className="w-4 h-4 mr-2" /> Add Another Student</Button>
-            <p className="text-xs text-muted-foreground mt-3 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> All students added here are automatically linked to this family record.</p>
+            {namedStudents.length > 0 && validStudents.length < namedStudents.length && (
+              <p className="text-xs text-amber-600 mt-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> Complete required fields (marked <span className="text-destructive font-bold">*</span>) to enable enrollment.</p>
+            )}
+            <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> All students added here are automatically linked to this family record.</p>
           </section>
 
           {/* Duplicate warning */}
@@ -284,28 +299,33 @@ function FamilyEnrollmentSection() {
               <div className="flex justify-between"><dt className="text-white/60">Enrollment Date</dt><dd>{new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</dd></div>
               <div className="flex justify-between"><dt className="text-white/60">Family Record Status</dt><dd><span className="text-[10px] font-mono uppercase bg-white/15 rounded px-2 py-0.5">{readyToEnroll ? "Ready" : "Draft"}</span></dd></div>
               <div className="flex justify-between"><dt className="text-white/60">Guardians Added</dt><dd>{validGuardians.length || (linkedFamily ? "—" : 0)}</dd></div>
-              <div className="flex justify-between"><dt className="text-white/60">Students Added</dt><dd>{validStudents.length}</dd></div>
+              <div className="flex justify-between"><dt className="text-white/60">Students Added</dt><dd>{namedStudents.length}</dd></div>
             </dl>
             <div className="border-t border-white/10 mt-4 pt-3">
               <div className="text-[10px] font-mono uppercase text-white/50 mb-1">Progress Checklist</div>
               <div className="[&_.text-foreground]:text-white [&_.text-muted-foreground]:text-white/50">
                 <ChecklistRow done={familyComplete} label="Family details" note={familyComplete ? "Complete" : "Pending"} />
                 <ChecklistRow done={guardiansComplete} label="Guardians" note={guardiansComplete ? `${validGuardians.length || "linked"} added` : "Pending"} />
-                <ChecklistRow done={studentsComplete} label="Students" note={studentsComplete ? `${validStudents.length} added` : "Pending"} />
+                <ChecklistRow done={studentsComplete} label="Students" note={studentsComplete ? `${namedStudents.length} added${validStudents.length < namedStudents.length ? " (fill required fields)" : ""}` : "Pending"} />
                 <ChecklistRow done={readyToEnroll} label="Review & submit" note={readyToEnroll ? "Ready" : "Pending"} />
               </div>
             </div>
             <div className="mt-4 space-y-2">
               <Button className="w-full bg-white text-[#091426] hover:bg-white/90" disabled={!readyToEnroll || enrollMutation.isPending} onClick={() => enrollMutation.mutate(false)}>
-                {enrollMutation.isPending ? "Enrolling…" : `Enroll Family (${validStudents.length} Student${validStudents.length === 1 ? "" : "s"})`}
+                {enrollMutation.isPending ? "Enrolling…" : `Enroll Family (${namedStudents.length} Student${namedStudents.length === 1 ? "" : "s"})`}
               </Button>
               <Button variant="outline" className="w-full border-white/20 bg-transparent text-white hover:bg-white/10" disabled={draftMutation.isPending} onClick={() => draftMutation.mutate()}>{draftMutation.isPending ? "Saving…" : "Save Draft"}</Button>
               <Button variant="ghost" className="w-full text-red-300 hover:text-red-200 hover:bg-white/5" onClick={() => navigateTo("/admin/families")}>Cancel</Button>
             </div>
           </div>
           {!readyToEnroll && (
-            <div className="rounded-xl border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-              To enroll: add a household name, at least one guardian with a contact method, and at least one student with a name, date of birth and grade level.
+            <div className="rounded-xl border border-border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
+              {!familyComplete && <p>• Add a household name or link an existing family.</p>}
+              {!guardiansComplete && <p>• Add at least one guardian with a name and contact method.</p>}
+              {namedStudents.length === 0 && <p>• Add at least one student (enter their name).</p>}
+              {namedStudents.length > 0 && validStudents.length < namedStudents.length && (
+                <p>• Complete Date of Birth <span className="font-medium">(day/month/year)</span> and Grade Level for each student.</p>
+              )}
             </div>
           )}
         </aside>
