@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, Plus, Upload, Users, GraduationCap, Key, QrCode,
@@ -47,6 +47,22 @@ function StudentsSection() {
 
   const { data: students = [] } = useQuery<any[]>({ queryKey: ["/api/students"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
+
+  // ── Deep-link: /admin/students?open=<studentId> (navigated from family profile) ──
+  useEffect(() => {
+    if ((students as any[]).length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get("open");
+    if (!openId) return;
+    const target = (students as any[]).find((s: any) => s.id === openId);
+    if (target) {
+      setDetailStudent(target);
+      // Clean param from URL without re-triggering navigation
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete("open");
+      window.history.replaceState({}, "", clean.toString());
+    }
+  }, [students]);
   const classMap = Object.fromEntries(classes.map((c: any) => [c.id, c]));
   const { data: bookLevels = [] } = useQuery<any[]>({ queryKey: ["/api/book-levels"], queryFn: getQueryFn({ on401: "throw" }) });
   const { data: studentOverrides = [] } = useQuery<any[]>({ queryKey: ["/api/students/book-level-overrides"], queryFn: getQueryFn({ on401: "throw" }) });

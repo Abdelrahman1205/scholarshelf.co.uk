@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil, Users, Search, UserPlus, GraduationCap, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, Pencil, Users, Search, UserPlus, GraduationCap, AlertTriangle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -218,11 +218,18 @@ function FamiliesSection() {
                   <div className="space-y-1.5">
                     {detail.students.map((student: any) => (
                       <div key={student.id} className="flex items-center justify-between text-sm px-2.5 py-1.5 rounded-md bg-muted/30 border border-border">
-                        <div>
-                          <div className="font-medium text-foreground">{student.name}</div>
+                        <button
+                          className="flex-1 text-left group"
+                          onClick={() => navigateTo(`/admin/students?open=${student.id}`)}
+                          title="Open student profile"
+                        >
+                          <div className="font-medium text-foreground group-hover:text-primary flex items-center gap-1">
+                            {student.name}
+                            <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
                           <div className="text-xs text-muted-foreground">{student.studentCode || "No student code"} • {student.gradeLevel || "Grade not set"}</div>
-                        </div>
-                        <Button variant="ghost" size="sm" className="h-6 text-muted-foreground hover:text-destructive" onClick={() => archiveStudentMutation.mutate(student.id)}><Trash2 className="w-3 h-3" /></Button>
+                        </button>
+                        <Button variant="ghost" size="sm" className="h-6 text-muted-foreground hover:text-destructive ml-2" onClick={() => archiveStudentMutation.mutate(student.id)}><Trash2 className="w-3 h-3" /></Button>
                       </div>
                     ))}
                   </div>
@@ -231,8 +238,8 @@ function FamiliesSection() {
 
               <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
                 <div className="font-medium text-foreground/90 text-[11px]">Family Profile Actions</div>
-                <div>Open student profile via global search for class placement, book allocations, order status, and reading progress.</div>
-                <Button variant="link" className="h-auto p-0 text-xs" onClick={() => navigateTo("/admin/family-enroll")}>Use New Family Enrollment for step-by-step intake</Button>
+                <div>Click any student name above to open their full profile (class placement, book allocations, order status, and reading progress).</div>
+                <Button variant="link" className="h-auto p-0 text-xs" onClick={() => navigateTo("/admin/family-enroll")}>New Family Enrollment (step-by-step intake)</Button>
               </div>
             </div>
           )}
