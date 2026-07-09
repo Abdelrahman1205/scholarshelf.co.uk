@@ -192,6 +192,19 @@ export const mediaAssets = pgTable("media_assets", {
 export type MediaAsset = typeof mediaAssets.$inferSelect;
 export type InsertMediaAsset = typeof mediaAssets.$inferInsert;
 
+// ── Notification / email preferences (opt-out of scheduled digests & reminders) ──
+export const notificationPreferences = pgTable("notification_preferences", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  userId: varchar("user_id", { length: 36 }).notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  dailyDigest: boolean("daily_digest").default(true).notNull(),       // staff: daily summary
+  lowStockAlerts: boolean("low_stock_alerts").default(true).notNull(), // staff: low-stock section
+  paymentReminders: boolean("payment_reminders").default(true).notNull(), // parents: unpaid reminders
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type NotificationPreference = typeof notificationPreferences.$inferSelect;
+export type InsertNotificationPreference = typeof notificationPreferences.$inferInsert;
+
 // Safe-URL validators for CMS content. A section is published to a PUBLIC page,
 // so a stored URL must not carry active content. We allow only navigable schemes
 // and reject javascript:, data:, vbscript:, file:, etc. — closing the stored-XSS

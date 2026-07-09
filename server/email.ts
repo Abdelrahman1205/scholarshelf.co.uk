@@ -539,3 +539,119 @@ export async function sendCollectionCompletedEmail(
     wrapEmail("Collection complete", body, branding)
   );
 }
+
+// ---------------------------------------------------------------------------
+// 11. Admin daily digest (scheduled)
+// ---------------------------------------------------------------------------
+export type DailyDigestData = {
+  dateStr: string;
+  newOrders: number;
+  outstandingCount: number;
+  outstandingTotal: string;
+  pendingReview: number;
+  collectionsReady: number;
+  lowStock: Array<{ title: string; stock: number; threshold: number }>;
+};
+
+export async function sendAdminDailyDigestEmail(
+  to: string,
+  data: DailyDigestData,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const stat = (label: string, value: string | number, tone = "#1e3a5f") => `
+    <td style="padding:14px 10px;border:1px solid #e5e7eb;text-align:center;vertical-align:top;">
+      <div style="font-size:24px;font-weight:bold;color:${tone};line-height:1;">${value}</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:6px;text-transform:uppercase;letter-spacing:0.4px;">${label}</div>
+    </td>`;
+
+  const lowStockRows = data.lowStock.length
+    ? data.lowStock.map((b) => `
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;">${b.title}</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;text-align:right;font-weight:bold;color:${b.stock === 0 ? "#dc2626" : "#d97706"};">${b.stock}</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;text-align:right;color:#6b7280;">${b.threshold}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="3" style="padding:10px 12px;border:1px solid #e5e7eb;color:#6b7280;text-align:center;">All stock levels healthy 🎉</td></tr>`;
+
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Daily summary — ${data.dateStr}</h2>
+    <p>Here's your Scholar Shelf activity snapshot.</p>
+    <table style="border-collapse:collapse;width:100%;margin:18px 0;">
+      <tr>
+        ${stat("New orders today", data.newOrders)}
+        ${stat("Awaiting review", data.pendingReview, "#2563eb")}
+        ${stat("Ready to collect", data.collectionsReady, "#16a34a")}
+      </tr>
+    </table>
+    <table style="border-collapse:collapse;width:100%;margin:0 0 18px;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Outstanding payments</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${data.outstandingCount} order(s) &middot; £${data.outstandingTotal}</td>
+      </tr>
+    </table>
+    <h3 style="color:#1e3a5f;margin-bottom:8px;">Low stock (${data.lowStock.length})</h3>
+    <table style="border-collapse:collapse;width:100%;font-size:13px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#6b7280;">Book</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#6b7280;text-align:right;">Stock</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#6b7280;text-align:right;">Threshold</td>
+      </tr>
+      ${lowStockRows}
+    </table>
+    <p style="text-align:center;margin:26px 0 6px;">
+      <a href="https://scholarshelf.co.uk/admin" style="background:#1e3a5f;color:#ffffff;text-decoration:none;padding:11px 26px;border-radius:6px;font-weight:bold;display:inline-block;">Open dashboard</a>
+    </p>
+    <p style="color:#6b7280;font-size:12px;margin-top:20px;text-align:center;">
+      You're receiving this daily summary as a Scholar Shelf staff member.
+      Manage email preferences from your account's Security page.
+    </p>
+  `;
+  return sendEmail(
+    to,
+    `Scholar Shelf daily summary — ${data.dateStr}`,
+    wrapEmail("Daily summary", body, branding)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 12. Unpaid-order reminder (scheduled → parent)
+// ---------------------------------------------------------------------------
+export async function sendUnpaidReminderEmail(
+  to: string,
+  paymentReference: string,
+  totalAmount: string,
+  paymentAppName: string | null | undefined,
+  branding?: EmailBranding
+): Promise<boolean> {
+  const appName = (paymentAppName || "").trim();
+  const appLine = appName
+    ? `<p>Pay using your school's payment app <strong>${appName}</strong>, quoting the reference above.</p>`
+    : `<p>Please follow your school's usual payment method, quoting the reference above.</p>`;
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Reminder: your book order is awaiting payment</h2>
+    <p>This is a friendly reminder that your Scholar Shelf order hasn't been paid yet.</p>
+    <table style="border-collapse:collapse;width:100%;margin:20px 0;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Amount due</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">£${totalAmount}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;color:#6b7280;">Payment reference</td>
+        <td style="padding:10px 14px;border:1px solid #e5e7eb;font-weight:bold;">${paymentReference}</td>
+      </tr>
+    </table>
+    ${appLine}
+    <p style="text-align:center;margin:26px 0;">
+      <a href="https://scholarshelf.co.uk/login" style="background:#1e3a5f;color:#ffffff;text-decoration:none;padding:11px 26px;border-radius:6px;font-weight:bold;display:inline-block;">Pay & submit reference</a>
+    </p>
+    <p style="color:#6b7280;font-size:13px;margin-top:20px;">
+      Already paid? Sign in and submit your payment reference so your school can confirm it.
+      If you've done this, please ignore this reminder.
+    </p>
+  `;
+  return sendEmail(
+    to,
+    `Scholar Shelf reminder: payment due (Ref: ${paymentReference})`,
+    wrapEmail("Payment reminder", body, branding)
+  );
+}

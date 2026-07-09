@@ -5,7 +5,10 @@
  * Extracted from routes.ts monolith.
  */
 import type { Express, Request, Response, NextFunction } from "express";
+import { eq } from "drizzle-orm";
 import { storage } from "../storage.js";
+import { getDb } from "../config/database.js";
+import { notificationPreferences } from "../../shared/schema.js";
 import {
   requireAuth, requireRole,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
@@ -254,6 +257,50 @@ export function registerNotificationRoutes(app: Express): void {
       res.json({ thread, messages });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ── Email / notification preferences (opt-out of scheduled digests & reminders) ──
+  app.get("/api/notifications/preferences", requireAuth, async (req, res) => {
+    try {
+      const [row] = await getDb().select().from(notificationPreferences)
+        .where(eq(notificationPreferences.userId, req.session.userId!));
+      res.json({
+        dailyDigest: row?.dailyDigest ?? true,
+        lowStockAlerts: row?.lowStockAlerts ?? true,
+        paymentReminders: row?.paymentReminders ?? true,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/notifications/preferences", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const body = req.body || {};
+      const patch: Record<string, boolean> = {};
+      for (const key of ["dailyDigest", "lowStockAlerts", "paymentReminders"] as const) {
+        if (typeof body[key] === "boolean") patch[key] = body[key];
+      }
+      const [existing] = await getDb().select().from(notificationPreferences)
+        .where(eq(notificationPreferences.userId, userId));
+      let saved;
+      if (existing) {
+        [saved] = await getDb().update(notificationPreferences)
+          .set({ ...patch, updatedAt: new Date() })
+          .where(eq(notificationPreferences.userId, userId)).returning();
+      } else {
+        [saved] = await getDb().insert(notificationPreferences)
+          .values({ userId, ...patch }).returning();
+      }
+      res.json({
+        dailyDigest: saved.dailyDigest,
+        lowStockAlerts: saved.lowStockAlerts,
+        paymentReminders: saved.paymentReminders,
+      });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
     }
   });
 

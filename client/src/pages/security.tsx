@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  ShieldCheck, ShieldAlert, ArrowLeft, Loader2, Copy, Check, Download, KeyRound, AlertTriangle,
+  ShieldCheck, ShieldAlert, ArrowLeft, Loader2, Copy, Check, Download, KeyRound, AlertTriangle, Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,55 @@ import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { cn } from "@/lib/utils";
+
+function EmailPreferences() {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/notifications/preferences"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+  const mutation = useMutation({
+    mutationFn: async (patch: Record<string, boolean>) => (await apiRequest("PATCH", "/api/notifications/preferences", patch)).json(),
+    onSuccess: (d) => { queryClient.setQueryData(["/api/notifications/preferences"], d); toast({ title: "Preferences saved" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  const rows = [
+    { key: "dailyDigest", label: "Daily summary", desc: "A daily digest of orders, payments and stock (staff)." },
+    { key: "lowStockAlerts", label: "Low-stock alerts", desc: "Include low-stock items in your daily summary (staff)." },
+    { key: "paymentReminders", label: "Payment reminders", desc: "Reminders about unpaid orders (parents)." },
+  ];
+  return (
+    <section className="rounded-2xl border border-border bg-card p-6">
+      <div className="flex items-center gap-2 mb-1"><Mail className="w-5 h-5 text-primary" /><h2 className="font-semibold text-foreground">Email preferences</h2></div>
+      <p className="text-sm text-muted-foreground mb-4">Choose which scheduled emails Scholar Shelf sends you.</p>
+      {isLoading ? (
+        <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className="divide-y divide-border">
+          {rows.map((r) => {
+            const on = data?.[r.key] !== false;
+            return (
+              <div key={r.key} className="flex items-center justify-between py-3">
+                <div className="pr-4">
+                  <div className="text-sm font-medium text-foreground">{r.label}</div>
+                  <div className="text-xs text-muted-foreground">{r.desc}</div>
+                </div>
+                <button
+                  type="button" role="switch" aria-checked={on} disabled={mutation.isPending}
+                  onClick={() => mutation.mutate({ [r.key]: !on })}
+                  className={cn("relative h-6 w-11 rounded-full transition-colors shrink-0", on ? "bg-primary" : "bg-muted-foreground/30")}
+                >
+                  <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform", on ? "translate-x-[22px]" : "translate-x-0.5")} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone?: () => void }) {
   const [copied, setCopied] = useState(false);
@@ -192,6 +241,8 @@ export default function SecurityPage() {
             )}
           </section>
         )}
+
+        <EmailPreferences />
       </div>
     </div>
   );

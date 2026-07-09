@@ -7,6 +7,12 @@
       "maxDuration": 30
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/run",
+      "schedule": "0 7 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

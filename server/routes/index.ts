@@ -12,6 +12,7 @@ import { createServer, type Server } from "http";
 import { storage, getStorageMode } from "../storage.js";
 import { registerAuthRoutes } from "./auth.routes.js";
 import { registerMfaRoutes } from "./mfa.routes.js";
+import { registerCronRoutes } from "./cron.routes.js";
 import { registerSetupRoutes } from "./setup.routes.js";
 import { registerBookRoutes } from "./book.routes.js";
 import { registerStudentRoutes } from "./student.routes.js";
@@ -42,6 +43,7 @@ export async function registerRoutes(
   // Auth — login, register, invite acceptance, password reset, /me
   registerAuthRoutes(app);
   registerMfaRoutes(app);
+  registerCronRoutes(app);
 
   // Admin setup checklist + school branding (public + admin + owner)
   registerSetupRoutes(app);
