@@ -402,8 +402,13 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
     // ── Validation (final enrollment only; drafts may be incomplete) ──
     if (!draft) {
       if (!familyId && !householdName) return res.status(400).json({ message: "Family / household name is required" });
-      const validGuardians = guardianInputs.filter((g) => str(g.fullName) && (str(g.email) || str(g.phone)));
-      if (validGuardians.length === 0) return res.status(400).json({ message: "A family must have at least one guardian with a name and contact method." });
+      // Only require guardians in the request when creating a NEW family.
+      // When linking an existing family (familyId provided), guardians already
+      // exist in the database — the admin does not need to re-enter them.
+      if (!familyId) {
+        const validGuardians = guardianInputs.filter((g) => str(g.fullName) && (str(g.email) || str(g.phone)));
+        if (validGuardians.length === 0) return res.status(400).json({ message: "A family must have at least one guardian with a name and contact method." });
+      }
       const validStudents = studentInputs.filter((s) => str(s.fullName) && str(s.dateOfBirth) && str(s.gradeLevel));
       if (validStudents.length === 0) return res.status(400).json({ message: "A family must have at least one student with a name, date of birth and grade level." });
     }
