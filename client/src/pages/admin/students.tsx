@@ -16,6 +16,7 @@ import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { StudentProfilePanel } from "./student-profile";
 import JsBarcode from "jsbarcode";
 import * as XLSX from "xlsx";
 
@@ -294,6 +295,9 @@ function StudentsSection() {
                 </div>
                 <button onClick={() => setDetailStudent(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
               </div>
+
+              {/* Full student profile: class, family, book list, distribution status */}
+              <StudentProfilePanel studentId={detailStudent.id} />
 
               {/* Bundle Override — design: dynamic_form panel */}
               <div className="rounded-lg border border-border overflow-hidden">

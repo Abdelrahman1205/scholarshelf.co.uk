@@ -12,6 +12,7 @@
 import type { Express, Request, Response } from "express";
 import { and, eq, or, ilike, inArray, desc } from "drizzle-orm";
 import { getDb } from "../config/database.js";
+import { storage } from "../storage.js";
 import { families, guardians, students, familyStudents } from "../../shared/schema.js";
 import {
   requireRole, sessionSchoolId, auditLog, routeParam, ADMIN_UI_ROLES,
@@ -345,6 +346,59 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
   // NOTE: PATCH/DELETE /api/students/:id are owned by book.routes.ts
   // (update passes new columns through storage.updateStudent; delete does a
   // safe soft-archive that preserves allocation/payment history). We reuse those.
+
+  // ── Student profile (aggregated: family, guardians, class, book list, allocations) ──
+  app.get("/api/students/:id/profile", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const db = getDb();
+      const [student] = await db.select().from(students).where(and(eq(students.id, routeParam(req.params.id)), eq(students.schoolId, sid)));
+      if (!student) return res.status(404).json({ message: "Student not found" });
+
+      let family: any = null;
+      let guardianRows: any[] = [];
+      if (student.familyId) {
+        [family] = await db.select().from(families).where(and(eq(families.id, student.familyId), eq(families.schoolId, sid)));
+        guardianRows = await db.select().from(guardians).where(eq(guardians.familyId, student.familyId));
+      }
+
+      const classes = await storage.getClasses(sid);
+      const cls: any = classes.find((c: any) => c.id === student.classId) || null;
+
+      // Book list = the bundle(s) assigned to the student's class
+      const bookList: any[] = [];
+      let bundleName: string | null = null;
+      if (student.classId) {
+        const cbls = await storage.getClassBookLevels(sid);
+        for (const a of cbls.filter((c: any) => c.classId === student.classId)) {
+          bundleName = (a as any).bookLevel?.name || bundleName;
+          const items = await storage.getBookLevelItems((a as any).bookLevelId);
+          for (const it of items) bookList.push({ title: it.book?.title || "Book", quantity: it.quantity ?? 1, price: it.book?.price ?? null });
+        }
+      }
+
+      // This student's allocations
+      const allAllocs = await storage.getAllocations(undefined, sid);
+      const allocations = allAllocs
+        .filter((a: any) => (a.studentId || a.student?.id) === student.id)
+        .map((a: any) => ({ book: a.book?.title || "Book", status: a.status, distributionStatus: a.distributionStatus, allocatedAt: a.allocatedAt, receivedAt: a.receivedAt }));
+      const received = allocations.filter((a: any) => a.status === "received" || a.distributionStatus === "received").length;
+
+      res.json({
+        student,
+        family: family ? { id: family.id, familyCode: family.familyCode, householdName: family.householdName || family.name } : null,
+        guardians: guardianRows,
+        class: cls ? { id: cls.id, name: cls.name, yearGroup: cls.yearGroup } : null,
+        bundleName,
+        bookList,
+        allocations,
+        allocationSummary: { total: allocations.length, received, pending: allocations.length - received },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
 
   // ── Enroll a family atomically (create/link family + guardians + students) ──
   app.post("/api/families/enroll", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
