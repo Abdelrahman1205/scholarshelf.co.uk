@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil, Users, Search, UserPlus, GraduationCap, AlertTriangle, ArrowRight } from "lucide-react";
+import { Plus, Trash2, Pencil, Users, Search, UserPlus, AlertTriangle, ArrowRight, ChevronDown, ChevronUp, GraduationCap, Phone, Mail, BookOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -134,116 +134,178 @@ function FamiliesSection() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
-        {/* List */}
-        <div className="rounded-2xl border border-border bg-card overflow-hidden">
-          <div className="px-4 py-3 border-b border-border">
-            <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="Search families…" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+      {/* ── Accordion list ── */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Search families…" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          {filtered.length === 0 ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">{families.length === 0 ? "No families yet. Create one to group siblings and generate a shared link code." : "No matching families."}</div>
-          ) : (
-            <div className="divide-y divide-border">
-              {filtered.map((family: any) => (
-                <button key={family.id} onClick={() => setDetailId(family.id)} className={cn("w-full text-left flex items-center justify-between px-5 py-3 hover:bg-muted/20", detailId === family.id && "bg-primary/5")}>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0"><Users className="w-4 h-4" /></div>
-                    <div className="min-w-0">
-                      <div className="font-medium text-foreground truncate">{family.householdName || family.name}</div>
-                      <div className="text-[11px] text-muted-foreground truncate">{family.familyCode || "No code"}</div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">
+            {families.length === 0 ? "No families yet. Use New Family Enrollment to get started." : "No matching families."}
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {filtered.map((family: any) => {
+              const isOpen = detailId === family.id;
+              const isLoading = isOpen && detailQuery.isLoading;
+              const fDetail = isOpen ? (detailQuery.data || null) : null;
+
+              return (
+                <div key={family.id}>
+                  {/* ── Header row (click to toggle) ── */}
+                  <button
+                    className={cn("w-full text-left flex items-center justify-between px-5 py-4 hover:bg-muted/20 transition-colors", isOpen && "bg-primary/5")}
+                    onClick={() => setDetailId(isOpen ? null : family.id)}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0 font-semibold text-sm">
+                        {(family.householdName || family.name || "F").slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-foreground truncate">{family.householdName || family.name}</div>
+                        <div className="text-[11px] text-muted-foreground font-mono">{family.familyCode || "—"}</div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-3">
-                    <Badge variant="secondary">{family.guardianCount || 0} guardian{(family.guardianCount || 0) !== 1 ? "s" : ""}</Badge>
-                    <Badge variant="secondary">{family.studentCount || 0} student{(family.studentCount || 0) !== 1 ? "s" : ""}</Badge>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <Badge variant="secondary">{family.guardianCount || 0} guardian{(family.guardianCount || 0) !== 1 ? "s" : ""}</Badge>
+                      <Badge variant="secondary">{family.studentCount || 0} student{(family.studentCount || 0) !== 1 ? "s" : ""}</Badge>
+                      {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                    </div>
+                  </button>
 
-        {/* Detail */}
-        <div className="rounded-2xl border border-border bg-card p-5 h-fit">
-          {!detail ? (
-            <div className="text-center py-12"><Users className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" /><p className="text-sm text-muted-foreground">Select a family to manage members and link codes.</p></div>
-          ) : detailQuery.isLoading ? (
-            <div className="text-center py-12 text-sm text-muted-foreground">Loading family profile…</div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="font-semibold text-foreground text-lg">{detail.householdName || detail.name}</div>
-                  <div className="text-xs text-muted-foreground">{detail.familyCode || "No family code"}</div>
-                </div>
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="sm" title="Rename" onClick={() => { setSelectedFamily(detail); setName(detail.householdName || detail.name); setEditOpen(true); }}><Pencil className="w-4 h-4" /></Button>
-                  <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" title="Delete" onClick={() => { setSelectedFamily(detail); setDeleteOpen(true); }}><Trash2 className="w-4 h-4" /></Button>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground">Parents / Guardians</div>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs text-primary" onClick={() => { setSelectedFamily(detail); setAddGuardianOpen(true); }}><Plus className="w-3 h-3 mr-1" /> Add</Button>
-                </div>
-                {(detail.guardians || []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic">No guardians linked yet.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {detail.guardians.map((guardian: any) => (
-                      <div key={guardian.id} className="flex items-center justify-between text-sm px-2.5 py-1.5 rounded-md bg-muted/30 border border-border">
-                        <div>
-                          <div className="font-medium text-foreground">{guardian.fullName}</div>
-                          <div className="text-xs text-muted-foreground">{guardian.relationship || "Guardian"} • {guardian.email || guardian.phone || "No contact"}</div>
+                  {/* ── Expanded accordion body ── */}
+                  {isOpen && (
+                    <div className="border-t border-border bg-muted/10 px-5 py-4 space-y-5">
+                      {isLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Loading family details…
                         </div>
-                        <div className="flex items-center gap-2">
-                          {guardian.isPrimaryContact && <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50">Primary</Badge>}
-                          <Button variant="ghost" size="sm" className="h-6 text-muted-foreground hover:text-destructive" onClick={() => removeGuardianMutation.mutate(guardian.id)}><Trash2 className="w-3 h-3" /></Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground">Students in this Family</div>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs text-primary" onClick={() => { setSelectedFamily(detail); setAddStudentOpen(true); }}><Plus className="w-3 h-3 mr-1" /> Add</Button>
-                </div>
-                {(detail.students || []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic">No students linked yet.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {detail.students.map((student: any) => (
-                      <div key={student.id} className="flex items-center justify-between text-sm px-2.5 py-1.5 rounded-md bg-muted/30 border border-border">
-                        <button
-                          className="flex-1 text-left group"
-                          onClick={() => navigateTo(`/admin/students?open=${student.id}`)}
-                          title="Open student profile"
-                        >
-                          <div className="font-medium text-foreground group-hover:text-primary flex items-center gap-1">
-                            {student.name}
-                            <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      ) : fDetail ? (
+                        <>
+                          {/* Family actions bar */}
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs text-muted-foreground">
+                              {fDetail.primaryEmail && <span className="inline-flex items-center gap-1 mr-3"><Mail className="w-3 h-3" />{fDetail.primaryEmail}</span>}
+                              {fDetail.primaryPhone && <span className="inline-flex items-center gap-1"><Phone className="w-3 h-3" />{fDetail.primaryPhone}</span>}
+                            </div>
+                            <div className="flex gap-1">
+                              <Button variant="outline" size="sm" onClick={() => { setSelectedFamily(fDetail); setName(fDetail.householdName || fDetail.name); setEditOpen(true); }}>
+                                <Pencil className="w-3.5 h-3.5 mr-1" /> Rename
+                              </Button>
+                              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => { setSelectedFamily(fDetail); setDeleteOpen(true); }}>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </div>
-                          <div className="text-xs text-muted-foreground">{student.studentCode || "No student code"} • {student.gradeLevel || "Grade not set"}</div>
-                        </button>
-                        <Button variant="ghost" size="sm" className="h-6 text-muted-foreground hover:text-destructive ml-2" onClick={() => archiveStudentMutation.mutate(student.id)}><Trash2 className="w-3 h-3" /></Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
 
-              <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
-                <div className="font-medium text-foreground/90 text-[11px]">Family Profile Actions</div>
-                <div>Click any student name above to open their full profile (class placement, book allocations, order status, and reading progress).</div>
-                <Button variant="link" className="h-auto p-0 text-xs" onClick={() => navigateTo("/admin/family-enroll")}>New Family Enrollment (step-by-step intake)</Button>
-              </div>
-            </div>
-          )}
-        </div>
+                          {/* ── Guardians ── */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground font-semibold">Parents / Guardians</div>
+                              <Button variant="ghost" size="sm" className="h-6 text-xs text-primary" onClick={() => { setSelectedFamily(fDetail); setAddGuardianOpen(true); }}>
+                                <Plus className="w-3 h-3 mr-1" /> Add Guardian
+                              </Button>
+                            </div>
+                            {(fDetail.guardians || []).length === 0 ? (
+                              <p className="text-sm text-muted-foreground italic">No guardians linked yet.</p>
+                            ) : (
+                              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {fDetail.guardians.map((g: any) => (
+                                  <div key={g.id} className="rounded-xl border border-border bg-card p-3 flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-medium text-sm text-foreground truncate">{g.fullName}</span>
+                                        {g.isPrimaryContact && <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 bg-emerald-50 py-0 h-4">Primary</Badge>}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground mt-0.5">{g.relationship || "Guardian"}</div>
+                                      {g.email && <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5"><Mail className="w-3 h-3" />{g.email}</div>}
+                                      {g.phone && <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{g.phone}</div>}
+                                    </div>
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive shrink-0" onClick={() => removeGuardianMutation.mutate(g.id)}>
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ── Students ── */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground font-semibold">Students in this Family</div>
+                              <Button variant="ghost" size="sm" className="h-6 text-xs text-primary" onClick={() => { setSelectedFamily(fDetail); setAddStudentOpen(true); }}>
+                                <Plus className="w-3 h-3 mr-1" /> Add Student
+                              </Button>
+                            </div>
+                            {(fDetail.students || []).length === 0 ? (
+                              <p className="text-sm text-muted-foreground italic">No students linked yet.</p>
+                            ) : (
+                              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {fDetail.students.map((s: any) => (
+                                  <div key={s.id} className="rounded-xl border border-border bg-card overflow-hidden">
+                                    {/* Student card header */}
+                                    <div className="bg-primary/5 px-3 py-2 flex items-center justify-between border-b border-border">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+                                          {(s.name || "?").split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
+                                        </div>
+                                        <button
+                                          className="font-semibold text-sm text-foreground hover:text-primary flex items-center gap-1 group truncate"
+                                          onClick={() => navigateTo(`/admin/students?open=${s.id}`)}
+                                          title="Open full student profile"
+                                        >
+                                          {s.name}
+                                          <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                                        </button>
+                                      </div>
+                                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive shrink-0" onClick={() => archiveStudentMutation.mutate(s.id)}>
+                                        <Trash2 className="w-3 h-3" />
+                                      </Button>
+                                    </div>
+                                    {/* Student card body */}
+                                    <div className="px-3 py-2 space-y-1">
+                                      <div className="flex items-center justify-between text-xs">
+                                        <span className="text-muted-foreground">Student ID</span>
+                                        <span className="font-mono text-foreground">{s.studentCode || "—"}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-xs">
+                                        <span className="text-muted-foreground">Date of Birth</span>
+                                        <span className="text-foreground">{s.dateOfBirth || "—"}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-xs">
+                                        <span className="text-muted-foreground">Gender</span>
+                                        <span className="text-foreground">{s.gender || "—"}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-xs">
+                                        <span className="text-muted-foreground">Grade Level</span>
+                                        <span className="text-foreground font-medium">{s.gradeLevel || "—"}</span>
+                                      </div>
+                                      {s.preferredReadingLevel && (
+                                        <div className="flex items-center justify-between text-xs">
+                                          <span className="text-muted-foreground flex items-center gap-1"><BookOpen className="w-3 h-3" /> Reading Level</span>
+                                          <span className="text-foreground">{s.preferredReadingLevel}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Create family */}

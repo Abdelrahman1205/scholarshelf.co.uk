@@ -164,6 +164,10 @@ function ensureDemoUsersInMemory() {
       createdAt: now(),
       updatedAt: now(),
       lastLoginAt: null,
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null,
+      mfaEnrolledAt: null,
     },
     {
       id: randomUUID(),
@@ -178,6 +182,10 @@ function ensureDemoUsersInMemory() {
       createdAt: now(),
       updatedAt: now(),
       lastLoginAt: null,
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null,
+      mfaEnrolledAt: null,
     },
     {
       id: randomUUID(),
@@ -192,6 +200,10 @@ function ensureDemoUsersInMemory() {
       createdAt: now(),
       updatedAt: now(),
       lastLoginAt: null,
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null,
+      mfaEnrolledAt: null,
     },
     {
       id: randomUUID(),
@@ -206,6 +218,10 @@ function ensureDemoUsersInMemory() {
       createdAt: now(),
       updatedAt: now(),
       lastLoginAt: null,
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null,
+      mfaEnrolledAt: null,
     },
     {
       id: randomUUID(),
@@ -220,6 +236,10 @@ function ensureDemoUsersInMemory() {
       createdAt: now(),
       updatedAt: now(),
       lastLoginAt: null,
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null,
+      mfaEnrolledAt: null,
     },
   ];
 
@@ -2165,6 +2185,10 @@ class DatabaseStorage implements IStorage {
         createdAt: now(),
         updatedAt: now(),
         lastLoginAt: null,
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaRecoveryCodes: null,
+        mfaEnrolledAt: null,
       };
       memoryUsers.set(created.id, created);
       return created;

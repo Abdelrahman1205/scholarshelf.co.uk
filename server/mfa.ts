@@ -16,8 +16,8 @@ export function base32Encode(buf: Buffer): string {
   let bits = 0;
   let value = 0;
   let output = "";
-  for (const byte of buf) {
-    value = (value << 8) | byte;
+  for (let i = 0; i < buf.length; i++) {
+    value = (value << 8) | buf[i];
     bits += 8;
     while (bits >= 5) {
       output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
@@ -35,8 +35,8 @@ export function base32Decode(input: string): Buffer {
   let bits = 0;
   let value = 0;
   const bytes: number[] = [];
-  for (const ch of clean) {
-    const idx = BASE32_ALPHABET.indexOf(ch);
+  for (let i = 0; i < clean.length; i++) {
+    const idx = BASE32_ALPHABET.indexOf(clean[i]);
     if (idx === -1) continue;
     value = (value << 5) | idx;
     bits += 5;
