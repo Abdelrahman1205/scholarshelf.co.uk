@@ -410,6 +410,9 @@ function UsersList() {
   const [form, setForm] = useState({ username: "", password: "", name: "", email: "" });
   const [inviteRole, setInviteRole] = useState("teacher");
   const [brandingPermissions, setBrandingPermissions] = useState<string[]>([]);
+  // Slice 3: email-clash + staff-departure conflict prompts
+  const [linkConflict, setLinkConflict] = useState<any>(null);   // { email, role, existingUserName, existingRole }
+  const [offboardUser, setOffboardUser] = useState<any>(null);   // { id, name }
 
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/admin/users"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -420,6 +423,34 @@ function UsersList() {
       resetForm();
       toast({ title: "Invite sent successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/recent-activity"] });
+    },
+    onError: (err: any) => {
+      // Slice 3: email already belongs to a user → offer to add the role to that
+      // account instead of dead-ending. Otherwise show the normal error.
+      if (err?.status === 409 && err?.body?.suggestedAction === "add_role_to_existing") {
+        setAddOpen(false);
+        setLinkConflict({
+          email: form.email,
+          role: inviteRole,
+          existingUserId: err.body.existingUserId,
+          existingUserName: err.body.existingUserName,
+          existingRole: err.body.existingRole,
+        });
+        return;
+      }
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Slice 3: confirm adding the invited role to the existing account (one person, one account).
+  const linkRoleMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/invites", { email: linkConflict.email, role: linkConflict.role, linkToExisting: true }),
+    onSuccess: async (res: any) => {
+      const body = await res.json().catch(() => ({}));
+      setLinkConflict(null);
+      resetForm();
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "Role added", description: body?.message || "Role added to the existing account." });
     },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
@@ -433,6 +464,26 @@ function UsersList() {
   const deleteMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/admin/users/${selectedUser?.id}`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] }); setDeleteOpen(false); toast({ title: "User deleted successfully" }); },
+    onError: (err: any) => {
+      // Slice 3: the person is also a parent — deleting would strip access to their
+      // own children. Offer to offboard the staff role instead.
+      if (err?.status === 409 && err?.body?.suggestedAction === "offboard_staff") {
+        setDeleteOpen(false);
+        setOffboardUser({ id: selectedUser?.id, name: selectedUser?.name });
+        return;
+      }
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Slice 3: remove staff role(s) but keep the parent account + child links.
+  const offboardMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/admin/users/${offboardUser.id}/offboard-staff`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setOffboardUser(null);
+      toast({ title: "Staff role removed", description: "Their parent access has been preserved." });
+    },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
@@ -684,6 +735,47 @@ function UsersList() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteMutation.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Slice 3: email already exists → add role to that account, or create separate */}
+      <Dialog open={!!linkConflict} onOpenChange={(open) => { if (!open) setLinkConflict(null); }}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>Account already exists</DialogTitle>
+            <DialogDescription>
+              {linkConflict ? (
+                <>An account for <span className="font-medium">{linkConflict.email}</span> already exists as{" "}
+                <span className="font-medium">{roleLabel(linkConflict.existingRole)}</span> ({linkConflict.existingUserName}).
+                Add the <span className="font-medium">{roleLabel(linkConflict.role)}</span> role to that same account so it stays one person, one login?</>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setLinkConflict(null)}>Cancel</Button>
+            <Button onClick={() => linkRoleMutation.mutate()} disabled={linkRoleMutation.isPending}>
+              {linkRoleMutation.isPending ? "Adding…" : `Add ${linkConflict ? roleLabel(linkConflict.role) : ""} role to existing account`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Slice 3: deleting a staff member who is also a parent → offboard instead */}
+      <AlertDialog open={!!offboardUser} onOpenChange={(open) => { if (!open) setOffboardUser(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>This person is also a parent</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deleting "{offboardUser?.name}" would remove their access to their own children.
+              Instead, remove their staff role — the account and all parent/guardian links are kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => offboardMutation.mutate()}>
+              {offboardMutation.isPending ? "Removing…" : "Remove staff role, keep parent access"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -7,19 +7,31 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/use-auth";
 import { getRoleRoute } from "@/lib/role-routes";
-import SchoolPublicPage from "@/pages/school-public";
 
+// Eager: the app shell + the login entry point (first paint) stay in the main bundle.
 import Layout from "@/components/layout";
-import AdminPage from "@/pages/admin";
-import TeacherPage from "@/pages/teacher";
-import ParentPage from "@/pages/parent";
-import FinancePage from "@/pages/finance";
 import LoginPage from "@/pages/login";
-import RegisterPage from "@/pages/register";
-import AcceptInvitePage from "@/pages/accept-invite";
-import ForgotPasswordPage from "@/pages/forgot-password";
-import ResetPasswordPage from "@/pages/reset-password";
-import SecurityPage from "@/pages/security";
+
+// Slice 6: route-level code splitting. The heavy role dashboards and the secondary
+// auth/public pages load on demand, so the initial bundle (login) stays small.
+const SchoolPublicPage = lazy(() => import("@/pages/school-public"));
+const AdminPage = lazy(() => import("@/pages/admin"));
+const TeacherPage = lazy(() => import("@/pages/teacher"));
+const ParentPage = lazy(() => import("@/pages/parent"));
+const FinancePage = lazy(() => import("@/pages/finance"));
+const RegisterPage = lazy(() => import("@/pages/register"));
+const AcceptInvitePage = lazy(() => import("@/pages/accept-invite"));
+const ForgotPasswordPage = lazy(() => import("@/pages/forgot-password"));
+const ResetPasswordPage = lazy(() => import("@/pages/reset-password"));
+const SecurityPage = lazy(() => import("@/pages/security"));
+
+function PageFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+    </div>
+  );
+}
 
 function AuthGuard({ children, allowedRoles }: { children: React.ReactNode; allowedRoles: string[] }) {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -75,6 +87,7 @@ function RoleRedirect() {
 
 function Router() {
   return (
+    <Suspense fallback={<PageFallback />}>
     <Switch>
       {/* Public auth routes */}
       <Route path="/login" component={LoginPage} />
@@ -144,6 +157,7 @@ function Router() {
 
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 

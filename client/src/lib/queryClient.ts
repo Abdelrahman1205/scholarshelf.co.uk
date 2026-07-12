@@ -5,8 +5,10 @@ async function throwIfResNotOk(res: Response) {
     const text = (await res.text()) || res.statusText;
     // Default to raw status + body; try to extract a clean message from JSON
     let message = `${res.status}: ${text}`;
+    let parsed: any = null;
     try {
       const body = JSON.parse(text);
+      parsed = body;
       if (res.status === 403 && body.schoolStatus) {
         window.__schoolBlockedMessage = body.message || "Your school account is currently inactive.";
       }
@@ -14,7 +16,12 @@ async function throwIfResNotOk(res: Response) {
         message = body.message;
       }
     } catch {}
-    throw new Error(message);
+    // Attach status + parsed body so callers can react to structured responses
+    // (e.g. the Slice-3 "link vs create" 409 with existingUserId/suggestedAction).
+    const err = new Error(message) as Error & { status?: number; body?: any };
+    err.status = res.status;
+    err.body = parsed;
+    throw err;
   }
 }
 

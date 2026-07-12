@@ -99,6 +99,16 @@ function FamiliesSection() {
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
+  const inviteGuardianMutation = useMutation({
+    mutationFn: (guardianId: string) => apiRequest("POST", `/api/guardians/${guardianId}/invite`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/families"] });
+      if (detailId) queryClient.invalidateQueries({ queryKey: ["/api/families", detailId] });
+      toast({ title: "Guardian invited", description: "A portal link code has been emailed to them." });
+    },
+    onError: (err: any) => { toast({ title: "Could not invite", description: err.message, variant: "destructive" }); },
+  });
+
   const archiveStudentMutation = useMutation({
     mutationFn: (studentId: string) => apiRequest("DELETE", `/api/students/${studentId}`),
     onSuccess: () => {
@@ -220,14 +230,23 @@ function FamiliesSection() {
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <span className="font-medium text-sm text-foreground truncate">{g.fullName}</span>
                                         {g.isPrimaryContact && <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 bg-emerald-50 py-0 h-4">Primary</Badge>}
+                                        {g.portalAccessStatus === "invited" && <Badge variant="outline" className="text-[10px] text-blue-700 border-blue-200 bg-blue-50 py-0 h-4">Invited</Badge>}
+                                        {g.portalAccessStatus === "active" && <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 bg-emerald-50 py-0 h-4">Portal</Badge>}
                                       </div>
                                       <div className="text-xs text-muted-foreground mt-0.5">{g.relationship || "Guardian"}</div>
                                       {g.email && <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5"><Mail className="w-3 h-3" />{g.email}</div>}
                                       {g.phone && <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{g.phone}</div>}
                                     </div>
-                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive shrink-0" onClick={() => removeGuardianMutation.mutate(g.id)}>
-                                      <Trash2 className="w-3 h-3" />
-                                    </Button>
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                      {g.email && g.portalAccessStatus !== "active" && (
+                                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-primary" title="Invite to parent portal" disabled={inviteGuardianMutation.isPending} onClick={() => inviteGuardianMutation.mutate(g.id)}>
+                                          <UserPlus className="w-3 h-3" />
+                                        </Button>
+                                      )}
+                                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeGuardianMutation.mutate(g.id)}>
+                                        <Trash2 className="w-3 h-3" />
+                                      </Button>
+                                    </div>
                                   </div>
                                 ))}
                               </div>

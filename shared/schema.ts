@@ -364,8 +364,10 @@ export const students = pgTable("students", {
   classId: varchar("class_id", { length: 36 }).references(() => classes.id),
   studentCode: text("student_code").unique(),
   schoolId: varchar("school_id", { length: 36 }),
-  // Family-first fields (additive / nullable — a student belongs to one family)
-  familyId: varchar("family_id", { length: 36 }),
+  // Family-first fields (additive / nullable — a student belongs to one family).
+  // FK with ON DELETE SET NULL: deleting a family unlinks its students but keeps
+  // the student records (and their allocation/payment history) intact.
+  familyId: varchar("family_id", { length: 36 }).references(() => families.id, { onDelete: "set null" }),
   dateOfBirth: text("date_of_birth"),                 // ISO yyyy-mm-dd
   gender: text("gender"),
   gradeLevel: text("grade_level"),
@@ -480,6 +482,10 @@ export const guardians = pgTable("guardians", {
   phone: text("phone"),
   isPrimaryContact: boolean("is_primary_contact").default(false).notNull(),
   portalAccessStatus: text("portal_access_status").default("none").notNull(), // none | invited | active
+  // Explicit guardian↔portal-user link (Slice 2). Nullable: a guardian may have no
+  // portal account yet. Set on linking-code redemption / backfilled from redemptions.
+  // ON DELETE SET NULL so deleting a user never cascades away the guardian record.
+  userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -643,12 +649,35 @@ export const financeBookAllocations = pgTable("finance_book_allocations", {
   absentMarkedByTeacherId: varchar("absent_marked_by_teacher_id", { length: 36 }).references(() => users.id),
   // Issue reporting
   issueNote: text("issue_note"),
+  // Slice 4: explicit book-custody state for this allocation (one custody unit =
+  // one student × one book). Happy path: reserved → prepared → handed_to_teacher
+  // → issued → collected. Exceptions: absent | returned | damaged | lost.
+  // Maintained alongside status/distributionStatus via recordCustodyTransition;
+  // every change is appended to custody_events.
+  custodyStatus: text("custody_status").default("reserved").notNull(),
   schoolId: varchar("school_id", { length: 36 }),
 });
 
 export const insertAllocationSchema = createInsertSchema(financeBookAllocations).omit({ id: true, allocatedAt: true, receivedAt: true });
 export type InsertAllocation = z.infer<typeof insertAllocationSchema>;
 export type FinanceBookAllocation = typeof financeBookAllocations.$inferSelect;
+
+// Slice 4: append-only custody audit log. One row per custody transition.
+export const custodyEvents = pgTable("custody_events", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  allocationId: varchar("allocation_id", { length: 36 }).references(() => financeBookAllocations.id, { onDelete: "cascade" }).notNull(),
+  schoolId: varchar("school_id", { length: 36 }),
+  fromStatus: text("from_status"),          // null for the very first event
+  toStatus: text("to_status").notNull(),
+  actorUserId: varchar("actor_user_id", { length: 36 }),
+  actorRole: text("actor_role"),
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCustodyEventSchema = createInsertSchema(custodyEvents).omit({ id: true, createdAt: true });
+export type InsertCustodyEvent = z.infer<typeof insertCustodyEventSchema>;
+export type CustodyEvent = typeof custodyEvents.$inferSelect;
 
 export const bookInventoryTransactions = pgTable("book_inventory_transactions", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),

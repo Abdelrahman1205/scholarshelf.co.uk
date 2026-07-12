@@ -10,16 +10,40 @@
  * schoolId — so the same guard covers them.
  */
 import type { Express, Request, Response } from "express";
-import { and, eq, or, ilike, inArray, desc } from "drizzle-orm";
-import { getDb } from "../config/database.js";
+import { and, eq, or, ilike, inArray, desc, sql } from "drizzle-orm";
+import { getDb, getTxDb } from "../config/database.js";
 import { storage } from "../storage.js";
 import { families, guardians, students, familyStudents } from "../../shared/schema.js";
 import {
-  requireRole, sessionSchoolId, auditLog, routeParam, ADMIN_UI_ROLES,
+  requireRole, sessionSchoolId, auditLog, routeParam, ADMIN_UI_ROLES, rateLimit,
+  generateLinkingCode, getEmailBrandingForSchool,
 } from "../middleware/auth.js";
+import { sendParentCodeEmail } from "../email.js";
 
 const genFamilyCode = () => `FAM-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 const genStudentCode = () => `STU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+// Self-healing backfill: legacy students are linked to families only via the
+// family_students join and have a NULL students.family_id. Populate it from the
+// join so every family/count read (which uses students.family_id) is correct.
+// Guarded per-school so it runs at most once per school per process.
+const _backfilledSchools = new Set<string>();
+async function backfillFamilyIds(sid: string): Promise<void> {
+  if (_backfilledSchools.has(sid)) return;
+  _backfilledSchools.add(sid);
+  try {
+    await getDb().execute(sql`
+      UPDATE students AS s SET family_id = fs.family_id
+      FROM family_students AS fs
+      WHERE fs.student_id = s.id AND s.family_id IS NULL AND s.school_id = ${sid}
+    `);
+    // Slice 2: one-time link of existing guardians to their portal users
+    // (unambiguous email match only). Same per-school guard as above.
+    await storage.backfillGuardianUserIds(sid);
+  } catch {
+    _backfilledSchools.delete(sid); // allow a retry on the next request
+  }
+}
 
 type GuardianInput = { fullName?: string; relationship?: string; email?: string; phone?: string; isPrimaryContact?: boolean };
 type StudentInput = { fullName?: string; dateOfBirth?: string; gender?: string; gradeLevel?: string; classId?: string; preferredReadingLevel?: string; photoUrl?: string };
@@ -28,6 +52,39 @@ function str(v: unknown, max = 300): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   return t ? t.slice(0, max) : null;
+}
+
+// Only accept image data URIs or http(s) links for a student photo — reject
+// data:text/html and other active-content schemes (stored-XSS defence).
+function safePhotoUrl(v: unknown): string | null {
+  const s = str(v, 800000);
+  if (!s) return null;
+  if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(s)) return s;
+  if (/^https?:\/\//i.test(s)) return s.slice(0, 2000);
+  return null;
+}
+
+// A real, past date of birth (rejects future dates and garbage strings).
+function isValidDob(v: string | null): boolean {
+  if (!v) return false;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return false;
+  return d <= new Date() && d.getUTCFullYear() >= 1900;
+}
+
+// Basic email shape check (used only when an email is actually provided).
+function isEmailish(v: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+// Reject any classId that doesn't belong to the caller's school (tenant isolation).
+// Returns the offending id, or null if all are valid / none supplied.
+async function firstForeignClassId(sid: string, ids: (string | null | undefined)[]): Promise<string | null> {
+  const wanted = ids.map((c) => (typeof c === "string" ? c.trim() : "")).filter(Boolean);
+  if (wanted.length === 0) return null;
+  const schoolClasses = await storage.getClasses(sid);
+  const valid = new Set(schoolClasses.map((c: any) => c.id));
+  return wanted.find((c) => !valid.has(c)) || null;
 }
 
 async function findDuplicateStudentsByNameDob(
@@ -96,6 +153,9 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
     try {
       const sid = sessionSchoolId(req);
       if (!sid) return res.status(400).json({ message: "School context required" });
+      if (await rateLimit(`family-search:${req.session.userId}`, 90, 60 * 1000)) {
+        return res.status(429).json({ message: "Too many searches. Please slow down." });
+      }
       const q = str(req.query.q, 120);
       if (!q) return res.json([]);
       const like = `%${q}%`;
@@ -144,6 +204,7 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
       const sid = sessionSchoolId(req);
       if (!sid) return res.status(400).json({ message: "School context required" });
       const db = getDb();
+      await backfillFamilyIds(sid);
       const rows = await db.select().from(families).where(eq(families.schoolId, sid)).orderBy(desc(families.createdAt));
       const ids = rows.map((r) => r.id);
       const [gs, ss] = ids.length
@@ -168,6 +229,7 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
       const sid = sessionSchoolId(req);
       if (!sid) return res.status(400).json({ message: "School context required" });
       const db = getDb();
+      await backfillFamilyIds(sid);
       const [family] = await db.select().from(families).where(and(eq(families.id, routeParam(req.params.id)), eq(families.schoolId, sid)));
       if (!family) return res.status(404).json({ message: "Family not found" });
       const [gs, ss] = await Promise.all([
@@ -242,6 +304,27 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
     }
   });
 
+  // ── Delete a family (unlinks students but keeps their records/history) ──
+  app.delete("/api/families/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const db = getDb();
+      const id = routeParam(req.params.id);
+      const [existing] = await db.select().from(families).where(and(eq(families.id, id), eq(families.schoolId, sid)));
+      if (!existing) return res.status(404).json({ message: "Family not found" });
+      // Detach students (preserve the student rows + their allocation/payment history),
+      // drop the join rows, then delete the family. Guardians cascade via their FK.
+      await db.update(students).set({ familyId: null }).where(and(eq(students.familyId, id), eq(students.schoolId, sid)));
+      await db.delete(familyStudents).where(eq(familyStudents.familyId, id));
+      await db.delete(families).where(and(eq(families.id, id), eq(families.schoolId, sid)));
+      await auditLog(req, "family_deleted", `family:${id}`, { familyCode: existing.familyCode });
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   // ── Guardians ──
   app.post("/api/families/:id/guardians", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
@@ -254,6 +337,7 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
       const fullName = str(req.body?.fullName);
       if (!fullName) return res.status(400).json({ message: "Guardian full name is required" });
       if (!str(req.body?.email) && !str(req.body?.phone)) return res.status(400).json({ message: "Provide at least one contact method (email or phone)" });
+      { const gEmail = str(req.body?.email, 255); if (gEmail && !isEmailish(gEmail)) return res.status(400).json({ message: "Enter a valid email address." }); }
       const makePrimary = req.body?.isPrimaryContact === true;
       if (makePrimary) await db.update(guardians).set({ isPrimaryContact: false }).where(eq(guardians.familyId, familyId));
       const [g] = await db.insert(guardians).values({
@@ -311,6 +395,43 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
     }
   });
 
+  // ── Invite a guardian to the parent portal ──
+  // Reuses the family link-code + parent-invite email: the guardian receives a
+  // code that links their new/existing parent account to ALL students in the family.
+  app.post("/api/guardians/:id/invite", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const db = getDb();
+      const id = routeParam(req.params.id);
+      const [guardian] = await db.select().from(guardians).where(and(eq(guardians.id, id), eq(guardians.schoolId, sid)));
+      if (!guardian) return res.status(404).json({ message: "Guardian not found" });
+      const email = str(guardian.email, 255);
+      if (!email || !isEmailish(email)) return res.status(400).json({ message: "Add a valid email for this guardian before inviting them." });
+
+      const [family] = await db.select().from(families).where(and(eq(families.id, guardian.familyId), eq(families.schoolId, sid)));
+      if (!family) return res.status(404).json({ message: "Family not found" });
+
+      await backfillFamilyIds(sid);
+      const kids = await db.select().from(students).where(and(eq(students.schoolId, sid), eq(students.familyId, guardian.familyId)));
+      if (kids.length === 0) return res.status(400).json({ message: "Add at least one student to this family before inviting a guardian." });
+
+      const code = generateLinkingCode();
+      const expiresAt = new Date(Date.now() + 30 * 86400000);
+      await storage.createLinkingCode({
+        studentId: null as any, familyId: guardian.familyId, code,
+        parentEmail: email.toLowerCase(), expiresAt, schoolId: sid,
+      });
+
+      sendParentCodeEmail(email, family.householdName || family.name, code, expiresAt, await getEmailBrandingForSchool(req, sid)).catch(() => {});
+      const [updated] = await db.update(guardians).set({ portalAccessStatus: "invited", updatedAt: new Date() }).where(eq(guardians.id, id)).returning();
+      await auditLog(req, "guardian_invited", `guardian:${id}`, { familyId: guardian.familyId, students: kids.length });
+      res.json({ success: true, portalAccessStatus: "invited", expiresAt, guardian: updated });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   // ── Add a student to a family ──
   app.post("/api/families/:id/students", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
@@ -334,6 +455,8 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
           })),
         });
       }
+      const badClass = await firstForeignClassId(sid, [req.body?.classId]);
+      if (badClass) return res.status(400).json({ message: "That class is not in your school." });
       const created = await addStudentToFamily(db, sid, familyId, req.body || {}, false);
       if ("error" in created) return res.status(400).json({ message: created.error });
       await auditLog(req, "student_added", `student:${created.student.id}`, { familyId });
@@ -433,7 +556,7 @@ async function addStudentToFamily(db: any, sid: string, familyId: string, input:
     gender: str(input.gender, 20),
     gradeLevel: str(input.gradeLevel, 40),
     preferredReadingLevel: str(input.preferredReadingLevel, 40),
-    photoUrl: str(input.photoUrl, 500000),
+    photoUrl: safePhotoUrl(input.photoUrl),
     status: "active",
   }).returning();
   await db.insert(familyStudents).values({ familyId, studentId: student.id });
@@ -444,6 +567,9 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
   try {
     const sid = sessionSchoolId(req);
     if (!sid) return res.status(400).json({ message: "School context required" });
+    if (await rateLimit(`family-enroll:${sid}:${req.session.userId}`, 30, 60 * 1000)) {
+      return res.status(429).json({ message: "Too many enrollment attempts. Please slow down and try again shortly." });
+    }
     const db = getDb();
     const body = req.body || {};
     const guardianInputs: GuardianInput[] = Array.isArray(body.guardians) ? body.guardians : [];
@@ -452,6 +578,10 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
     const householdName = str(body.family?.householdName) || str(body.householdName);
     let familyId: string | null = str(body.familyId);
     let duplicateMatched = false;
+
+    // Tenant isolation: no student may be attached to another school's class.
+    const foreignClass = await firstForeignClassId(sid, studentInputs.map((s) => s.classId));
+    if (foreignClass) return res.status(400).json({ message: "One or more selected classes are not in your school." });
 
     // ── Validation (final enrollment only; drafts may be incomplete) ──
     if (!draft) {
@@ -465,6 +595,14 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
       }
       const validStudents = studentInputs.filter((s) => str(s.fullName) && str(s.dateOfBirth) && str(s.gradeLevel));
       if (validStudents.length === 0) return res.status(400).json({ message: "A family must have at least one student with a name, date of birth and grade level." });
+      // Format checks
+      for (const s of validStudents) {
+        if (!isValidDob(str(s.dateOfBirth))) return res.status(400).json({ message: `Enter a valid past date of birth for ${str(s.fullName) || "a student"}.` });
+      }
+      for (const g of guardianInputs) {
+        const email = str(g.email, 255);
+        if (email && !isEmailish(email)) return res.status(400).json({ message: `"${email}" doesn't look like a valid email address.` });
+      }
     }
 
     // ── Duplicate protection (only when creating a brand-new family) ──
@@ -506,70 +644,77 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
       }
     }
 
-    // ── Create or load the family ──
-    let family: any;
-    if (familyId) {
-      [family] = await db.select().from(families).where(and(eq(families.id, familyId), eq(families.schoolId, sid)));
-      if (!family) return res.status(404).json({ message: "Family not found" });
-      const patch: Record<string, any> = { updatedAt: new Date(), status: draft ? "draft" : "enrolled" };
-      if (householdName) { patch.householdName = householdName; patch.name = householdName; }
-      if (str(body.family?.primaryEmail)) patch.primaryEmail = str(body.family.primaryEmail, 255);
-      if (str(body.family?.primaryPhone)) patch.primaryPhone = str(body.family.primaryPhone, 40);
-      if (str(body.family?.address)) patch.address = str(body.family.address, 500);
-      [family] = await db.update(families).set(patch).where(eq(families.id, familyId)).returning();
-    } else {
-      [family] = await db.insert(families).values({
-        name: householdName || "New Family", householdName: householdName || "New Family", schoolId: sid,
-        familyCode: genFamilyCode(),
-        primaryEmail: str(body.family?.primaryEmail, 255) || guardianInputs.map((g) => str(g.email)).find(Boolean) || null,
-        primaryPhone: str(body.family?.primaryPhone, 40) || guardianInputs.map((g) => str(g.phone)).find(Boolean) || null,
-        address: str(body.family?.address, 500),
-        status: draft ? "draft" : "enrolled",
-      }).returning();
-      familyId = family.id;
-    }
+    // ── Create/link family + guardians + students — ATOMIC (all-or-nothing) ──
+    // Runs over the pg Pool driver (getTxDb) because the Neon HTTP driver used
+    // for reads does not support interactive transactions. Any failure rolls the
+    // whole enrollment back, so we never leave a half-created family behind.
+    const outcome = await getTxDb().transaction(async (trx) => {
+      let family: any;
+      if (familyId) {
+        [family] = await trx.select().from(families).where(and(eq(families.id, familyId), eq(families.schoolId, sid)));
+        if (!family) throw Object.assign(new Error("Family not found"), { httpStatus: 404 });
+        const patch: Record<string, any> = { updatedAt: new Date(), status: draft ? "draft" : "enrolled" };
+        if (householdName) { patch.householdName = householdName; patch.name = householdName; }
+        if (str(body.family?.primaryEmail)) patch.primaryEmail = str(body.family.primaryEmail, 255);
+        if (str(body.family?.primaryPhone)) patch.primaryPhone = str(body.family.primaryPhone, 40);
+        if (str(body.family?.address)) patch.address = str(body.family.address, 500);
+        [family] = await trx.update(families).set(patch).where(eq(families.id, familyId)).returning();
+      } else {
+        [family] = await trx.insert(families).values({
+          name: householdName || "New Family", householdName: householdName || "New Family", schoolId: sid,
+          familyCode: genFamilyCode(),
+          primaryEmail: str(body.family?.primaryEmail, 255) || guardianInputs.map((g) => str(g.email)).find(Boolean) || null,
+          primaryPhone: str(body.family?.primaryPhone, 40) || guardianInputs.map((g) => str(g.phone)).find(Boolean) || null,
+          address: str(body.family?.address, 500),
+          status: draft ? "draft" : "enrolled",
+        }).returning();
+      }
 
-    await auditLog(req, draft ? "family_draft_saved" : "family_enrolled", `family:${family.id}`, { familyCode: family.familyCode, guardians: guardianInputs.length, students: studentInputs.length, override });
+      // Guardians (only the ones with a name)
+      const createdGuardians: any[] = [];
+      let primarySet = false;
+      for (const g of guardianInputs) {
+        const fullName = str(g.fullName);
+        if (!fullName) continue;
+        const isPrimary = g.isPrimaryContact === true && !primarySet;
+        if (isPrimary) primarySet = true;
+        const [row] = await trx.insert(guardians).values({
+          schoolId: sid, familyId: family.id, fullName,
+          relationship: str(g.relationship, 40), email: str(g.email, 255), phone: str(g.phone, 40),
+          isPrimaryContact: isPrimary,
+        }).returning();
+        createdGuardians.push(row);
+      }
+      if (!primarySet && createdGuardians.length) {
+        await trx.update(guardians).set({ isPrimaryContact: true }).where(eq(guardians.id, createdGuardians[0].id));
+        createdGuardians[0].isPrimaryContact = true;
+      }
+      const primaryGuardian = createdGuardians.find((g) => g.isPrimaryContact) || createdGuardians[0];
+      if (primaryGuardian) {
+        await trx.update(families).set({ primaryContactGuardianId: primaryGuardian.id, updatedAt: new Date() }).where(eq(families.id, family.id));
+      }
+
+      // Students (only the ones with a name)
+      const createdStudents: any[] = [];
+      for (const s of studentInputs) {
+        if (!str(s.fullName) && !str((s as any).name)) continue;
+        const r = await addStudentToFamily(trx, sid, family.id, s, true);
+        if ("error" in r) throw Object.assign(new Error(r.error), { httpStatus: 400 });
+        createdStudents.push(r.student);
+      }
+
+      return { family, createdGuardians, createdStudents };
+    });
+
+    const { family, createdGuardians, createdStudents } = outcome;
+
+    // ── Audit (after commit) ──
+    await auditLog(req, draft ? "family_draft_saved" : "family_enrolled", `family:${family.id}`, { familyCode: family.familyCode, guardians: createdGuardians.length, students: createdStudents.length, override });
     if (override && duplicateMatched) {
       await auditLog(req, "duplicate_warning_overridden", `family:${family.id}`, { familyCode: family.familyCode });
     }
-
-    // ── Guardians (only the ones with a name) ──
-    const createdGuardians: any[] = [];
-    let primarySet = false;
-    for (const g of guardianInputs) {
-      const fullName = str(g.fullName);
-      if (!fullName) continue;
-      const isPrimary = g.isPrimaryContact === true && !primarySet;
-      if (isPrimary) primarySet = true;
-      const [row] = await db.insert(guardians).values({
-        schoolId: sid, familyId: family.id, fullName,
-        relationship: str(g.relationship, 40), email: str(g.email, 255), phone: str(g.phone, 40),
-        isPrimaryContact: isPrimary,
-      }).returning();
-      createdGuardians.push(row);
-      await auditLog(req, "guardian_added", `guardian:${row.id}`, { familyId: family.id });
-    }
-    // Default the first guardian to primary if none flagged.
-    if (!primarySet && createdGuardians.length) {
-      await db.update(guardians).set({ isPrimaryContact: true }).where(eq(guardians.id, createdGuardians[0].id));
-      createdGuardians[0].isPrimaryContact = true;
-    }
-    const primaryGuardian = createdGuardians.find((g) => g.isPrimaryContact) || createdGuardians[0];
-    if (primaryGuardian) {
-      await db.update(families).set({ primaryContactGuardianId: primaryGuardian.id, updatedAt: new Date() }).where(eq(families.id, family.id));
-    }
-
-    // ── Students (only the ones with a name) ──
-    const createdStudents: any[] = [];
-    for (const s of studentInputs) {
-      if (!str(s.fullName) && !str((s as any).name)) continue;
-      const r = await addStudentToFamily(db, sid, family.id, s, true);
-      if ("student" in r) {
-        createdStudents.push(r.student);
-        await auditLog(req, "student_added", `student:${r.student.id}`, { familyId: family.id });
-      }
-    }
+    for (const g of createdGuardians) await auditLog(req, "guardian_added", `guardian:${g.id}`, { familyId: family.id }).catch(() => {});
+    for (const s of createdStudents) await auditLog(req, "student_added", `student:${s.id}`, { familyId: family.id }).catch(() => {});
 
     res.status(201).json({
       family: { ...family, status: draft ? "draft" : "enrolled" },
@@ -577,6 +722,6 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
       students: createdStudents,
     });
   } catch (e: any) {
-    res.status(400).json({ message: e.message });
+    res.status(e?.httpStatus || 400).json({ message: e?.message || "Enrollment failed" });
   }
 }

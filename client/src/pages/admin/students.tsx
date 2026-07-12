@@ -17,6 +17,7 @@ import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { StudentProfilePanel } from "./student-profile";
+import { navigateTo } from "./shared";
 import JsBarcode from "jsbarcode";
 import * as XLSX from "xlsx";
 
@@ -168,15 +169,15 @@ function StudentsSection() {
         </div>
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">Student Management</h1>
-            <p className="text-muted-foreground mt-1">Manage enrolments, assign classes, and track parent connections.</p>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">Students</h1>
+            <p className="text-muted-foreground mt-1">Every student in your school — search, look someone up, and open their full record. Enrol new students from Families.</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => { setImportStep("input"); setCsvText(""); setImportPreview(null); setImportOpen(true); }}>
               <MaterialSymbol name="upload_file" className="text-base mr-2" /> Import CSV
             </Button>
-            <Button onClick={() => { setForm({ name: "", classId: "", parentEmail: "" }); setAddOpen(true); }}>
-              <MaterialSymbol name="person_add" className="text-base mr-2" /> Add Student
+            <Button onClick={() => navigateTo("/admin/family-enroll")}>
+              <MaterialSymbol name="group_add" className="text-base mr-2" /> New Enrollment
             </Button>
           </div>
         </div>

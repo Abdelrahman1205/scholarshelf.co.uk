@@ -67,6 +67,20 @@ async function signIn(username: string, password: string, schoolCode?: string): 
   return cookies.join("; ") || null;
 }
 
+// Sign in as the demo admin ONCE and reuse the session across sections that only
+// need read/manage access. The sign-in endpoint is rate-limited (10 / 15 min /
+// IP); re-signing-in per section (plus the family suite on the same IP) blew past
+// that limit, so a late sign-in returned a throttled/half session and downstream
+// admin requests 401'd — a harness artifact, not an auth regression. Memoizing
+// keeps us well under the limit and guarantees one consistent, valid session.
+// (The sign-out test keeps its OWN independent sign-in so it can destroy it.)
+let _adminCookie: string | null | undefined;
+async function adminSession(): Promise<string | null> {
+  if (_adminCookie !== undefined) return _adminCookie;
+  _adminCookie = await signIn("admin", "admin123", "DEMO-001");
+  return _adminCookie;
+}
+
 // ── Test Suites ──
 
 async function testUnauthenticatedAccess() {
@@ -201,59 +215,59 @@ async function testRBACEnforcement() {
 async function testTenantIsolation() {
   console.log("\n─── 3. Tenant Isolation ───");
 
-  const adminCookie = await signIn("admin", "admin123", "DEMO-001");
+  const adminCookie = await adminSession();
   if (!adminCookie) {
     fail("Admin sign-in", "Could not sign in as admin");
     return;
   }
   pass("Admin sign-in", "Authenticated successfully");
 
-  // Verify school-scoped data comes back
+  // Resolve the admin's ACTUAL session school id (the DB-backed demo school gets a
+  // random UUID at bootstrap — the old hardcoded "demo-school-00000001" is only the
+  // in-memory constant and must never be assumed for a live server).
+  const { status: meStatus, body: me } = await fetchJson("/api/auth/me", {
+    headers: { Cookie: adminCookie },
+  });
+  const expectedSchoolId: string | null =
+    (meStatus === 200 && (me?.schoolId ?? me?.user?.schoolId)) || null;
+
+  // Isolation assertion: every returned row must belong to the admin's own school.
+  // If we couldn't resolve the id, fall back to the invariant that a scoped read
+  // returns at most ONE distinct non-null schoolId (all the same tenant).
+  const checkIsolation = (label: string, rows: any[]) => {
+    const distinct = [...new Set(rows.map((r) => r?.schoolId).filter((v) => v != null))];
+    const foreign = expectedSchoolId
+      ? rows.filter((r) => r?.schoolId && r.schoolId !== expectedSchoolId)
+      : (distinct.length > 1 ? rows : []);
+    if (foreign.length === 0) {
+      pass(`${label} tenant isolation`, expectedSchoolId ? "Only own-school rows visible" : `Single tenant (${distinct.length} distinct schoolId)`);
+    } else {
+      fail(`${label} tenant isolation`, `Found ${foreign.length} rows from other schools`);
+    }
+  };
+
   const { status: booksStatus, body: booksBody } = await fetchJson("/api/books", {
     headers: { Cookie: adminCookie },
   });
-
   if (booksStatus === 200 && Array.isArray(booksBody)) {
     pass("GET /api/books → 200", `Returned ${booksBody.length} books`);
-
-    // If there are books, verify they all belong to the demo school
-    // (schoolId should match the admin's session schoolId)
-    const foreignBooks = booksBody.filter((b: any) => b.schoolId && b.schoolId !== "demo-school-00000001" && b.schoolId !== null);
-    if (foreignBooks.length === 0) {
-      pass("Books tenant isolation", "No books from other schools visible");
-    } else {
-      fail("Books tenant isolation", `Found ${foreignBooks.length} books from other schools`);
-    }
+    checkIsolation("Books", booksBody);
   } else {
     fail("GET /api/books", `Status ${booksStatus}`);
   }
 
-  // Check students
   const { status: studentsStatus, body: studentsBody } = await fetchJson("/api/students", {
     headers: { Cookie: adminCookie },
   });
-
   if (studentsStatus === 200 && Array.isArray(studentsBody)) {
-    const foreignStudents = studentsBody.filter((s: any) => s.schoolId && s.schoolId !== "demo-school-00000001" && s.schoolId !== null);
-    if (foreignStudents.length === 0) {
-      pass("Students tenant isolation", "No students from other schools visible");
-    } else {
-      fail("Students tenant isolation", `Found ${foreignStudents.length} students from other schools`);
-    }
+    checkIsolation("Students", studentsBody);
   }
 
-  // Check classes
   const { status: classesStatus, body: classesBody } = await fetchJson("/api/classes", {
     headers: { Cookie: adminCookie },
   });
-
   if (classesStatus === 200 && Array.isArray(classesBody)) {
-    const foreignClasses = classesBody.filter((c: any) => c.schoolId && c.schoolId !== "demo-school-00000001" && c.schoolId !== null);
-    if (foreignClasses.length === 0) {
-      pass("Classes tenant isolation", "No classes from other schools visible");
-    } else {
-      fail("Classes tenant isolation", `Found ${foreignClasses.length} classes from other schools`);
-    }
+    checkIsolation("Classes", classesBody);
   }
 }
 
@@ -363,36 +377,52 @@ async function testWebsiteCmsSecurity() {
   }
 
   // 6.3 Admin cannot save a section with an unsafe (javascript:) link scheme
-  const adminCookie = await signIn("admin", "admin123", "DEMO-001");
+  const adminCookie = await adminSession();
   if (adminCookie) {
-    const res = await fetch(`${BASE}/api/website/sections`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Cookie: adminCookie },
-      body: JSON.stringify({ type: "custom", title: "Bad link", linkUrl: "javascript:alert(1)" }),
-      redirect: "manual",
+    // Probe that this session is genuinely authenticated for the CMS surface
+    // first. A 401 here means the harness session isn't valid (e.g. sign-in
+    // throttling) — that is NOT the same as the XSS scheme being accepted, so we
+    // must not mislabel it. Only assert the rejection on a real, authed session.
+    const { status: probe } = await fetchJson("/api/website/sections", {
+      headers: { Cookie: adminCookie },
     });
-    if (res.status === 400) {
-      pass("Unsafe javascript: link rejected (400)");
+    if (probe !== 200) {
+      // Session isn't authenticated for the CMS surface — a harness/auth artifact,
+      // not an XSS finding. Report it distinctly and skip the URL assertions
+      // (which require a real session) without failing on a mislabeled cause.
+      fail("Admin CMS session authenticated", `GET /api/website/sections → ${probe} (auth/harness issue, not XSS)`);
     } else {
-      fail("Unsafe link rejected", `Expected 400, got ${res.status} — stored-XSS scheme was accepted`);
-    }
+      const res = await fetch(`${BASE}/api/website/sections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ type: "custom", title: "Bad link", linkUrl: "javascript:alert(1)" }),
+        redirect: "manual",
+      });
+      if (res.status === 400) {
+        pass("Unsafe javascript: link rejected (400)");
+      } else if (res.status === 401 || res.status === 403) {
+        fail("Unsafe link rejected", `Got ${res.status} (auth/harness issue, not XSS) — session lost mid-test`);
+      } else {
+        fail("Unsafe link rejected", `Expected 400, got ${res.status} — stored-XSS scheme was accepted`);
+      }
 
-    // 6.4 A safe https link passes URL validation (positive control).
-    // In memory-storage test mode persistence may fail after validation; we
-    // therefore assert only that a safe link is NOT rejected as an invalid URL.
-    const okRes = await fetch(`${BASE}/api/website/sections`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Cookie: adminCookie },
-      body: JSON.stringify({ type: "custom", title: "Good link", linkUrl: "https://example.com" }),
-      redirect: "manual",
-    });
-    let okBody: any = null;
-    try { okBody = await okRes.json(); } catch { /* ignore */ }
-    const rejectedAsBadUrl = okRes.status === 400 && /must be a valid URL/i.test(okBody?.message ?? "");
-    if (!rejectedAsBadUrl) {
-      pass("Safe https link passes URL validation", `status=${okRes.status}`);
-    } else {
-      fail("Safe link passes validation", "A valid https URL was wrongly rejected");
+      // 6.4 A safe https link passes URL validation (positive control).
+      // In memory-storage test mode persistence may fail after validation; we
+      // therefore assert only that a safe link is NOT rejected as an invalid URL.
+      const okRes = await fetch(`${BASE}/api/website/sections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ type: "custom", title: "Good link", linkUrl: "https://example.com" }),
+        redirect: "manual",
+      });
+      let okBody: any = null;
+      try { okBody = await okRes.json(); } catch { /* ignore */ }
+      const rejectedAsBadUrl = okRes.status === 400 && /must be a valid URL/i.test(okBody?.message ?? "");
+      if (!rejectedAsBadUrl) {
+        pass("Safe https link passes URL validation", `status=${okRes.status}`);
+      } else {
+        fail("Safe link passes validation", "A valid https URL was wrongly rejected");
+      }
     }
   }
 

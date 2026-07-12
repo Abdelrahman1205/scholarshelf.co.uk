@@ -31,6 +31,9 @@ function FamilyEnrollmentSection() {
   const [guardians, setGuardians] = useState<Guardian[]>([{ ...emptyGuardian(), isPrimaryContact: true }]);
   const [students, setStudents] = useState<Student[]>([emptyStudent()]);
   const [dupMatches, setDupMatches] = useState<any[] | null>(null);
+  // Remember the family created by "Save Draft" so a later "Enroll" updates the
+  // SAME record instead of creating a duplicate family.
+  const [draftFamilyId, setDraftFamilyId] = useState<string | null>(null);
 
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -58,7 +61,7 @@ function FamilyEnrollmentSection() {
   const currentStep = !familyComplete ? 1 : !guardiansComplete ? 2 : !studentsComplete ? 3 : 4;
 
   const buildPayload = () => ({
-    familyId: linkedFamily?.id || undefined,
+    familyId: linkedFamily?.id || draftFamilyId || undefined,
     family: {
       householdName: linkedFamily ? (linkedFamily.householdName || linkedFamily.name) : family.householdName,
       primaryPhone: family.primaryPhone, primaryEmail: family.primaryEmail, address: family.address,
@@ -102,6 +105,7 @@ function FamilyEnrollmentSection() {
     mutationFn: async () => (await apiRequest("POST", "/api/families/save-draft", buildPayload())).json(),
     onSuccess: (d) => {
       queryClient.invalidateQueries({ queryKey: ["/api/families"] });
+      if (d.family?.id) setDraftFamilyId(d.family.id);
       toast({ title: "Draft saved", description: d.family?.familyCode ? `Reference ${d.family.familyCode}` : undefined });
     },
     onError: (e: any) => toast({ title: "Could not save draft", description: e.message, variant: "destructive" }),

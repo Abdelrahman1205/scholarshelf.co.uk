@@ -5,6 +5,10 @@ import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import * as schema from "../shared/schema.js";
+import {
+  isValidCustodyStatus, isTransitionAllowed, CustodyTransitionError,
+  deriveCustodyFromLegacy, type CustodyStatus,
+} from "./custody.js";
 
 // ── Storage mode detection ────────────────────────────────────────────
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -313,6 +317,9 @@ export interface IStorage {
   getLinkingCodes(schoolId?: string | null): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class })[]>;
   createLinkingCode(code: schema.InsertChildLinkingCode): Promise<schema.ChildLinkingCode>;
   useLinkingCode(code: string, parentIdentifier: string): Promise<{ student?: schema.Student; students?: schema.Student[]; linkingCode: schema.ChildLinkingCode; isFamily?: boolean } | null>;
+  // Slice 2: explicit guardian↔portal-user link
+  linkGuardiansToUser(email: string, userId: string): Promise<number>;
+  backfillGuardianUserIds(schoolId: string): Promise<number>;
   // Family management
   getFamilies(schoolId?: string | null): Promise<(schema.Family & { students?: schema.Student[] })[]>;
   getFamilyById(id: string): Promise<(schema.Family & { students?: schema.Student[] }) | undefined>;
@@ -348,6 +355,10 @@ export interface IStorage {
   // Allocations
   getAllocations(classId?: string, schoolId?: string | null): Promise<any[]>;
   createAllocation(allocation: schema.InsertAllocation): Promise<schema.FinanceBookAllocation>;
+  // Slice 4: book-custody state machine
+  recordCustodyTransition(allocationId: string, to: string, opts?: { actorUserId?: string | null; actorRole?: string | null; note?: string | null; schoolId?: string | null }): Promise<{ changed: boolean; from: string; to: string }>;
+  getCustodyEvents(allocationId: string): Promise<schema.CustodyEvent[]>;
+  backfillCustodyStatus(schoolId: string): Promise<number>;
   confirmReceipt(allocationId: string, schoolId?: string | null): Promise<schema.FinanceBookAllocation>;
 
   // Extra Copy Requests
@@ -909,29 +920,37 @@ class DatabaseStorage implements IStorage {
     const book = await this.getBook(bookId, schoolId);
     if (!book) throw new Error("Book not found");
 
-    const prev = book.stockQuantity ?? 0;
-    let newQty: number;
+    const qty = Math.abs(quantity);
+    const isDeduction = type === "damage" || type === "allocation";
+    const delta = isDeduction ? -qty : qty;
 
-    if (type === "purchase" || type === "return" || type === "adjustment") {
-      newQty = prev + quantity;
-    } else if (type === "damage" || type === "allocation") {
-      newQty = prev - quantity;
-    } else {
-      newQty = prev + quantity;
+    // Slice 5: ATOMIC read-modify-write. A single guarded UPDATE prevents lost
+    // updates / overselling under concurrent adjustments (two simultaneous
+    // deductions can't both read the same starting stock and each write it back).
+    // For deductions the WHERE guard rejects dropping below zero.
+    const whereClause = isDeduction
+      ? and(eq(schema.books.id, bookId), sql`${schema.books.stockQuantity} >= ${qty}`)
+      : eq(schema.books.id, bookId);
+    const [updated] = await getDb()
+      .update(schema.books)
+      .set({ stockQuantity: sql`${schema.books.stockQuantity} + ${delta}` })
+      .where(whereClause)
+      .returning();
+    if (!updated) {
+      // Book exists (checked above), so a missing row here means the guard failed.
+      throw new Error("Stock cannot go below zero");
     }
 
-    if (newQty < 0) throw new Error("Stock cannot go below zero");
-
+    const newQty = updated.stockQuantity ?? 0;
     await getDb().insert(schema.bookInventoryTransactions).values({
       bookId,
       transactionType: type,
       quantity,
-      previousQuantity: prev,
+      previousQuantity: newQty - delta,
       newQuantity: newQty,
       reason,
     });
 
-    const updated = await updateAndFetchFirst(schema.books, eq(schema.books.id, bookId), { stockQuantity: newQty });
     return updated;
   }
 
@@ -1306,6 +1325,67 @@ class DatabaseStorage implements IStorage {
     return { student, linkingCode: { ...linkingCode, isUsed: true, linkedAt: new Date() }, isFamily: false };
   }
 
+  /**
+   * Slice 2 — explicit guardian↔user link (write-point).
+   * When a portal user redeems a linking code, bind that user to any guardian
+   * record sharing their email that has no `userId` yet, and flip portal status
+   * to "active". Case-insensitive, idempotent (only touches `userId IS NULL`
+   * rows, so re-redemption is a no-op). Returns the number of guardians linked.
+   */
+  async linkGuardiansToUser(email: string, userId: string): Promise<number> {
+    const e = (email || "").trim().toLowerCase();
+    if (!e || !userId) return 0;
+    const rows = await getDb()
+      .update(schema.guardians)
+      .set({ userId, portalAccessStatus: "active", updatedAt: new Date() })
+      .where(
+        and(
+          sql`lower(${schema.guardians.email}) = ${e}`,
+          sql`${schema.guardians.userId} IS NULL`,
+        ),
+      )
+      .returning({ id: schema.guardians.id });
+    return rows.length;
+  }
+
+  /**
+   * Slice 2 — one-time backfill for existing data.
+   * For a school, link guardians that still have no `userId` (but do have an
+   * email) to an existing parent user with the same email — but ONLY when there
+   * is exactly one matching user, so it never guesses on ambiguity. Idempotent
+   * and reversible (drop the column to undo). Callers guard per-school so this
+   * runs at most once per process. Returns the number of guardians linked.
+   */
+  async backfillGuardianUserIds(schoolId: string): Promise<number> {
+    if (!schoolId) return 0;
+    const pending = await getDb()
+      .select({ id: schema.guardians.id, email: schema.guardians.email })
+      .from(schema.guardians)
+      .where(
+        and(
+          eq(schema.guardians.schoolId, schoolId),
+          sql`${schema.guardians.userId} IS NULL`,
+          sql`${schema.guardians.email} IS NOT NULL AND ${schema.guardians.email} <> ''`,
+        ),
+      );
+    let linked = 0;
+    for (const g of pending) {
+      const e = (g.email || "").trim().toLowerCase();
+      if (!e) continue;
+      const matches = await getDb()
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(and(sql`lower(${schema.users.email}) = ${e}`, eq(schema.users.role, "parent")));
+      if (matches.length !== 1) continue; // ambiguous or no match — leave untouched
+      await getDb()
+        .update(schema.guardians)
+        .set({ userId: matches[0].id, portalAccessStatus: "active", updatedAt: new Date() })
+        .where(eq(schema.guardians.id, g.id));
+      linked++;
+    }
+    return linked;
+  }
+
   // === FAMILIES ===
 
   async getFamilies(schoolId?: string | null): Promise<(schema.Family & { students?: schema.Student[] })[]> {
@@ -1626,6 +1706,15 @@ class DatabaseStorage implements IStorage {
     const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
 
+    // Idempotency (Slice 5): confirming creates allocations and DEDUCTS STOCK —
+    // side effects that must happen at most once. If this order is already
+    // confirmed or further along, return it unchanged instead of double-processing
+    // (a repeated click must never duplicate allocations or double-deduct stock).
+    const ALREADY_PROCESSED = ["confirmed", "ready_for_collection", "collected"];
+    if (ALREADY_PROCESSED.includes(existing.status)) {
+      return existing;
+    }
+
     const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
       status: "confirmed",
       confirmedAt: new Date(),
@@ -1634,26 +1723,36 @@ class DatabaseStorage implements IStorage {
       paymentReviewNote: reviewNote || null,
     });
 
-    // Create allocations from linked baskets
+    // Create allocations from linked baskets — guarded PER BASKET so a retry (or a
+    // partially-completed prior run) never duplicates allocations or re-deducts stock.
     const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
     for (const bp of bps) {
-      await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
-
       const basket = await this.getBasket(bp.basketId);
-      if (basket) {
-        for (const item of basket.items) {
-          await getDb().insert(schema.financeBookAllocations).values({
-            studentId: basket.studentId,
-            bookId: item.bookId,
-            basketId: basket.id,
-            status: "allocated",
-            schoolId: existing.schoolId,
-          });
-          try {
-            await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
-          } catch (e) {
-            // Stock adjustment failure should not block allocation
-          }
+      if (!basket) continue;
+
+      const existingAllocs = await getDb()
+        .select({ id: schema.financeBookAllocations.id })
+        .from(schema.financeBookAllocations)
+        .where(eq(schema.financeBookAllocations.basketId, basket.id));
+      if (basket.status === "allocated" || existingAllocs.length > 0) {
+        // Already turned into allocations — just ensure the basket flag is set.
+        await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
+        continue;
+      }
+
+      await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
+      for (const item of basket.items) {
+        await getDb().insert(schema.financeBookAllocations).values({
+          studentId: basket.studentId,
+          bookId: item.bookId,
+          basketId: basket.id,
+          status: "allocated",
+          schoolId: existing.schoolId,
+        });
+        try {
+          await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
+        } catch (e) {
+          // Stock adjustment failure should not block allocation
         }
       }
     }
@@ -1703,6 +1802,8 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
     const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
+    // Idempotent: a repeat call once already ready-for-collection is a no-op.
+    if (existing.status === "ready_for_collection") return existing;
     if (existing.status !== "confirmed") throw new Error("Only confirmed payments can be marked ready for collection");
 
     return updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
@@ -1719,6 +1820,8 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
     const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
     if (!existing) throw new Error("Payment not found");
+    // Idempotent: a repeat call once already collected is a no-op.
+    if (existing.status === "collected") return existing;
     if (existing.status !== "ready_for_collection" && existing.status !== "confirmed") {
       throw new Error("Only confirmed or ready-for-collection orders can be marked as collected");
     }
@@ -1830,6 +1933,18 @@ class DatabaseStorage implements IStorage {
 
   async createAllocation(allocation: schema.InsertAllocation): Promise<schema.FinanceBookAllocation> {
     const created = await insertAndFetchById(schema.financeBookAllocations, allocation);
+    // Slice 4: seed the custody timeline with the opening state (null → reserved).
+    try {
+      await getDb().insert(schema.custodyEvents).values({
+        allocationId: created.id,
+        schoolId: created.schoolId ?? null,
+        fromStatus: null,
+        toStatus: created.custodyStatus || "reserved",
+        actorUserId: null,
+        actorRole: "system",
+        note: "allocation created",
+      });
+    } catch { /* non-fatal: custody log is best-effort at creation */ }
     return created;
   }
 
@@ -1845,6 +1960,74 @@ class DatabaseStorage implements IStorage {
       eq(schema.financeBookAllocations.id, allocationId),
       { status: "received", receivedAt: new Date() }
     );
+    return updated;
+  }
+
+  // === CUSTODY (Slice 4) ===
+
+  /**
+   * Apply a custody transition and append a custody_event. Strict: an illegal
+   * transition throws CustodyTransitionError (callers map to 409). Idempotent:
+   * a no-op (same state) returns changed:false and writes nothing.
+   */
+  async recordCustodyTransition(
+    allocationId: string,
+    to: string,
+    opts: { actorUserId?: string | null; actorRole?: string | null; note?: string | null; schoolId?: string | null } = {},
+  ): Promise<{ changed: boolean; from: string; to: string }> {
+    const [alloc] = await getDb().select().from(schema.financeBookAllocations).where(eq(schema.financeBookAllocations.id, allocationId));
+    if (!alloc) throw new Error("Allocation not found");
+    const from = (alloc.custodyStatus || "reserved") as CustodyStatus;
+    if (!isValidCustodyStatus(to)) throw new CustodyTransitionError(from, to);
+    if (from === to) return { changed: false, from, to };
+    if (!isTransitionAllowed(from, to)) throw new CustodyTransitionError(from, to);
+
+    await getDb().update(schema.financeBookAllocations)
+      .set({ custodyStatus: to })
+      .where(eq(schema.financeBookAllocations.id, allocationId));
+    await getDb().insert(schema.custodyEvents).values({
+      allocationId,
+      schoolId: opts.schoolId ?? alloc.schoolId ?? null,
+      fromStatus: from,
+      toStatus: to,
+      actorUserId: opts.actorUserId ?? null,
+      actorRole: opts.actorRole ?? null,
+      note: opts.note ?? null,
+    });
+    return { changed: true, from, to };
+  }
+
+  async getCustodyEvents(allocationId: string): Promise<schema.CustodyEvent[]> {
+    return await getDb().select().from(schema.custodyEvents)
+      .where(eq(schema.custodyEvents.allocationId, allocationId))
+      .orderBy(schema.custodyEvents.createdAt);
+  }
+
+  /**
+   * One-time backfill: seed custody for allocations that have no custody_events
+   * yet, deriving the starting state from legacy status/distributionStatus. Rows
+   * that already have events are skipped, so app-driven custody is never clobbered
+   * — making this safe to re-run. Guarded per-school by the caller.
+   */
+  async backfillCustodyStatus(schoolId: string): Promise<number> {
+    if (!schoolId) return 0;
+    const rows = await getDb().select().from(schema.financeBookAllocations)
+      .where(eq(schema.financeBookAllocations.schoolId, schoolId));
+    let updated = 0;
+    for (const r of rows) {
+      const [hasEvent] = await getDb().select({ id: schema.custodyEvents.id }).from(schema.custodyEvents)
+        .where(eq(schema.custodyEvents.allocationId, r.id)).limit(1);
+      if (hasEvent) continue; // already tracked — never overwrite app-driven custody
+      const derived = deriveCustodyFromLegacy({ status: r.status, distributionStatus: r.distributionStatus });
+      await getDb().update(schema.financeBookAllocations)
+        .set({ custodyStatus: derived })
+        .where(eq(schema.financeBookAllocations.id, r.id));
+      await getDb().insert(schema.custodyEvents).values({
+        allocationId: r.id, schoolId, fromStatus: null, toStatus: derived,
+        actorUserId: null, actorRole: "system", note: "backfilled from legacy status",
+      });
+      updated++;
+    }
     return updated;
   }
 

@@ -1,0 +1,79 @@
+name: CI
+
+# Slice 7: automatic guardrail. Runs the same checks we run by hand each slice —
+# type-check, production build, and the pure unit tests — on every push and PR, so
+# nothing broken can merge. The DB/server-backed suites (security, family, staff,
+# stock, payments) need a live Postgres + dev server and are documented at the
+# bottom of this file; they run locally today and can be enabled here later.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Type-check, build, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Production build
+        run: npm run build
+
+      - name: Unit tests (custody state machine — pure, no DB)
+        run: npm run test:custody
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional follow-up: DB + server integration suites.
+#
+# The suites test:stock / test:payments need DATABASE_URL; test:security /
+# test:family / test:staff additionally need the dev server listening on :5000.
+# To enable them here, add a job like the sketch below (kept commented so CI stays
+# green with zero secrets today):
+#
+#   integration:
+#     runs-on: ubuntu-latest
+#     services:
+#       postgres:
+#         image: postgres:16
+#         env:
+#           POSTGRES_PASSWORD: postgres
+#           POSTGRES_DB: edubook_ci
+#         ports: ["5432:5432"]
+#         options: >-
+#           --health-cmd "pg_isready" --health-interval 10s
+#           --health-timeout 5s --health-retries 5
+#     env:
+#       DATABASE_URL: postgres://postgres:postgres@localhost:5432/edubook_ci
+#       SESSION_SECRET: ci-secret
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-node@v4
+#         with: { node-version: "20", cache: npm }
+#       - run: npm ci
+#       - run: npm run db:push            # create schema in the CI database
+#       - run: npm run dev &              # start server in the background
+#       - run: npx wait-on http://localhost:5000/api/health
+#       - run: npm run test:stock
+#       - run: npm run test:payments
+#       - run: npm run test:security && npm run test:family && npm run test:staff

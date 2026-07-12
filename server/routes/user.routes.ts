@@ -183,29 +183,52 @@ export function registerUserRoutes(app: Express): void {
         return res.status(403).json({ message: "Role is not allowed for school-level administrators." });
       }
 
-      // Duplicate email detection: if email already exists with a compatible role, suggest merging
+      // Duplicate-email handling (Slice 3): one person = one account. If this email
+      // already belongs to a user, never silently create a duplicate — ask the admin
+      // to either add this role to the existing account or deliberately create a
+      // separate one. The admin's decision arrives as linkToExisting / forceCreate.
       if (email) {
         const emailUser = await storage.getUserByEmail(email.toLowerCase().trim());
         if (emailUser) {
           const existingRole = resolveRole(emailUser.role);
           const secondaryRoles = await storage.getSecondaryRoles(emailUser.id);
           const allRoles = [existingRole, ...secondaryRoles];
-          if (!allRoles.includes(normalizedRole as any)) {
-            const canMerge =
-              (normalizedRole === "teacher" && allRoles.includes("parent")) ||
-              (normalizedRole === "parent" && allRoles.includes("teacher")) ||
-              (normalizedRole === "teacher" && existingRole === "parent") ||
-              (normalizedRole === "parent" && existingRole === "teacher");
-            if (canMerge) {
-              return res.status(409).json({
-                message: `An account with email ${email} already exists as ${existingRole}. Add ${normalizedRole} role to this account?`,
-                existingUserId: emailUser.id,
-                existingUserName: emailUser.name,
-                existingRole,
-                suggestedAction: "merge_role",
-              });
+          const alreadyHasRole = allRoles.includes(normalizedRole as any);
+          const { linkToExisting, forceCreate } = req.body as { linkToExisting?: boolean; forceCreate?: boolean };
+
+          // Admin chose to add this role to the existing account (the merge path).
+          if (linkToExisting) {
+            if (emailUser.schoolId && sid && emailUser.schoolId !== sid && !isPlatformOwnerRequest(req)) {
+              return res.status(403).json({ message: "That account belongs to a different school." });
             }
+            if (alreadyHasRole) {
+              return res.status(409).json({ message: `That account already has the ${normalizedRole} role.` });
+            }
+            await storage.addSecondaryRole(emailUser.id, normalizedRole);
+            if (normalizedRole === "teacher" && sid) {
+              await storage.upsertTeacherProfile({ userId: emailUser.id, schoolId: sid, department: null, subjects: null, createdByAdminId: req.session.userId });
+            }
+            await auditLog(req, "user_role_linked", `user:${emailUser.id}`, { addedRole: normalizedRole, via: "create_user_conflict" });
+            const updated = await storage.getUserById(emailUser.id);
+            const { passwordHash: _pl, ...safeLinked } = (updated as any) ?? emailUser;
+            return res.status(200).json({ ...safeLinked, linked: true, addedRole: normalizedRole });
           }
+
+          // No explicit decision yet, and not forcing a separate account → ask the admin.
+          if (!forceCreate) {
+            return res.status(409).json({
+              message: alreadyHasRole
+                ? `An account for ${email} already exists and already has the ${normalizedRole} role.`
+                : `An account for ${email} already exists as ${existingRole}. Add the ${normalizedRole} role to it, or create a separate account?`,
+              existingUserId: emailUser.id,
+              existingUserName: emailUser.name,
+              existingRole,
+              existingRoles: allRoles,
+              alreadyHasRole,
+              suggestedAction: alreadyHasRole ? "already_has_role" : "choose_link_or_create",
+            });
+          }
+          // forceCreate === true → fall through and create a separate account on purpose.
         }
       }
 
@@ -291,6 +314,22 @@ export function registerUserRoutes(app: Express): void {
 
     if (["admin", "school_admin", "platform_admin", "owner"].includes(targetRole) && !isPlatformOwnerRequest(req)) {
       return res.status(403).json({ message: "Deleting admin-level users is restricted." });
+    }
+
+    // Staff departure preserves parent access (Slice 3): if this is a staff account
+    // that is ALSO a parent, hard-deleting would strip the person's access to their
+    // own children. Block the destructive delete and point the admin at offboarding,
+    // which removes only the staff role(s) and keeps the parent account + links.
+    const targetSecondary = await storage.getSecondaryRoles(targetUser.id);
+    const alsoParent = targetRole === "parent" || targetSecondary.includes("parent");
+    if (alsoParent && targetRole !== "parent") {
+      return res.status(409).json({
+        message:
+          "This person is also a parent — deleting the account would remove their access to their own children. " +
+          "Offboard their staff role instead to preserve parent access.",
+        suggestedAction: "offboard_staff",
+        userId: targetUser.id,
+      });
     }
 
     await storage.deleteUser(routeParam(req.params.id));
@@ -463,6 +502,58 @@ export function registerUserRoutes(app: Express): void {
     }
   });
 
+  // POST /api/admin/users/:userId/offboard-staff — remove staff role(s) but keep the
+  // person's parent account and all guardian/child links intact (Slice 3: staff
+  // departure preserves parent access). If a staff role was the account's PRIMARY
+  // role, the account is downgraded to a pure parent account.
+  app.post("/api/admin/users/:userId/offboard-staff", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const userId = routeParam(req.params.userId);
+      const targetUser = await storage.getUserById(userId);
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      if (targetUser.schoolId && sid && targetUser.schoolId !== sid && !isPlatformOwnerRequest(req)) {
+        return res.status(403).json({ message: "User belongs to a different school" });
+      }
+      if (!(await canManageUser(req, targetUser))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const primaryRole = resolveRole(targetUser.role);
+      const secondaryRoles = await storage.getSecondaryRoles(userId);
+      const allRoles = [primaryRole, ...secondaryRoles];
+      if (!allRoles.includes("parent")) {
+        return res.status(409).json({
+          message: "This user has no parent role, so there is no parent access to preserve. Delete the account instead if appropriate.",
+        });
+      }
+
+      const STAFF_ROLES = ["school_admin", "teacher", "finance", "it_personnel"];
+      const removedStaffRoles = allRoles.filter((r) => STAFF_ROLES.includes(r));
+      if (removedStaffRoles.length === 0) {
+        return res.status(409).json({ message: "This account has no staff role to offboard." });
+      }
+
+      // Remove any staff SECONDARY roles.
+      for (const r of secondaryRoles) {
+        if (STAFF_ROLES.includes(r)) await storage.removeSecondaryRole(userId, r);
+      }
+      // If a staff role was the PRIMARY role, downgrade the account to parent.
+      if (STAFF_ROLES.includes(primaryRole)) {
+        await storage.updateUser(userId, { role: "parent" });
+        // "parent" may have been a secondary marker; it is now the primary role.
+        if (secondaryRoles.includes("parent")) await storage.removeSecondaryRole(userId, "parent");
+      }
+
+      await auditLog(req, "staff_offboarded_parent_preserved", `user:${userId}`, { removedStaffRoles });
+      const updated = await storage.getUserById(userId);
+      const { passwordHash: _po, ...safe } = (updated as any) ?? targetUser;
+      res.json({ ...safe, offboarded: true, removedStaffRoles, message: "Staff role(s) removed. Parent access preserved." });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // POST /api/admin/users/:userId/link-child — link a child to an existing parent/multi-role user
   app.post("/api/admin/users/:userId/link-child", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
@@ -609,9 +700,45 @@ export function registerUserRoutes(app: Express): void {
         return res.status(403).json({ message: "Platform owner invites are blocked from this workflow." });
       }
 
+      // Duplicate-email handling (Slice 3): inviting an email that already has an
+      // account shouldn't dead-end. Offer to add this staff role to the existing
+      // account (e.g. a parent who is now also a teacher) — one person, one account.
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
-        return res.status(409).json({ message: "A user with this email already exists" });
+        const existingRole = resolveRole(existingUser.role);
+        const secondaryRoles = await storage.getSecondaryRoles(existingUser.id);
+        const allRoles = [existingRole, ...secondaryRoles];
+        const alreadyHasRole = allRoles.includes(normalizedRole as any);
+        const { linkToExisting } = req.body as { linkToExisting?: boolean };
+
+        if (linkToExisting && !alreadyHasRole) {
+          if (existingUser.schoolId && sid && existingUser.schoolId !== sid && !isPlatformOwnerRequest(req)) {
+            return res.status(403).json({ message: "That account belongs to a different school." });
+          }
+          await storage.addSecondaryRole(existingUser.id, normalizedRole);
+          if (normalizedRole === "teacher" && sid) {
+            await storage.upsertTeacherProfile({ userId: existingUser.id, schoolId: sid, department: null, subjects: null, createdByAdminId: req.session.userId });
+          }
+          await auditLog(req, "user_role_linked", `user:${existingUser.id}`, { addedRole: normalizedRole, via: "invite_conflict" });
+          return res.status(200).json({
+            linked: true,
+            userId: existingUser.id,
+            addedRole: normalizedRole,
+            message: `Added the ${normalizedRole} role to ${existingUser.name}'s existing account — no new invite needed.`,
+          });
+        }
+
+        return res.status(409).json({
+          message: alreadyHasRole
+            ? `${email} already has an account with the ${normalizedRole} role.`
+            : `${email} already has an account (${existingRole}). Add the ${normalizedRole} role to it instead of creating a second account?`,
+          existingUserId: existingUser.id,
+          existingUserName: existingUser.name,
+          existingRole,
+          existingRoles: allRoles,
+          alreadyHasRole,
+          suggestedAction: alreadyHasRole ? "already_has_role" : "add_role_to_existing",
+        });
       }
 
       const existingInvite = await storage.getPendingInviteByEmail(email);

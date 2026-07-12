@@ -115,6 +115,11 @@ export function registerParentRoutes(app: Express): void {
       } else if (result.student) {
         await auditLog(req, "parent_child_linked", `student:${result.student.id}`);
       }
+      // Slice 2: bind this portal user to matching guardian record(s) and mark active.
+      try {
+        const linked = await storage.linkGuardiansToUser(user.email, user.id);
+        if (linked > 0) await auditLog(req, "guardian_portal_linked", `guardians:${linked}`);
+      } catch { /* non-fatal: linking is best-effort, redemption already succeeded */ }
       res.json(result);
     } catch (e: any) {
       const msg = e.message || "Unknown error";
@@ -132,6 +137,11 @@ export function registerParentRoutes(app: Express): void {
       if (!user?.email) return res.status(400).json({ message: "No email set for your account" });
       const result = await storage.useLinkingCode(code, user.email);
       if (!result) return res.status(404).json({ message: "Invalid linking code" });
+      // Slice 2: bind portal user to matching guardian record(s) and mark active.
+      try {
+        const linked = await storage.linkGuardiansToUser(user.email, user.id);
+        if (linked > 0) await auditLog(req, "guardian_portal_linked", `guardians:${linked}`);
+      } catch { /* non-fatal: redemption already succeeded */ }
       res.json(result);
     } catch (e: any) {
       // Map specific security errors to appropriate HTTP status codes

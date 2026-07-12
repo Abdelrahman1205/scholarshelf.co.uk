@@ -4,9 +4,14 @@
  * The actual section components live in ./admin/* — one file per section.
  * This file only decides which section to render based on the `section` prop.
  */
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { normalizeRole } from "./admin/shared";
+import { normalizeRole, navigateTo } from "./admin/shared";
+
+// Retired routes → their family-first replacements (spec §10 redirects).
+const RETIRED_SECTION_REDIRECTS: Record<string, string> = {
+  parents: "/admin/families",
+};
 
 // ─── Section components ────────────────────────────────────────────────────
 import { DashboardSection }        from "./admin/dashboard";
@@ -50,6 +55,13 @@ export default function AdminPage({ section }: { section: string }) {
   const requesterIsOwner = normalizeRole(user?.role) === "platform_owner";
   const inSupportMode = requesterIsOwner && (user as any)?.supportMode?.active;
   const isItPersonnel = normalizedRole === "it_personnel";
+
+  // Redirect retired routes to their replacements before rendering anything.
+  const redirectTo = RETIRED_SECTION_REDIRECTS[section];
+  useEffect(() => {
+    if (redirectTo) navigateTo(redirectTo);
+  }, [redirectTo]);
+  if (redirectTo) return null;
 
   const sections: Record<string, ReactNode> = {
     website:            <ItDashboardSection />,

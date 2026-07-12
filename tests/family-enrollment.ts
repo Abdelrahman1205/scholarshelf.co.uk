@@ -513,6 +513,101 @@ async function testDeleteFamily(familyId: string) {
   }
 }
 
+// ── Hardening tests (atomicity / isolation / validation / invite) ───────────
+
+async function testHardeningClassIdIsolation() {
+  console.log("\n─── H1. Tenant isolation — foreign classId rejected ───");
+  const { status } = await req("POST", "/api/families/enroll", {
+    family: { householdName: `ClassIso ${TAG}`, primaryEmail: `classiso.${TAG}@test.com` },
+    guardians: [{ fullName: `G ${TAG}`, email: `classiso.${TAG}@test.com`, isPrimaryContact: true }],
+    students: [{ fullName: `S ${TAG}`, dateOfBirth: "2015-01-01", gradeLevel: "3", classId: "00000000-0000-0000-0000-000000000000" }],
+  });
+  if (status === 400) pass("Enroll with foreign classId → 400", "");
+  else fail("Foreign classId not rejected", `Expected 400, got ${status}`);
+}
+
+async function testHardeningDobValidation() {
+  console.log("\n─── H2. DOB validation — future date rejected ───");
+  const { status } = await req("POST", "/api/families/enroll", {
+    family: { householdName: `DobVal ${TAG}`, primaryEmail: `dobval.${TAG}@test.com` },
+    guardians: [{ fullName: `G ${TAG}`, email: `dobval.${TAG}@test.com`, isPrimaryContact: true }],
+    students: [{ fullName: `S ${TAG}`, dateOfBirth: "2999-01-01", gradeLevel: "3" }],
+  });
+  if (status === 400) pass("Enroll with future DOB → 400", "");
+  else fail("Future DOB not rejected", `Expected 400, got ${status}`);
+}
+
+async function testHardeningInviteAndPhoto() {
+  console.log("\n─── H3. Guardian invite + photo sanitization ───");
+  const email = `invite.${TAG}@test.com`;
+  const { status, body } = await req("POST", "/api/families/enroll", {
+    family: { householdName: `Invite ${TAG}`, primaryEmail: email },
+    guardians: [{ fullName: `Guardian ${TAG}`, email, isPrimaryContact: true }],
+    students: [{ fullName: `Kid ${TAG}`, dateOfBirth: "2016-03-03", gradeLevel: "2", photoUrl: "data:text/html;base64,PHNjcmlwdD4=" }],
+  });
+  if (status !== 201) { fail("Enroll for invite test", `Status ${status}`); return; }
+  const familyId = body.family?.id;
+  const studentId = body.students?.[0]?.id;
+  if (studentId) {
+    const { body: prof } = await req("GET", `/api/students/${studentId}/profile`);
+    if (!prof?.student?.photoUrl) pass("data:text/html photo rejected → null", "");
+    else fail("Malicious photo stored", `photoUrl=${String(prof.student.photoUrl).slice(0, 24)}`);
+  }
+  const { body: fam } = await req("GET", `/api/families/${familyId}`);
+  const guardianId = fam?.guardians?.[0]?.id;
+  if (guardianId) {
+    const { status: is, body: ib } = await req("POST", `/api/guardians/${guardianId}/invite`, {});
+    if (is === 200 && ib?.portalAccessStatus === "invited") pass("Guardian invite → invited", "");
+    else fail("Guardian invite", `Status ${is}, portalAccessStatus=${ib?.portalAccessStatus}`);
+  } else fail("Guardian invite", "No guardian id resolved");
+  if (familyId) await req("DELETE", `/api/families/${familyId}`);
+}
+
+// ── Slice 2: explicit guardian↔user relationship ───────────────────────────
+
+async function testGuardianUserLinkField() {
+  console.log("\n─── S2. Guardian exposes userId (portal link) ───");
+  const email = `s2link.${TAG}@test.com`;
+  const { status, body } = await req("POST", "/api/families/enroll", {
+    family: { householdName: `S2 ${TAG}`, primaryEmail: email },
+    guardians: [{ fullName: `S2 Guardian ${TAG}`, email, isPrimaryContact: true }],
+    students: [{ fullName: `S2 Kid ${TAG}`, dateOfBirth: "2015-05-05", gradeLevel: "3" }],
+  });
+  if (status !== 201) { fail("Enroll for S2 test", `Status ${status}`); return; }
+  const familyId = body.family?.id;
+  const { body: fam } = await req("GET", `/api/families/${familyId}`);
+  const g = fam?.guardians?.[0];
+  // Field must be present (relationship exists) and null (no redemption yet).
+  if (g && "userId" in g && g.userId === null) {
+    pass("Guardian exposes userId, null before link", "");
+  } else {
+    fail("Guardian userId field", `present=${g ? "userId" in g : false}, value=${g?.userId}`);
+  }
+  // Portal status should be its default until an invite/redemption occurs.
+  if (g?.portalAccessStatus === "none") pass("New guardian portalAccessStatus=none", "");
+  else fail("Default portal status", `Expected none, got ${g?.portalAccessStatus}`);
+  if (familyId) await req("DELETE", `/api/families/${familyId}`);
+}
+
+// ── Slice 1: legacy retirement + structured errors ─────────────────────────
+
+async function testUnknownApiStructuredError() {
+  console.log("\n─── S1a. Unknown /api/* → structured error ───");
+  const { status, body } = await req("GET", "/api/definitely-not-real-xyz");
+  if (status === 404 && body?.success === false && body?.error?.code === "ROUTE_NOT_FOUND") {
+    pass("Unknown API route → structured 404", "code=ROUTE_NOT_FOUND");
+  } else {
+    fail("Structured 404 envelope", `status=${status}, code=${body?.error?.code}`);
+  }
+}
+
+async function testLegacyFamilyApiDecommissioned() {
+  console.log("\n─── S1b. Legacy /api/admin/families decommissioned ───");
+  const { status } = await req("GET", "/api/admin/families");
+  if (status === 404) pass("Legacy /api/admin/families → 404", "route unregistered");
+  else fail("Legacy family route still responds", `Expected 404, got ${status}`);
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -552,6 +647,18 @@ async function run() {
   }
 
   await testValidation();
+
+  // Hardening coverage
+  await testHardeningClassIdIsolation();
+  await testHardeningDobValidation();
+  await testHardeningInviteAndPhoto();
+
+  // Slice 1: legacy retirement + structured errors
+  await testUnknownApiStructuredError();
+  await testLegacyFamilyApiDecommissioned();
+
+  // Slice 2: explicit guardian↔user relationship
+  await testGuardianUserLinkField();
 
   const draftId = await testSaveDraft();
   await testPromoteDraftToEnrolled(draftId);

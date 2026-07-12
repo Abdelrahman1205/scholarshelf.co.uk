@@ -9,7 +9,14 @@
     "build": "tsx script/build.ts",
     "start": "node dist/index.cjs",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "test:family": "tsx tests/family-enrollment.ts",
+    "test:security": "tsx tests/security-regression.ts",
+    "test:staff": "tsx tests/staff-parent.ts",
+    "test:custody": "tsx tests/custody-machine.ts",
+    "test:stock": "tsx tests/stock-idempotency.ts",
+    "test:payments": "tsx tests/payment-idempotency.ts",
+    "test": "npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:family && npm run test:staff"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -29,11 +29,48 @@ import {
   getBrandingPermissionSet,
   getTeacherAssignedClasses,
 } from "../middleware/auth.js";
+import { CUSTODY_STATES, ALLOWED_TRANSITIONS, CustodyTransitionError, isValidCustodyStatus, type CustodyStatus } from "../custody.js";
 
+// One-time-per-school custody backfill guard (mirrors the family-enrollment pattern).
+const _custodyBackfilled = new Set<string>();
+async function ensureCustodyBackfill(sid: string): Promise<void> {
+  if (!sid || _custodyBackfilled.has(sid)) return;
+  _custodyBackfilled.add(sid);
+  try { await storage.backfillCustodyStatus(sid); }
+  catch { _custodyBackfilled.delete(sid); } // allow a retry next request
+}
+
+// Best-effort custody transition from inside an existing endpoint: never let a
+// custody-log write break the primary operation (which already succeeded).
+async function tryCustody(req: Request, allocationId: string, to: CustodyStatus, note?: string): Promise<void> {
+  try {
+    await storage.recordCustodyTransition(allocationId, to, {
+      actorUserId: req.session.userId ?? null,
+      actorRole: getActiveRequestContext(req),
+      note: note ?? null,
+      schoolId: sessionSchoolId(req),
+    });
+  } catch { /* non-fatal: e.g. illegal transition from an already-advanced state */ }
+}
+
+// Resolve an allocation the caller is allowed to see. Teachers are scoped to
+// their assigned classes; returns null (→ 404, no leak) otherwise.
+async function findVisibleAllocation(req: Request, sid: string | null | undefined, id: string): Promise<any | null> {
+  const allocations = await storage.getAllocations(undefined, sid ?? undefined);
+  const alloc = allocations.find((a: any) => a.id === id);
+  if (!alloc) return null;
+  if (getActiveRequestContext(req) === "teacher") {
+    const classes = await getTeacherAssignedClasses(req.session.userId!, sid);
+    const assigned = new Set(classes.filter((c: any) => c.teacherId === req.session.userId).map((c: any) => c.id));
+    if (!alloc.student?.class?.id || !assigned.has(alloc.student.class.id)) return null;
+  }
+  return alloc;
+}
 
 export function registerAllocationRoutes(app: Express): void {
   app.get("/api/allocations", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
     const sid = sessionSchoolId(req);
+    if (sid) await ensureCustodyBackfill(sid);
     const classId = req.query.classId as string | undefined;
     let allocations = await storage.getAllocations(classId, sid);
     if (getActiveRequestContext(req) === "teacher") {
@@ -62,6 +99,58 @@ export function registerAllocationRoutes(app: Express): void {
       const allocation = await storage.createAllocation({ ...req.body, schoolId: sid });
       res.status(201).json(allocation);
     } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // === CUSTODY STATE MACHINE (Slice 4) ===
+
+  // Custody timeline + allowed next states for one allocation.
+  app.get("/api/allocations/:id/custody", requireRole(...ADMIN_UI_ROLES, "teacher", ...FINANCE_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const id = routeParam(req.params.id);
+      const alloc = await findVisibleAllocation(req, sid, id);
+      if (!alloc) return res.status(404).json({ message: "Allocation not found" });
+      const current = (alloc.custodyStatus || "reserved") as CustodyStatus;
+      const events = await storage.getCustodyEvents(id);
+      res.json({
+        allocationId: id,
+        custodyStatus: current,
+        allowedNext: ALLOWED_TRANSITIONS[current] ?? [],
+        states: CUSTODY_STATES,
+        events,
+      });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Drive the custody machine (strict). Admin/teacher/finance advance the happy
+  // path or record exceptions (lost/damaged/returned/absent). Illegal jumps → 409.
+  app.post("/api/allocations/:id/custody", requireRole(...ADMIN_UI_ROLES, "teacher", ...FINANCE_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const id = routeParam(req.params.id);
+      const { to, note } = req.body as { to?: string; note?: string };
+      if (!to || !isValidCustodyStatus(to)) {
+        return res.status(400).json({ message: `Invalid custody state. One of: ${CUSTODY_STATES.join(", ")}` });
+      }
+      const alloc = await findVisibleAllocation(req, sid, id);
+      if (!alloc) return res.status(404).json({ message: "Allocation not found" });
+
+      const result = await storage.recordCustodyTransition(id, to, {
+        actorUserId: req.session.userId ?? null,
+        actorRole: getActiveRequestContext(req),
+        note: note ?? null,
+        schoolId: sid,
+      });
+      await auditLog(req, "custody_transition", `allocation:${id}`, { from: result.from, to: result.to, changed: result.changed });
+      res.json({ ...result, custodyStatus: result.to, allowedNext: ALLOWED_TRANSITIONS[result.to as CustodyStatus] ?? [] });
+    } catch (e: any) {
+      if (e instanceof CustodyTransitionError) {
+        return res.status(409).json({ message: e.message, code: "ILLEGAL_CUSTODY_TRANSITION", from: e.from, to: e.to });
+      }
       res.status(400).json({ message: e.message });
     }
   });
@@ -106,6 +195,7 @@ export function registerAllocationRoutes(app: Express): void {
       }
 
       const allocation = await storage.confirmReceipt(routeParam(req.params.id), sid);
+      await tryCustody(req, routeParam(req.params.id), "issued", "receipt confirmed");
       res.json(allocation);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -152,6 +242,7 @@ export function registerAllocationRoutes(app: Express): void {
       }
 
       const allocation = await storage.markAllocationAbsent(routeParam(req.params.id), sid);
+      await tryCustody(req, routeParam(req.params.id), "absent", "marked absent at handover");
       res.json(allocation);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -196,6 +287,7 @@ export function registerAllocationRoutes(app: Express): void {
       }
 
       const result = await storage.confirmDistribution(routeParam(req.params.id), req.session.userId!, sid);
+      await tryCustody(req, routeParam(req.params.id), "issued", "teacher confirmed student received");
       res.json(result);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -208,6 +300,7 @@ export function registerAllocationRoutes(app: Express): void {
       const sid = sessionSchoolId(req);
       if (!sid) return res.status(400).json({ message: "School context required" });
       const result = await storage.markDistributionAbsent(routeParam(req.params.id), req.session.userId!, sid);
+      await tryCustody(req, routeParam(req.params.id), "absent", "teacher marked student absent");
       res.json(result);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -235,6 +328,7 @@ export function registerAllocationRoutes(app: Express): void {
       const { issueNote } = req.body;
       if (!issueNote) return res.status(400).json({ message: "Issue note is required" });
       const result = await storage.reportDistributionIssue(routeParam(req.params.id), req.session.userId!, issueNote, sid);
+      await tryCustody(req, routeParam(req.params.id), "damaged", issueNote);
       res.json(result);
     } catch (e: any) {
       res.status(400).json({ message: e.message });

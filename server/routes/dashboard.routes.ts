@@ -577,9 +577,19 @@ export function registerDashboardRoutes(app: Express): void {
     }
   });
 
-  // ── API catch-all: return JSON 404 for unknown /api routes ──
-  app.all("/api/*path", (_req: Request, res: Response) => {
-    res.status(404).json({ message: "API endpoint not found" });
+  // ── API catch-all: structured JSON 404 for unknown /api routes ──
+  // Standard error envelope so clients can rely on a consistent shape.
+  app.all("/api/*path", (req: Request, res: Response) => {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: "ROUTE_NOT_FOUND",
+        message: `Unknown API route: ${req.method} ${req.path}`,
+        details: null,
+      },
+      // `message` kept for backward compatibility with existing clients.
+      message: "API endpoint not found",
+    });
   });
 
 }

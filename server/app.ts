@@ -325,6 +325,31 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     }),
   );
 
+  // Slice 6: global write rate-limit. A generous per-identity cap on mutating
+  // /api requests blunts abuse and runaway clients without touching read traffic.
+  // Endpoints with their own (stricter) limiters — auth, cron, link-code — are
+  // exempt so we never double-limit them. The limiter must never itself block
+  // traffic if the backing store errors.
+  const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  const RL_EXEMPT = [/^\/api\/auth\//, /^\/api\/cron\//, /^\/api\/parent\/link-/];
+  app.use(async (req, res, next) => {
+    if (!req.path.startsWith("/api/") || !WRITE_METHODS.has(req.method)) return next();
+    if (RL_EXEMPT.some((re) => re.test(req.path))) return next();
+    try {
+      const fwd = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
+      const id = (req.session as any)?.userId || fwd || req.socket?.remoteAddress || "anon";
+      const { rateLimit } = await import("./middleware/auth.js");
+      if (await rateLimit(`mutations:${id}`, 240, 60_000)) {
+        return res.status(429).json({
+          success: false,
+          error: { code: "RATE_LIMITED", message: "Too many requests. Please slow down and try again shortly.", details: null },
+          message: "Too many requests. Please slow down and try again shortly.",
+        });
+      }
+    } catch { /* never block traffic on limiter failure */ }
+    next();
+  });
+
   await ensureBootstrapSchema();
 
   await registerRoutes(httpServer, app);
