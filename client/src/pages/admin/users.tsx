@@ -27,6 +27,7 @@ import {
   navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
   normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
 } from "./shared";
+import { InviteStaffWizard } from "./invite-staff-wizard";
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
 function UserDetailPanel({ userId }: { userId: string }) {
@@ -402,6 +403,7 @@ function UsersList() {
   const { user: currentUser } = useAuth();
   const requesterIsOwner = normalizeRole(currentUser?.role) === "platform_owner";
   const [addOpen, setAddOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
@@ -530,10 +532,12 @@ function UsersList() {
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Users</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage admin, teacher, and parent accounts.</p>
         </div>
-        <Button data-testid="button-add-user" onClick={() => { resetForm(); setAddOpen(true); }}>
+        <Button data-testid="button-add-user" onClick={() => { resetForm(); setWizardOpen(true); }}>
           <Plus className="w-4 h-4 mr-2" /> Invite Staff
         </Button>
       </div>
+
+      <InviteStaffWizard open={wizardOpen} onClose={() => setWizardOpen(false)} />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
