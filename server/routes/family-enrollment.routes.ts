@@ -289,22 +289,11 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
     }
   });
 
-  app.delete("/api/families/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
-    try {
-      const sid = sessionSchoolId(req);
-      if (!sid) return res.status(400).json({ message: "School context required" });
-      const db = getDb();
-      const id = routeParam(req.params.id);
-      const [deleted] = await db.delete(families).where(and(eq(families.id, id), eq(families.schoolId, sid))).returning();
-      if (!deleted) return res.status(404).json({ message: "Family not found" });
-      await auditLog(req, "family_deleted", `family:${id}`, { familyCode: deleted.familyCode });
-      res.status(204).send();
-    } catch (e: any) {
-      res.status(400).json({ message: e.message });
-    }
-  });
-
   // ── Delete a family (unlinks students but keeps their records/history) ──
+  // NOTE: a second, naive DELETE handler for this same path was removed — it
+  // deleted the family without detaching students first, which orphaned them.
+  // Express uses the first matching route, so that naive one was silently the
+  // live handler. This is the single, correct implementation.
   app.delete("/api/families/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
@@ -716,10 +705,42 @@ async function enrollHandler(req: Request, res: Response, draft: boolean) {
     for (const g of createdGuardians) await auditLog(req, "guardian_added", `guardian:${g.id}`, { familyId: family.id }).catch(() => {});
     for (const s of createdStudents) await auditLog(req, "student_added", `student:${s.id}`, { familyId: family.id }).catch(() => {});
 
+    // ── Auto-send parent linking-code email on final enrollment ──
+    // Mirrors POST /api/guardians/:id/invite: the primary guardian (or the first
+    // guardian with a valid email) receives a code linking their parent account to
+    // the whole family. Only fires for a real enrollment (not a draft) that created
+    // at least one student. Fire-and-forget so an email issue never fails or rolls
+    // back the enrollment that already committed above.
+    let invitedGuardianEmail: string | null = null;
+    if (!draft && createdStudents.length > 0) {
+      try {
+        const guardianRows: any[] = createdGuardians.length
+          ? createdGuardians
+          : await getDb().select().from(guardians).where(and(eq(guardians.familyId, family.id), eq(guardians.schoolId, sid)));
+        const hasEmail = (g: any) => isEmailish(str(g.email, 255) || "");
+        const emailable = guardianRows.find((g: any) => g.isPrimaryContact && hasEmail(g))
+          || guardianRows.find(hasEmail);
+        if (emailable) {
+          const inviteEmail = (str(emailable.email, 255) || "").toLowerCase();
+          const code = generateLinkingCode();
+          const expiresAt = new Date(Date.now() + 30 * 86400000);
+          await storage.createLinkingCode({
+            studentId: null as any, familyId: family.id, code,
+            parentEmail: inviteEmail, expiresAt, schoolId: sid,
+          });
+          sendParentCodeEmail(inviteEmail, family.householdName || family.name, code, expiresAt, await getEmailBrandingForSchool(req, sid)).catch(() => {});
+          await getDb().update(guardians).set({ portalAccessStatus: "invited", updatedAt: new Date() }).where(eq(guardians.id, emailable.id));
+          await auditLog(req, "guardian_invited", `guardian:${emailable.id}`, { familyId: family.id, auto: true }).catch(() => {});
+          invitedGuardianEmail = inviteEmail;
+        }
+      } catch { /* never fail a committed enrollment because of email */ }
+    }
+
     res.status(201).json({
       family: { ...family, status: draft ? "draft" : "enrolled" },
       guardians: createdGuardians,
       students: createdStudents,
+      invitedGuardianEmail,
     });
   } catch (e: any) {
     res.status(e?.httpStatus || 400).json({ message: e?.message || "Enrollment failed" });
