@@ -309,6 +309,11 @@ export const invites = pgTable("invites", {
   expiresAt: timestamp("expires_at").notNull(),
   acceptedAt: timestamp("accepted_at"),
   createdAt: timestamp("created_at").defaultNow(),
+  // Staff-invite wizard: optional family link so a staff member who is also a
+  // parent is auto-linked to their children (as a parent) when they accept.
+  familyId: varchar("family_id", { length: 36 }),
+  relationship: text("relationship"),
+  guardianPermissions: text("guardian_permissions"),
 });
 
 export const insertInviteSchema = createInsertSchema(invites).omit({ id: true, acceptedAt: true, createdAt: true });

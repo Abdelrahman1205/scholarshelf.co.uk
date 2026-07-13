@@ -746,6 +746,24 @@ export function registerUserRoutes(app: Express): void {
         return res.status(409).json({ message: "A pending invite for this email already exists" });
       }
 
+      // Optional family link from the staff-invite wizard: when a staff member is
+      // also a parent, capture the family so they're auto-linked to their children
+      // (with a parent role) on acceptance. Validated against THIS school — a family
+      // with no students here is ignored rather than trusted from the client.
+      let familyLink: { familyId: string; relationship: string | null; guardianPermissions: string | null } | null = null;
+      const rawFamilyId = typeof req.body?.familyId === "string" ? req.body.familyId.trim() : "";
+      if (rawFamilyId && sid) {
+        const famKids = await storage.getStudentsByFamily(rawFamilyId, sid);
+        if (famKids.length > 0) {
+          const rel = typeof req.body?.relationship === "string" ? req.body.relationship.slice(0, 40) : null;
+          let permsStr: string | null = null;
+          if (req.body?.guardianPermissions != null) {
+            try { permsStr = JSON.stringify(req.body.guardianPermissions).slice(0, 2000); } catch { permsStr = null; }
+          }
+          familyLink = { familyId: rawFamilyId, relationship: rel, guardianPermissions: permsStr };
+        }
+      }
+
       const rawToken = nodeCrypto.randomBytes(32).toString("hex");
       const tokenHash = await bcrypt.hash(rawToken, 10);
 
@@ -757,6 +775,11 @@ export function registerUserRoutes(app: Express): void {
         invitedBy: req.session.userId!,
         status: "pending",
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        ...(familyLink ? {
+          familyId: familyLink.familyId,
+          relationship: familyLink.relationship,
+          guardianPermissions: familyLink.guardianPermissions,
+        } : {}),
       });
 
       const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${invite.id}.${rawToken}`;

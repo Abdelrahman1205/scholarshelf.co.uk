@@ -431,6 +431,34 @@ export async function acceptInviteToken(
   await storage.markInviteAccepted(invite.id);
   await auditLog(req, "invite_accepted", `user:${user.id}`, { inviteId: invite.id });
 
+  // Staff-invite wizard family link: if this invite carried a family, the new
+  // account is also a parent — add the parent role and link them to every child
+  // in that family. School-scoped in getStudentsByFamily so no cross-tenant leak.
+  // Wrapped so a linking hiccup never blocks account creation (admin can finish
+  // via "Link Child" on the staff profile).
+  const linkFamilyId = (invite as any).familyId as string | null | undefined;
+  const parentEmail = user.email;
+  if (linkFamilyId && parentEmail) {
+    try {
+      if (resolveRole(user.role) !== "parent") {
+        await storage.addSecondaryRole(user.id, "parent");
+      }
+      const kids = await storage.getStudentsByFamily(linkFamilyId, invite.schoolId);
+      for (const s of kids) {
+        await storage.addParentStudentLink({
+          parentIdentifier: parentEmail,
+          studentId: s.id,
+          relationship: (invite as any).relationship || undefined,
+          addedByAdminId: invite.invitedBy || undefined,
+          schoolId: invite.schoolId || undefined,
+        });
+      }
+      await auditLog(req, "invite_family_linked", `user:${user.id}`, { familyId: linkFamilyId, children: kids.length });
+    } catch (e) {
+      console.error("[invite-accept] family link failed:", e);
+    }
+  }
+
   req.session.regenerate((err) => {
     if (err) {
       buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));

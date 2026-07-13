@@ -93,6 +93,13 @@ export function InviteStaffWizard({ open, onClose }: { open: boolean; onClose: (
     mutationFn: async () => {
       const body: any = { email: details.email.trim(), role };
       if (existing) body.linkToExisting = true; // unified account: add role to existing person
+      // Family link (staff who is also a parent): applied on acceptance, or now if the
+      // account already exists.
+      if (hasFamily === true && selectedFamily?.id) {
+        body.familyId = selectedFamily.id;
+        if (relationship) body.relationship = relationship;
+        body.guardianPermissions = perms;
+      }
       const res = await apiRequest("POST", "/api/invites", body);
       return res.json().catch(() => ({}));
     },
@@ -476,7 +483,7 @@ export function InviteStaffWizard({ open, onClose }: { open: boolean; onClose: (
                   {existing
                     ? <>Unified account: the <span className="font-medium text-foreground">{roleLabel(role)}</span> role will be added to <span className="font-medium text-foreground">{existing.name}</span>'s existing login.</>
                     : familyPath
-                      ? <>One account will be created with the <span className="font-medium text-foreground">{roleLabel(role)}</span> role. After they accept, finish linking children from the staff profile using <span className="font-medium text-foreground">Link Child</span>.</>
+                      ? <>One unified account will be created with the <span className="font-medium text-foreground">{roleLabel(role)}</span> role plus Parent access. When they accept, they'll be linked automatically to <span className="font-medium text-foreground">{selectedFamily?.householdName || selectedFamily?.name || "the family"}</span>'s children.</>
                       : <>One staff account will be created with the <span className="font-medium text-foreground">{roleLabel(role)}</span> role.</>}
                 </p>
               </div>

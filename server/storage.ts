@@ -291,6 +291,7 @@ export interface IStorage {
   // Students
   getStudents(schoolId?: string | null): Promise<schema.Student[]>;
   getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]>;
+  getStudentsByFamily(familyId: string, schoolId?: string | null): Promise<schema.Student[]>;
   createStudent(s: schema.InsertStudent): Promise<schema.Student>;
   updateStudent(id: string, s: Partial<schema.InsertStudent>, schoolId?: string | null): Promise<schema.Student | undefined>;
   deleteStudent(id: string, schoolId?: string | null): Promise<void>;
@@ -1027,6 +1028,13 @@ class DatabaseStorage implements IStorage {
 
   async getStudentsByClass(classId: string, schoolId?: string | null): Promise<schema.Student[]> {
     const conditions: any[] = [eq(schema.students.classId, classId), eq(schema.students.isArchived, false)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    return getDb().select().from(schema.students).where(and(...conditions));
+  }
+
+  async getStudentsByFamily(familyId: string, schoolId?: string | null): Promise<schema.Student[]> {
+    const conditions: any[] = [eq(schema.students.familyId, familyId)];
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
     return getDb().select().from(schema.students).where(and(...conditions));
@@ -2593,6 +2601,9 @@ class DatabaseStorage implements IStorage {
         expiresAt: invite.expiresAt,
         createdAt: now(),
         acceptedAt: null,
+        familyId: invite.familyId ?? null,
+        relationship: invite.relationship ?? null,
+        guardianPermissions: invite.guardianPermissions ?? null,
       };
       memoryInvites.set(created.id, created);
       return created;
