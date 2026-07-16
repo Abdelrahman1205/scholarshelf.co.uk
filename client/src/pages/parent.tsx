@@ -60,8 +60,49 @@ function ParentDashboardSection({
   isPaymentsLoading: boolean;
 }) {
   const linkedChildren = children.length;
-  const pendingBaskets = baskets.filter((b: any) => b.status === "pending").length;
+  const pendingBaskets = baskets.filter((b: any) => b.status === "pending");
+  const pendingCount = pendingBaskets.length;
   const lastPayment = payments[0];
+  const subtotal = pendingBaskets.reduce((s: number, b: any) => s + parseFloat(b.totalAmount || "0"), 0);
+
+  const money = (v: any) => `£${parseFloat(v || "0").toFixed(2)}`;
+  const gradeLabel = (s: any) => {
+    const g = s?.gradeLevel;
+    if (g) return /^\d+$/.test(String(g)) ? `Grade ${g}` : String(g);
+    return s?.class?.name || s?.className || "";
+  };
+  const initials = (name: string) =>
+    (name || "?").split(/\s+/).map((p: string) => p[0]).slice(0, 2).join("").toUpperCase();
+
+  // Recent-orders timeline styling by status
+  const ORDER_META: Record<string, { label: string; dot: string }> = {
+    confirmed: { label: "Paid", dot: "bg-emerald-500" },
+    completed: { label: "Paid", dot: "bg-emerald-500" },
+    ready_for_collection: { label: "Ready for Collection", dot: "bg-blue-500" },
+    collected: { label: "Collected", dot: "bg-emerald-500" },
+    reference_submitted: { label: "Reference Submitted", dot: "bg-blue-500" },
+    needs_review: { label: "Under Review", dot: "bg-orange-500" },
+    awaiting_reference: { label: "Awaiting Reference", dot: "bg-amber-500" },
+    pending: { label: "Awaiting Reference", dot: "bg-amber-500" },
+    rejected: { label: "Reference Rejected", dot: "bg-red-500" },
+    failed: { label: "Reference Rejected", dot: "bg-red-500" },
+    cancelled: { label: "Cancelled", dot: "bg-gray-400" },
+  };
+  const fmtDate = (d: any) => {
+    if (!d) return "";
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? "" : dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  const StatCard = ({ tint, icon, label, children: kids }: any) => (
+    <div className={`rounded-2xl p-5 flex items-center gap-4 ${tint}`}>
+      {icon}
+      <div>
+        <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{label}</div>
+        <div className="mt-1">{kids}</div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -70,50 +111,141 @@ function ParentDashboardSection({
         <p className="text-muted-foreground mt-2">Quick overview of your children, baskets, and payments.</p>
       </div>
 
+      {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card className="bg-primary/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Linked Children</div>
-              <div className="text-2xl font-bold font-heading text-primary">{isChildrenLoading ? "..." : linkedChildren}</div>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard
+          tint="bg-blue-50"
+          label="Linked Children"
+          icon={<div className="h-12 w-12 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600"><Users className="w-5 h-5" /></div>}
+        >
+          <span className="text-3xl font-bold font-heading text-blue-600">{isChildrenLoading ? "…" : linkedChildren}</span>
+        </StatCard>
 
-        <Card className="bg-amber-500/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600">
-              <ShoppingCart className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pending Baskets</div>
-              <div className="text-2xl font-bold font-heading text-amber-600">{isBasketsLoading ? "..." : pendingBaskets}</div>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard
+          tint="bg-amber-50"
+          label="Pending Baskets"
+          icon={<div className="h-12 w-12 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600"><ShoppingCart className="w-5 h-5" /></div>}
+        >
+          <span className="text-3xl font-bold font-heading text-amber-600">{isBasketsLoading ? "…" : pendingCount}</span>
+        </StatCard>
 
-        <Card className="bg-emerald-500/5 border-none shadow-none">
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="h-11 w-11 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-600">
-              <CreditCard className="w-5 h-5" />
+        <StatCard
+          tint="bg-emerald-50"
+          label="Payment Status"
+          icon={<div className="h-12 w-12 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600"><CreditCard className="w-5 h-5" /></div>}
+        >
+          {isPaymentsLoading ? (
+            <span className="text-sm text-muted-foreground">Loading…</span>
+          ) : lastPayment ? (
+            <StatusBadge status={lastPayment.status} />
+          ) : (
+            <span className="text-sm text-muted-foreground">No payments yet</span>
+          )}
+        </StatCard>
+      </div>
+
+      {/* Main + sidebar */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Children's baskets */}
+        <div className="lg:col-span-2 space-y-4">
+          <h2 className="text-xl font-heading font-bold tracking-tight">My Children's Baskets</h2>
+
+          {isBasketsLoading ? (
+            <div className="rounded-2xl border border-border p-8 text-center text-muted-foreground">Loading baskets…</div>
+          ) : pendingBaskets.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-8 text-center">
+              <ShoppingCart className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <p className="mt-2 text-sm text-muted-foreground">No baskets awaiting payment. You're all caught up.</p>
             </div>
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Payment Status</div>
-              <div className="mt-1">
-                {isPaymentsLoading ? (
-                  <span className="text-sm text-muted-foreground">Loading...</span>
-                ) : lastPayment ? (
-                  <StatusBadge status={lastPayment.status} />
-                ) : (
-                  <span className="text-sm text-muted-foreground">No payments yet</span>
-                )}
+          ) : (
+            pendingBaskets.map((basket: any) => {
+              const s = basket.student || {};
+              const items = basket.items || [];
+              return (
+                <div key={basket.id} className="rounded-2xl border border-border bg-card overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 p-5">
+                    <div className="flex items-center gap-3">
+                      {s.photoUrl
+                        ? <img src={s.photoUrl} alt={s.name || "child"} className="h-11 w-11 rounded-full object-cover" />
+                        : <div className="h-11 w-11 rounded-full bg-muted flex items-center justify-center text-sm font-semibold text-muted-foreground">{initials(s.name)}</div>}
+                      <div>
+                        <p className="font-bold leading-tight">{s.name || "Child"}</p>
+                        <p className="text-sm text-muted-foreground">{gradeLabel(s)}</p>
+                      </div>
+                    </div>
+                    <Badge className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-full">{items.length} Book{items.length === 1 ? "" : "s"}</Badge>
+                  </div>
+
+                  <div className="px-5 pt-3 pb-4 border-t border-border space-y-2.5">
+                    {items.map((item: any, i: number) => (
+                      <div key={item.id || i} className="flex items-center justify-between text-sm">
+                        <span className="text-foreground/90">{item.book?.title || "Book"}{(item.quantity || 1) > 1 ? ` ×${item.quantity}` : ""}</span>
+                        <span className="font-medium">{money(item.totalPrice ?? item.unitPrice)}</span>
+                      </div>
+                    ))}
+                    {items.length === 0 && <p className="text-sm text-muted-foreground">No items in this basket yet.</p>}
+                  </div>
+
+                  <div className="flex items-center justify-between px-5 py-4 border-t border-border">
+                    <span className="font-bold">Basket Total</span>
+                    <span className="text-lg font-bold">{money(basket.totalAmount)}</span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Sidebar */}
+        <div className="space-y-6">
+          {pendingBaskets.length > 0 && (
+            <div className="rounded-2xl border border-border bg-card p-5">
+              <h3 className="text-lg font-heading font-bold mb-4">Order Summary</h3>
+              <div className="flex items-center justify-between text-sm mb-2">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span className="font-medium">{money(subtotal)}</span>
               </div>
+              <div className="flex items-center justify-between text-sm mb-4">
+                <span className="text-muted-foreground">Baskets</span>
+                <span className="font-medium">{pendingBaskets.length}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-border pt-4">
+                <span className="font-bold">Total Due</span>
+                <span className="text-2xl font-bold font-heading text-primary">{money(subtotal)}</span>
+              </div>
+              <Button asChild className="w-full mt-5 h-11 text-base">
+                <a href="/parent/baskets">Pay for All Children</a>
+              </Button>
             </div>
-          </CardContent>
-        </Card>
+          )}
+
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <h3 className="text-lg font-heading font-bold mb-4">Recent Orders</h3>
+            {isPaymentsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : payments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No orders yet.</p>
+            ) : (
+              <div className="space-y-4">
+                {payments.slice(0, 4).map((pmt: any) => {
+                  const meta = ORDER_META[pmt.status] || { label: pmt.status, dot: "bg-gray-300" };
+                  const ref = pmt.paymentReference ? `Order #${pmt.paymentReference}` : "Order";
+                  return (
+                    <div key={pmt.id} className="flex gap-3">
+                      <div className="flex flex-col items-center pt-1">
+                        <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
+                      </div>
+                      <div className="flex-1 border-l border-border pl-3 -ml-[7px]">
+                        <p className="text-sm font-semibold leading-tight">{ref} · {meta.label}</p>
+                        <p className="text-xs text-muted-foreground">{fmtDate(pmt.createdAt || pmt.updatedAt) || money(pmt.totalAmount)}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
