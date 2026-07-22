@@ -32,6 +32,7 @@ import { ClassesSection }           from "./admin/classes";
 import { StudentsSection }          from "./admin/students";
 import { BooksSection }             from "./admin/books";
 import { BookLevelsSection }        from "./admin/book-levels";
+import { BookCopiesSection }        from "./admin/book-copies";
 import { LinkingCodesSection }      from "./admin/linking-codes";
 import { PaymentsSection }          from "./admin/payments";
 import { AllocationsSection, ExtraRequestsSection } from "./admin/allocations";
@@ -79,6 +80,7 @@ export default function AdminPage({ section }: { section: string }) {
     dashboard:          <DashboardSection />,
     books:              <BooksSection />,
     levels:             <BookLevelsSection />,
+    "book-copies":      <BookCopiesSection />,
     classes:            <ClassesSection />,
     students:           <StudentsSection />,
     parents:            <ParentsSection />,

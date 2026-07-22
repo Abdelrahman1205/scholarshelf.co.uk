@@ -42,6 +42,92 @@ export function registerBookRoutes(app: Express): void {
     }
   });
 
+  // ── Book copies (per-physical-copy tracking) ──
+  // Generate a batch of individually-coded copies for a title (e.g. on annual intake).
+  app.post("/api/books/:id/copies", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const bookId = routeParam(req.params.id);
+      const book = await storage.getBook(bookId, sid);
+      if (!book) return res.status(404).json({ message: "Book not found" });
+      const qty = parseInt(req.body?.quantity, 10);
+      if (!qty || qty < 1 || qty > 2000) return res.status(400).json({ message: "Enter a quantity between 1 and 2000." });
+      const academicYear = typeof req.body?.academicYear === "string" ? req.body.academicYear.slice(0, 20) : null;
+      const copies = await storage.generateBookCopies({ bookId, schoolId: sid, quantity: qty, academicYear });
+      await auditLog(req, "book_copies_generated", `book:${bookId}`, { quantity: copies.length, academicYear });
+      res.status(201).json({ generated: copies.length, copies });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // List all copies for a title, plus a status breakdown (in_stock/allocated/sold/…).
+  app.get("/api/books/:id/copies", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const bookId = routeParam(req.params.id);
+      const [copies, counts] = await Promise.all([
+        storage.getBookCopies(bookId, sid),
+        storage.getBookCopyCounts(bookId, sid),
+      ]);
+      res.json({ copies, counts });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // Resolve a scanned copy code to its copy + book (used at distribution/sale).
+  app.get("/api/book-copies/lookup/:code", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const copy = await storage.getBookCopyByCode(routeParam(req.params.code), sid);
+      if (!copy) return res.status(404).json({ message: "No book copy found for that code." });
+      const book = await storage.getBook(copy.bookId, sid);
+      res.json({ copy, book });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // Update a copy's status/condition (mark sold, damaged, lost, …).
+  app.patch("/api/book-copies/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const allowed = ["status", "condition", "studentId", "paymentId", "notes"] as const;
+      const patch: any = {};
+      for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+      if (patch.status === "sold") patch.soldAt = new Date();
+      const updated = await storage.updateBookCopy(routeParam(req.params.id), patch, sid);
+      if (!updated) return res.status(404).json({ message: "Book copy not found" });
+      await auditLog(req, "book_copy_updated", `book-copy:${updated.id}`, { status: updated.status });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Confirm-scan at intake: scan a printed label to verify the copy exists and mark it checked.
+  app.post("/api/book-copies/verify", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+      if (!code) return res.status(400).json({ message: "No code provided." });
+      const copy = await storage.getBookCopyByCode(code, sid);
+      if (!copy) return res.status(404).json({ result: "unknown", message: "No copy with that code — check the label." });
+      if (copy.verifiedAt) return res.json({ result: "already", copy });
+      const updated = await storage.updateBookCopy(copy.id, { verifiedAt: new Date() } as any, sid);
+      await auditLog(req, "book_copy_verified", `book-copy:${copy.id}`, {});
+      res.json({ result: "confirmed", copy: updated });
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
   app.patch("/api/books/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);

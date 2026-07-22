@@ -278,3 +278,43 @@ Dashboard `/parent` (children, pending baskets, payment status) · Link Child `/
 ## 16. Feature checklist (by capability)
 
 Auth: session login, 8-role RBAC, multi-role context switching, staff invites (4 roles), parent self-register, email verification-via-invite, password reset, rate limiting (distributed), account status (active/invited/disabled/locked), audit logging. · Catalogue: books CRUD, ISBN lookup, barcode scan, stock + inventory transactions, low-stock alerts, book levels, per-student overrides, class-book-level assignment. · Students/family: CRUD, archive, CSV/XLSX import, families, linking codes (generate/rotate/preview/confirm), parent-child links. · Ordering: baskets, basket items, family basket ("pay for all"), payment references, duplicate-ref detection. · Payments: full lifecycle (awaiting-ref→submitted→confirmed→ready-for-collection→collected, +reject/needs-review/cancel), CSV export, webhook (HMAC). · Distribution: allocations, teacher confirm/absent/out-of-stock/issue, admin confirm, extra-copy requests. · Messaging: parent↔staff threads, unread badges, admin oversight, audit. · Owner: platform metrics, school lifecycle, support mode, admin invites, DB console (browser/SQL/danger). · Website CMS: typed sections, draft/publish, reorder, public render, branding. · Branding: 5 asset types + colours/font, per-school, live preview, public page.
+
+---
+
+## 17. Session update — 2026-07-13 (staff onboarding + enrolment email)
+
+Three changes shipped to `main` → Vercel (production). Commits: `b4d34a7`, `b340a56`, `1baff8d`.
+
+### 17.1 Auto-send parent linking-code email on enrolment — `b4d34a7`
+Creating a family enrolment previously did **not** email the parent — the linking-code email only fired from the separate "Invite guardian" action (`POST /api/guardians/:id/invite`). Now `enrollHandler` in `server/routes/family-enrollment.routes.ts` auto-sends the linking-code email after a **non-draft** enrolment that created ≥1 student, to the primary guardian (or first guardian) with a valid email, reusing `sendParentCodeEmail`. Fire-and-forget: wrapped so an email failure never rolls back a committed enrolment. Drafts are skipped; the existing "Invite" button is unchanged. Verified live in Resend (deliveries confirmed).
+
+### 17.2 Multi-step staff invitation wizard — `b340a56`
+New file `client/src/pages/admin/invite-staff-wizard.tsx`, opened from the **Invite Staff** button on `/admin/users`. Replaces the old single-step email+role dialog with the design-spec flow: **Staff Details → Role & Access → Family Connection → Find Family → Confirm Relationship → Review → Success**. Includes smart existing-account (dual-role) detection by email, teacher class/subject/year-group assignment, family search, and relationship + guardian-permission selection. Pure frontend against existing endpoints (`GET /api/admin/users`, `GET /api/families/search`, `GET /api/classes`, `POST /api/invites`) — no backend change in this commit. The acceptance page (`accept-invite.tsx`) already matched the new "Staff Portal" split-screen design and was left as-is.
+
+### 17.3 Staff-parent unified account: auto-link children on accept — `1baff8d`
+Lets a brand-new invitee who is also a parent be linked to their family's children automatically when they accept.
+- **Schema** (`shared/schema.ts`): added nullable columns to `invites` — `family_id`, `relationship`, `guardian_permissions`.
+- **Storage** (`server/storage.ts`): new `getStudentsByFamily(familyId, schoolId)` (school-scoped); `createInvite` now carries the new fields.
+- **Invite create** (`server/routes/user.routes.ts`, `POST /api/invites`): stores the family link, validated against the current school — a family with no students in this school is ignored (client input is not trusted).
+- **Acceptance** (`server/middleware/auth.ts`, `acceptInviteToken`): if the invite carries a `family_id`, the new user is given the **parent** secondary role and linked to every child in that family with the chosen relationship. Wrapped in try/catch so a linking issue never blocks account creation (admin can finish via **Link Child** on the staff profile).
+- **Wizard**: now sends `familyId` / `relationship` / `guardianPermissions` in the invite body.
+
+The existing-account (dual-role) path is unchanged: inviting an email that already has an account adds the new role to that single login (`linkToExisting`), and those users are already linked to their own children.
+
+### 17.4 Production migration note
+`npm run db:push` currently **fails** on pre-existing schema drift unrelated to these changes — drizzle wants to add a `families.family_code` unique constraint and prompts to **truncate `families`** (do **not** accept), then aborts on an **orphan guardian** row (a `guardians.family_id` pointing to a missing family, key `4e8dfbff-…`: FK violation). Because push is all-or-nothing, the three new `invites` columns were applied directly instead, via `ALTER TABLE invites ADD COLUMN IF NOT EXISTS …` (one-off script `tmp-add-invite-cols.cjs`). Confirmed present in production: `family_id, relationship, guardian_permissions`.
+
+### 17.5 Open follow-ups (tech debt)
+- **Orphan guardian** — one `guardians` row references a non-existent family and blocks `db:push`. Same class of issue as the `bd62abd` student FK repair. Needs a targeted cleanup (null or remove the dangling `family_id`; never truncate).
+- **`families.family_code` unique constraint** — drift drizzle wants to reconcile; safe to add once the orphan is cleaned and there are no duplicate codes.
+- **`server/routes/family.routes.ts` is decommissioned dead code** — `registerFamilyRoutes` is not imported or registered anywhere (superseded by `family-enrollment.routes.ts` / `/api/families/*`). Note: the "Families (`family.routes`)" line in §15 is actually served by `family-enrollment.routes.ts`. The file is safe to delete.
+- **Brand-new-invitee child-linking** applies on acceptance. To link a brand-new person to children *before* they accept, use **Link Child** on the staff profile after acceptance.
+
+---
+
+## 18. Product backlog / deferred features
+
+- **Per-copy book tracking (Phase 1 shipped).** `book_copies` table + intake/scan-lookup/status API (`shared/schema.ts`, `server/storage.ts`, `server/routes/book.routes.ts`). Each physical book gets a unique code (`SSC-000123-7`, Luhn-checked) and a lifecycle: `in_stock → allocated → sold`, plus `damaged`/`lost`. Books are **sold** (new batch each academic year), so tracking is per-copy but there is no return/reuse flow.
+- **Scan-at-distribution — DEFERRED (owner decision, 2026-07).** Scanning happens **only at initial book registration/intake** — teachers do **not** scan anything at handover. A future feature may scan a copy code at hand-over to flip it to `sold` and link the exact physical copy to the student and payment (per-copy provenance: "these exact copies went to these students"). Backend groundwork already exists for when we build it: `book_copies.studentId` / `paymentId` / `soldAt`, `GET /api/book-copies/lookup/:code`, and `PATCH /api/book-copies/:id`. Revisit when per-student copy provenance is actually needed.
+- **Intake UI shipped.** `client/src/pages/admin/book-copies.tsx` (admin section `book-copies`, nav under "Books & Stock"): pick a title → generate a batch → print Code-128 labels (`jsbarcode`) → "Confirm labels" scans each (`html5-qrcode`) to set `verifiedAt` → per-copy status list. Teachers have no access.
+- **Next defined step — per-copy provenance without teacher scanning.** Auto-assign copies to a student at **payment confirmation** (not at hand-over): when an order is confirmed, pick that many `in_stock` copies of each ordered book (FIFO by `copyNumber`), set `status='sold'`, `studentId`, `paymentId`, `soldAt`. Then add a read-only "copies received" list on the student profile and the payment/order view. Keeps the "no teacher scanning" rule — the link is a side effect of the sale, not a scan. Hook point: the payment-confirm handler in `payment.routes.ts`.

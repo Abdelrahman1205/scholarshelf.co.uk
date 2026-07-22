@@ -60,6 +60,7 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
     navItems: [
       { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
       { label: "Books", href: "/admin/books", icon: BookOpen },
+      { label: "Book Copies", href: "/admin/book-copies", icon: Package },
       { label: "Bundles", href: "/admin/levels", icon: Layers },
       { label: "Classes", href: "/admin/classes", icon: GraduationCap },
       { label: "Families", href: "/admin/families", icon: Users },
@@ -82,6 +83,7 @@ const roleConfig: Record<string, { label: string; navItems: NavItem[] }> = {
       { label: "New Enrollment", href: "/admin/family-enroll", icon: UserPlus, group: "School Data" },
       { label: "Classes", href: "/admin/classes", icon: GraduationCap, group: "School Data" },
       { label: "Books", href: "/admin/books", icon: BookOpen, group: "Books & Stock" },
+      { label: "Book Copies", href: "/admin/book-copies", icon: Package, group: "Books & Stock" },
       { label: "Bundles", href: "/admin/levels", icon: Layers, group: "Books & Stock" },
       { label: "Payments", href: "/admin/payments", icon: CreditCard, group: "Orders" },
       { label: "Allocations", href: "/admin/allocations", icon: BoxSelect, group: "Orders" },

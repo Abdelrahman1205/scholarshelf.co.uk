@@ -280,6 +280,11 @@ export interface IStorage {
   deleteBook(id: string, schoolId?: string | null): Promise<void>;
   getLowStockBooks(schoolId?: string | null): Promise<schema.Book[]>;
   adjustStock(bookId: string, quantity: number, type: string, reason?: string, schoolId?: string | null): Promise<schema.Book>;
+  generateBookCopies(opts: { bookId: string; schoolId: string; quantity: number; academicYear?: string | null }): Promise<schema.BookCopy[]>;
+  getBookCopies(bookId: string, schoolId?: string | null): Promise<schema.BookCopy[]>;
+  getBookCopyByCode(copyCode: string, schoolId?: string | null): Promise<schema.BookCopy | undefined>;
+  getBookCopyCounts(bookId: string, schoolId?: string | null): Promise<Record<string, number>>;
+  updateBookCopy(id: string, patch: Partial<schema.InsertBookCopy>, schoolId?: string | null): Promise<schema.BookCopy | undefined>;
   getInventoryTransactions(schoolId?: string | null): Promise<schema.BookInventoryTransaction[]>;
 
   // Classes
@@ -905,6 +910,78 @@ class DatabaseStorage implements IStorage {
     const sf = schoolFilter(schema.books, schoolId);
     if (sf) conditions.push(sf);
     await getDb().delete(schema.books).where(and(...conditions));
+  }
+
+  // ── Book copies (per-physical-copy tracking) ──────────────────────────────
+  private luhnCheck(numStr: string): number {
+    let sum = 0, alt = false;
+    for (let i = numStr.length - 1; i >= 0; i--) {
+      let d = numStr.charCodeAt(i) - 48;
+      if (alt) { d *= 2; if (d > 9) d -= 9; }
+      sum += d; alt = !alt;
+    }
+    return (10 - (sum % 10)) % 10;
+  }
+
+  async generateBookCopies(opts: { bookId: string; schoolId: string; quantity: number; academicYear?: string | null }): Promise<schema.BookCopy[]> {
+    const qty = Math.max(1, Math.min(2000, Math.floor(Number(opts.quantity) || 0)));
+    const db = getDb();
+    // Per-school running serial so copy codes are unique and human-readable.
+    const [row] = await db
+      .select({ max: sql<number>`COALESCE(MAX(${schema.bookCopies.copyNumber}), 0)` })
+      .from(schema.bookCopies)
+      .where(eq(schema.bookCopies.schoolId, opts.schoolId));
+    const base = Number(row?.max) || 0;
+    const values: schema.InsertBookCopy[] = [];
+    for (let i = 1; i <= qty; i++) {
+      const n = base + i;
+      const padded = String(n).padStart(6, "0");
+      values.push({
+        schoolId: opts.schoolId,
+        bookId: opts.bookId,
+        copyNumber: n,
+        copyCode: `SSC-${padded}-${this.luhnCheck(padded)}`,
+        status: "in_stock",
+        academicYear: opts.academicYear ?? null,
+      } as schema.InsertBookCopy);
+    }
+    return await db.insert(schema.bookCopies).values(values).returning();
+  }
+
+  async getBookCopies(bookId: string, schoolId?: string | null): Promise<schema.BookCopy[]> {
+    const conditions = [eq(schema.bookCopies.bookId, bookId)];
+    const sf = schoolFilter(schema.bookCopies, schoolId);
+    if (sf) conditions.push(sf);
+    return getDb().select().from(schema.bookCopies).where(and(...conditions)).orderBy(desc(schema.bookCopies.copyNumber));
+  }
+
+  async getBookCopyByCode(copyCode: string, schoolId?: string | null): Promise<schema.BookCopy | undefined> {
+    const conditions = [eq(schema.bookCopies.copyCode, copyCode)];
+    const sf = schoolFilter(schema.bookCopies, schoolId);
+    if (sf) conditions.push(sf);
+    const [copy] = await getDb().select().from(schema.bookCopies).where(and(...conditions)).limit(1);
+    return copy;
+  }
+
+  async getBookCopyCounts(bookId: string, schoolId?: string | null): Promise<Record<string, number>> {
+    const conditions = [eq(schema.bookCopies.bookId, bookId)];
+    const sf = schoolFilter(schema.bookCopies, schoolId);
+    if (sf) conditions.push(sf);
+    const rows = await getDb()
+      .select({ status: schema.bookCopies.status, n: sql<number>`count(*)` })
+      .from(schema.bookCopies)
+      .where(and(...conditions))
+      .groupBy(schema.bookCopies.status);
+    const out: Record<string, number> = {};
+    for (const r of rows) out[String(r.status)] = Number(r.n) || 0;
+    return out;
+  }
+
+  async updateBookCopy(id: string, patch: Partial<schema.InsertBookCopy>, schoolId?: string | null): Promise<schema.BookCopy | undefined> {
+    const conditions = [eq(schema.bookCopies.id, id)];
+    const sf = schoolFilter(schema.bookCopies, schoolId);
+    if (sf) conditions.push(sf);
+    return updateAndFetchFirst(schema.bookCopies, and(...conditions), { ...patch, updatedAt: new Date() });
   }
 
   async getLowStockBooks(schoolId?: string | null): Promise<schema.Book[]> {

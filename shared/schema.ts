@@ -409,6 +409,33 @@ export const insertBookSchema = createInsertSchema(books).omit({ id: true, bookC
 export type InsertBook = z.infer<typeof insertBookSchema>;
 export type Book = typeof books.$inferSelect;
 
+// ── Book copies ──────────────────────────────────────────────────────────────
+// Per-physical-copy tracking. Every individual book gets its own unique,
+// scannable ScholarShelf code (copyCode, e.g. "SSC-000123-7") and moves through
+// a lifecycle: in_stock → allocated → sold, plus damaged/lost write-offs.
+// bookCode on `books` remains the TITLE-level SKU; this table is the COPY level.
+export const bookCopies = pgTable("book_copies", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }),
+  bookId: varchar("book_id", { length: 36 }).references(() => books.id, { onDelete: "cascade" }).notNull(),
+  copyNumber: integer("copy_number").notNull(),          // per-school running serial
+  copyCode: varchar("copy_code", { length: 50 }).notNull().unique(), // scannable marker
+  status: text("status").default("in_stock").notNull(),  // in_stock | allocated | sold | damaged | lost | returned
+  condition: text("condition").default("new"),            // new | good | damaged
+  studentId: varchar("student_id", { length: 36 }),       // set when allocated/sold
+  paymentId: varchar("payment_id", { length: 36 }),       // set when sold (links to book_payments)
+  academicYear: text("academic_year"),                    // the intake batch, e.g. "2026/27"
+  notes: text("notes"),
+  verifiedAt: timestamp("verified_at"),                   // set when the printed label is scan-confirmed at intake
+  soldAt: timestamp("sold_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBookCopySchema = createInsertSchema(bookCopies).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBookCopy = z.infer<typeof insertBookCopySchema>;
+export type BookCopy = typeof bookCopies.$inferSelect;
+
 export const bookLevels = pgTable("book_levels", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   name: text("name").notNull(),
