@@ -33,6 +33,8 @@ import { StudentsSection }          from "./admin/students";
 import { BooksSection }             from "./admin/books";
 import { BookLevelsSection }        from "./admin/book-levels";
 import { BookCopiesSection }        from "./admin/book-copies";
+import { CollectionSheetSection }   from "./admin/collection-sheet";
+import { ReconciliationSection }    from "./admin/reconciliation";
 import { LinkingCodesSection }      from "./admin/linking-codes";
 import { PaymentsSection }          from "./admin/payments";
 import { AllocationsSection, ExtraRequestsSection } from "./admin/allocations";
@@ -81,6 +83,8 @@ export default function AdminPage({ section }: { section: string }) {
     books:              <BooksSection />,
     levels:             <BookLevelsSection />,
     "book-copies":      <BookCopiesSection />,
+    "collection-sheet": <CollectionSheetSection />,
+    reconciliation:     <ReconciliationSection />,
     classes:            <ClassesSection />,
     students:           <StudentsSection />,
     parents:            <ParentsSection />,
