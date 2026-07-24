@@ -11,6 +11,7 @@ import { normalizeRole, navigateTo } from "./admin/shared";
 // Retired routes → their family-first replacements (spec §10 redirects).
 const RETIRED_SECTION_REDIRECTS: Record<string, string> = {
   parents: "/admin/families",
+  "book-copies": "/admin/books",
 };
 
 // ─── Section components ────────────────────────────────────────────────────
@@ -32,7 +33,6 @@ import { ClassesSection }           from "./admin/classes";
 import { StudentsSection }          from "./admin/students";
 import { BooksSection }             from "./admin/books";
 import { BookLevelsSection }        from "./admin/book-levels";
-import { BookCopiesSection }        from "./admin/book-copies";
 import { CollectionSheetSection }   from "./admin/collection-sheet";
 import { ReconciliationSection }    from "./admin/reconciliation";
 import { LinkingCodesSection }      from "./admin/linking-codes";
@@ -82,7 +82,6 @@ export default function AdminPage({ section }: { section: string }) {
     dashboard:          <DashboardSection />,
     books:              <BooksSection />,
     levels:             <BookLevelsSection />,
-    "book-copies":      <BookCopiesSection />,
     "collection-sheet": <CollectionSheetSection />,
     reconciliation:     <ReconciliationSection />,
     classes:            <ClassesSection />,

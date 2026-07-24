@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { BarcodeDisplay } from "./students";
+import { BookCopiesSection } from "./book-copies";
 import { Html5Qrcode } from "html5-qrcode";
 
 // ─── BOOKS — Global Book Inventory (ScholarShelf design) ────────────────────
@@ -27,7 +28,7 @@ function stockState(b: any): StockFilter {
   return "in";
 }
 
-function BooksSection() {
+function BooksCatalogue() {
   const { toast } = useToast();
   const { user } = useAuth();
   const [search, setSearch] = useState("");
@@ -441,6 +442,29 @@ function BooksSection() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+// Books page = a Catalogue tab (titles) + a Copies tab (per-physical-copy intake),
+// so Copies lives inside Books instead of a separate sidebar page.
+function BooksSection() {
+  const [view, setView] = useState<"catalogue" | "copies">("catalogue");
+  return (
+    <div className="space-y-4">
+      <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+        <button onClick={() => setView("catalogue")}
+          className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
+            view === "catalogue" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+          Catalogue
+        </button>
+        <button onClick={() => setView("copies")}
+          className={cn("px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
+            view === "copies" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+          Copies
+        </button>
+      </div>
+      {view === "catalogue" ? <BooksCatalogue /> : <BookCopiesSection />}
     </div>
   );
 }
