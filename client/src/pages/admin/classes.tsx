@@ -22,6 +22,133 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "?";
 }
 
+const ASSIGNMENT_ROLES = ["Lead Teacher", "Subject Teacher", "Co-teacher", "Assistant Teacher", "Cover Teacher", "Read-only Teacher"];
+
+// Many-to-many, subject-based teacher assignment for one class (MSS model:
+// several teachers share a class by subject; a teacher spans several classes).
+function TeacherAssignmentsDialog({ open, onClose, cls, teachers }: { open: boolean; onClose: () => void; cls: any; teachers: any[] }) {
+  const { toast } = useToast();
+  const classId = cls?.id;
+  const [subjectId, setSubjectId] = useState("none");
+  const [teacherId, setTeacherId] = useState("");
+  const [role, setRole] = useState("Subject Teacher");
+  const [newSubject, setNewSubject] = useState("");
+
+  const { data: assignments = [], refetch } = useQuery<any[]>({
+    queryKey: ["/api/classes", classId, "teacher-assignments"],
+    queryFn: () => fetch(`/api/classes/${classId}/teacher-assignments`, { credentials: "include" }).then((r) => r.json()),
+    enabled: open && !!classId,
+  });
+  const { data: subjects = [] } = useQuery<any[]>({
+    queryKey: ["/api/subjects"],
+    queryFn: getQueryFn({ on401: "throw" }),
+    enabled: open,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (body: any) => apiRequest("POST", `/api/classes/${classId}/teacher-assignments`, body),
+    onSuccess: () => { refetch(); setTeacherId(""); toast({ title: "Teacher assigned" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/class-teacher-assignments/${id}`),
+    onSuccess: () => { refetch(); toast({ title: "Assignment removed" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  const createSubjectMutation = useMutation({
+    mutationFn: (name: string) => apiRequest("POST", "/api/subjects", { name }),
+    onSuccess: async (res: any) => {
+      const s = await res.json().catch(() => ({}));
+      queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
+      if (s?.id) setSubjectId(s.id);
+      setNewSubject("");
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const subjectName = (id: string) => subjects.find((s: any) => s.id === id)?.name || "General";
+  const teacherName = (id: string) => teachers.find((t: any) => t.id === id)?.name || "Unknown";
+  const active = assignments.filter((a: any) => a.isActive !== false);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-[600px]">
+        <DialogHeader><DialogTitle>Teacher assignments — {cls?.name || ""}</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-2">
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Assigned ({active.length})</p>
+            {active.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No teachers assigned yet. Add one below.</p>
+            ) : (
+              <div className="space-y-2">
+                {active.map((a: any) => (
+                  <div key={a.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+                    <div className="text-sm">
+                      <span className="font-medium">{teacherName(a.teacherId)}</span>
+                      <span className="text-muted-foreground"> · {subjectName(a.subjectId)} · {a.assignmentRole || "Subject Teacher"}</span>
+                    </div>
+                    <button onClick={() => removeMutation.mutate(a.id)} className="p-1 text-muted-foreground hover:text-destructive" aria-label="Remove assignment">
+                      <MaterialSymbol name="close" className="text-lg" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+            <p className="text-sm font-medium">Assign a teacher</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid gap-1">
+                <Label className="text-xs">Subject</Label>
+                <Select value={subjectId} onValueChange={setSubjectId}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">General (no subject)</SelectItem>
+                    {subjects.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1">
+                <Label className="text-xs">Teacher</Label>
+                <Select value={teacherId} onValueChange={setTeacherId}>
+                  <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                  <SelectContent>
+                    {teachers.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1">
+                <Label className="text-xs">Role</Label>
+                <Select value={role} onValueChange={setRole}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {ASSIGNMENT_ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input value={newSubject} onChange={(e) => setNewSubject(e.target.value)} placeholder="Add a new subject (e.g. Quran)…" className="h-8 text-sm" />
+              <Button variant="outline" size="sm" className="h-8 shrink-0" disabled={!newSubject.trim() || createSubjectMutation.isPending} onClick={() => createSubjectMutation.mutate(newSubject.trim())}>Add subject</Button>
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" disabled={!teacherId || addMutation.isPending}
+                onClick={() => addMutation.mutate({ teacherId, subjectId: subjectId === "none" ? null : subjectId, assignmentRole: role, academicYear: cls?.academicYear || null })}>
+                {addMutation.isPending ? "Adding…" : "Add assignment"}
+              </Button>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Teachers assigned here can access this class for their subject. One class can have several teachers; one teacher can be assigned to several classes.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── CLASSES — Class Management & Teacher Assignment (ScholarShelf design) ───
 function ClassesSection() {
   const { toast } = useToast();
@@ -29,6 +156,8 @@ function ClassesSection() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<any>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignClass, setAssignClass] = useState<any>(null);
   const [yearFilter, setYearFilter] = useState("all");
   const emptyForm = { name: "", academicYear: "2026-2027", yearGroup: "", teacherId: "" };
   const [form, setForm] = useState(emptyForm);
@@ -236,6 +365,9 @@ function ClassesSection() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <button onClick={() => { setAssignClass(cls); setAssignOpen(true); }} className="p-1.5 rounded-lg text-muted-foreground hover:bg-surface-container hover:text-foreground transition-colors" aria-label="Manage teachers">
+                          <MaterialSymbol name="groups" className="text-lg" />
+                        </button>
                         <button onClick={() => openEdit(cls)} className="p-1.5 rounded-lg text-muted-foreground hover:bg-surface-container hover:text-foreground transition-colors" aria-label="Edit class">
                           <MaterialSymbol name="edit" className="text-lg" />
                         </button>
@@ -254,6 +386,8 @@ function ClassesSection() {
           </div>
         )}
       </div>
+
+      <TeacherAssignmentsDialog open={assignOpen} onClose={() => setAssignOpen(false)} cls={assignClass} teachers={teachers} />
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-[425px]">

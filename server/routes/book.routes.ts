@@ -213,6 +213,21 @@ export function registerBookRoutes(app: Express): void {
       }
     }
 
+    // New model: also include classes the teacher is ACTIVELY assigned to by
+    // subject (class_teacher_assignments), on top of the legacy single teacherId.
+    try {
+      const assignedIds = await storage.getAssignedClassIdsForTeacher(teacherUserId, schoolId);
+      if (assignedIds.length) {
+        const byId = new Map(scopedClasses.map((c) => [c.id, c]));
+        const need = assignedIds.filter((cid) => !assignedById.has(cid));
+        const fallback = need.some((cid) => !byId.has(cid)) ? await storage.getClasses() : [];
+        for (const cid of need) {
+          const cls = byId.get(cid) || fallback.find((c) => c.id === cid);
+          if (cls) assignedById.set(cid, cls);
+        }
+      }
+    } catch { /* assignments are additive — never block legacy access */ }
+
     return Array.from(assignedById.values());
   }
 
@@ -247,6 +262,73 @@ export function registerBookRoutes(app: Express): void {
   app.delete("/api/classes/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     const sid = sessionSchoolId(req);
     await storage.deleteClass(routeParam(req.params.id), sid);
+    res.status(204).send();
+  });
+
+  // === SUBJECTS (school-scoped) ===
+  app.get("/api/subjects", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
+    const sid = sessionSchoolId(req);
+    res.json(await storage.getSubjects(sid));
+  });
+  app.post("/api/subjects", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
+      if (!name) return res.status(400).json({ message: "Subject name is required." });
+      const s = await storage.createSubject({ name, schoolId: sid } as any);
+      await auditLog(req, "subject_created", `subject:${s.id}`, { name });
+      res.status(201).json(s);
+    } catch (e: any) { res.status(400).json({ message: e.message }); }
+  });
+  app.delete("/api/subjects/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    const sid = sessionSchoolId(req);
+    await storage.deleteSubject(routeParam(req.params.id), sid);
+    res.status(204).send();
+  });
+
+  // === CLASS ↔ TEACHER ASSIGNMENTS (many-to-many, subject-based) ===
+  app.get("/api/classes/:id/teacher-assignments", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    const sid = sessionSchoolId(req);
+    if (!sid) return res.status(400).json({ message: "School context required" });
+    res.json(await storage.getClassTeacherAssignments(sid, { classId: routeParam(req.params.id) }));
+  });
+  app.post("/api/classes/:id/teacher-assignments", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const classId = routeParam(req.params.id);
+      const b = req.body || {};
+      if (!b.teacherId) return res.status(400).json({ message: "A teacher is required." });
+      const a = await storage.createClassTeacherAssignment({
+        schoolId: sid,
+        classId,
+        teacherId: b.teacherId,
+        subjectId: b.subjectId || null,
+        assignmentRole: b.assignmentRole || "Subject Teacher",
+        academicYear: b.academicYear || null,
+        startDate: b.startDate || null,
+        endDate: b.endDate || null,
+        isActive: true,
+      } as any);
+      await auditLog(req, "class_teacher_assigned", `class:${classId}`, { teacherId: b.teacherId, subjectId: b.subjectId });
+      res.status(201).json(a);
+    } catch (e: any) { res.status(400).json({ message: e.message }); }
+  });
+  app.patch("/api/class-teacher-assignments/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      const allowed = ["subjectId", "teacherId", "assignmentRole", "academicYear", "startDate", "endDate", "isActive"];
+      const patch: any = {};
+      for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+      const updated = await storage.updateClassTeacherAssignment(routeParam(req.params.id), patch, sid);
+      if (!updated) return res.status(404).json({ message: "Assignment not found" });
+      await auditLog(req, "class_teacher_assignment_updated", `assignment:${updated.id}`, { isActive: updated.isActive });
+      res.json(updated);
+    } catch (e: any) { res.status(400).json({ message: e.message }); }
+  });
+  app.delete("/api/class-teacher-assignments/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    const sid = sessionSchoolId(req);
+    await storage.deleteClassTeacherAssignment(routeParam(req.params.id), sid);
     res.status(204).send();
   });
 

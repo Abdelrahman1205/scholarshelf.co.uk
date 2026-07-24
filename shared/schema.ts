@@ -363,6 +363,39 @@ export const insertClassSchema = createInsertSchema(classes).omit({ id: true });
 export type InsertClass = z.infer<typeof insertClassSchema>;
 export type Class = typeof classes.$inferSelect;
 
+// ── Subjects ─────────────────────────────────────────────────────────────────
+export const subjects = pgTable("subjects", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertSubjectSchema = createInsertSchema(subjects).omit({ id: true, createdAt: true });
+export type InsertSubject = z.infer<typeof insertSubjectSchema>;
+export type Subject = typeof subjects.$inferSelect;
+
+// ── Class ↔ teacher assignments (many-to-many, subject-based) ────────────────
+// Replaces the single classes.teacherId for schools where several teachers share
+// one class by subject — e.g. MSS: each of 21 classes has an Arabic teacher, and
+// 5 Quran teachers are shared across those classes. classes.teacherId is kept for
+// backward compatibility (treated as an implicit assignment).
+export const classTeacherAssignments = pgTable("class_teacher_assignments", {
+  id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  schoolId: varchar("school_id", { length: 36 }),
+  classId: varchar("class_id", { length: 36 }).references(() => classes.id, { onDelete: "cascade" }).notNull(),
+  subjectId: varchar("subject_id", { length: 36 }),
+  teacherId: varchar("teacher_id", { length: 36 }).notNull(),
+  assignmentRole: text("assignment_role").default("Subject Teacher"),
+  academicYear: text("academic_year"),
+  startDate: text("start_date"),
+  endDate: text("end_date"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertClassTeacherAssignmentSchema = createInsertSchema(classTeacherAssignments).omit({ id: true, createdAt: true });
+export type InsertClassTeacherAssignment = z.infer<typeof insertClassTeacherAssignmentSchema>;
+export type ClassTeacherAssignment = typeof classTeacherAssignments.$inferSelect;
+
 export const students = pgTable("students", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   name: text("name").notNull(),

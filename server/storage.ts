@@ -291,6 +291,14 @@ export interface IStorage {
   getClasses(schoolId?: string | null): Promise<schema.Class[]>;
   createClass(c: schema.InsertClass): Promise<schema.Class>;
   updateClass(id: string, c: Partial<schema.InsertClass>, schoolId?: string | null): Promise<schema.Class | undefined>;
+  getSubjects(schoolId?: string | null): Promise<schema.Subject[]>;
+  createSubject(s: schema.InsertSubject): Promise<schema.Subject>;
+  deleteSubject(id: string, schoolId?: string | null): Promise<void>;
+  getClassTeacherAssignments(schoolId: string, opts?: { classId?: string; teacherId?: string; activeOnly?: boolean }): Promise<schema.ClassTeacherAssignment[]>;
+  createClassTeacherAssignment(a: schema.InsertClassTeacherAssignment): Promise<schema.ClassTeacherAssignment>;
+  updateClassTeacherAssignment(id: string, patch: Partial<schema.InsertClassTeacherAssignment>, schoolId?: string | null): Promise<schema.ClassTeacherAssignment | undefined>;
+  deleteClassTeacherAssignment(id: string, schoolId?: string | null): Promise<void>;
+  getAssignedClassIdsForTeacher(teacherId: string, schoolId?: string | null): Promise<string[]>;
   deleteClass(id: string, schoolId?: string | null): Promise<void>;
 
   // Students
@@ -1077,6 +1085,54 @@ class DatabaseStorage implements IStorage {
     const sf = schoolFilter(schema.classes, schoolId);
     if (sf) conditions.push(sf);
     await getDb().delete(schema.classes).where(and(...conditions));
+  }
+
+  // ── Subjects ──────────────────────────────────────────────────────────────
+  async getSubjects(schoolId?: string | null): Promise<schema.Subject[]> {
+    const filter = schoolFilter(schema.subjects, schoolId);
+    return filter
+      ? getDb().select().from(schema.subjects).where(filter).orderBy(schema.subjects.name)
+      : getDb().select().from(schema.subjects).orderBy(schema.subjects.name);
+  }
+  async createSubject(s: schema.InsertSubject): Promise<schema.Subject> {
+    return insertAndFetchById(schema.subjects, s);
+  }
+  async deleteSubject(id: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.subjects.id, id)];
+    const sf = schoolFilter(schema.subjects, schoolId);
+    if (sf) conditions.push(sf);
+    await getDb().delete(schema.subjects).where(and(...conditions));
+  }
+
+  // ── Class ↔ teacher assignments (many-to-many, subject-based) ──────────────
+  async getClassTeacherAssignments(schoolId: string, opts?: { classId?: string; teacherId?: string; activeOnly?: boolean }): Promise<schema.ClassTeacherAssignment[]> {
+    const conditions: any[] = [eq(schema.classTeacherAssignments.schoolId, schoolId)];
+    if (opts?.classId) conditions.push(eq(schema.classTeacherAssignments.classId, opts.classId));
+    if (opts?.teacherId) conditions.push(eq(schema.classTeacherAssignments.teacherId, opts.teacherId));
+    if (opts?.activeOnly) conditions.push(eq(schema.classTeacherAssignments.isActive, true));
+    return getDb().select().from(schema.classTeacherAssignments).where(and(...conditions)).orderBy(desc(schema.classTeacherAssignments.createdAt));
+  }
+  async createClassTeacherAssignment(a: schema.InsertClassTeacherAssignment): Promise<schema.ClassTeacherAssignment> {
+    return insertAndFetchById(schema.classTeacherAssignments, a);
+  }
+  async updateClassTeacherAssignment(id: string, patch: Partial<schema.InsertClassTeacherAssignment>, schoolId?: string | null): Promise<schema.ClassTeacherAssignment | undefined> {
+    const conditions = [eq(schema.classTeacherAssignments.id, id)];
+    const sf = schoolFilter(schema.classTeacherAssignments, schoolId);
+    if (sf) conditions.push(sf);
+    return updateAndFetchFirst(schema.classTeacherAssignments, and(...conditions), patch);
+  }
+  async deleteClassTeacherAssignment(id: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.classTeacherAssignments.id, id)];
+    const sf = schoolFilter(schema.classTeacherAssignments, schoolId);
+    if (sf) conditions.push(sf);
+    await getDb().delete(schema.classTeacherAssignments).where(and(...conditions));
+  }
+  async getAssignedClassIdsForTeacher(teacherId: string, schoolId?: string | null): Promise<string[]> {
+    const conditions: any[] = [eq(schema.classTeacherAssignments.teacherId, teacherId), eq(schema.classTeacherAssignments.isActive, true)];
+    const sf = schoolFilter(schema.classTeacherAssignments, schoolId);
+    if (sf) conditions.push(sf);
+    const rows = await getDb().select({ classId: schema.classTeacherAssignments.classId }).from(schema.classTeacherAssignments).where(and(...conditions));
+    return Array.from(new Set(rows.map((r) => r.classId)));
   }
 
   // === STUDENTS ===
