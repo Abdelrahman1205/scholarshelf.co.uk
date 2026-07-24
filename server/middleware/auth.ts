@@ -522,6 +522,13 @@ export async function getUserAccessProfile(user: {
   if (user.schoolId) {
     const classes = await storage.getClasses(user.schoolId);
     for (const cls of classes) { if (cls.teacherId === user.id) assignedClassIds.push(cls.id); }
+    // Also include subject-based assignments (class_teacher_assignments) so a
+    // teacher assigned only via the new model — e.g. a shared Quran teacher with
+    // no legacy classes.teacherId — still gets the teacher context and class list.
+    try {
+      const assigned = await storage.getAssignedClassIdsForTeacher(user.id, user.schoolId);
+      for (const cid of assigned) if (!assignedClassIds.includes(cid)) assignedClassIds.push(cid);
+    } catch { /* additive — never block access resolution */ }
   }
   if (primaryRole === "teacher" || assignedClassIds.length > 0) addContext("teacher");
 

@@ -51,8 +51,10 @@ function TeacherAssignmentsDialog({ open, onClose, cls, teachers }: { open: bool
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
   const removeMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/class-teacher-assignments/${id}`),
-    onSuccess: () => { refetch(); toast({ title: "Assignment removed" }); },
+    // Soft-close (isActive=false) preserves history — who taught what, when —
+    // instead of deleting the record.
+    mutationFn: (id: string) => apiRequest("PATCH", `/api/class-teacher-assignments/${id}`, { isActive: false }),
+    onSuccess: () => { refetch(); toast({ title: "Assignment ended" }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
   const createSubjectMutation = useMutation({

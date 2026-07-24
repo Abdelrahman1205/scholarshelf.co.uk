@@ -275,6 +275,10 @@ export function registerBookRoutes(app: Express): void {
       const sid = sessionSchoolId(req);
       const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
       if (!name) return res.status(400).json({ message: "Subject name is required." });
+      const existingSubs = await storage.getSubjects(sid);
+      if (existingSubs.some((x: any) => (x.name || "").trim().toLowerCase() === name.toLowerCase())) {
+        return res.status(409).json({ message: "That subject already exists." });
+      }
       const s = await storage.createSubject({ name, schoolId: sid } as any);
       await auditLog(req, "subject_created", `subject:${s.id}`, { name });
       res.status(201).json(s);
@@ -299,6 +303,20 @@ export function registerBookRoutes(app: Express): void {
       const classId = routeParam(req.params.id);
       const b = req.body || {};
       if (!b.teacherId) return res.status(400).json({ message: "A teacher is required." });
+      // Validate the target is a teacher in THIS school (client dropdown alone isn't trusted).
+      const target = await storage.getUserById(b.teacherId);
+      if (!target || (target.schoolId && sid && target.schoolId !== sid)) {
+        return res.status(400).json({ message: "Teacher not found in this school." });
+      }
+      const targetRoles = [resolveRole(target.role), ...(await storage.getSecondaryRoles(target.id))];
+      if (!targetRoles.includes("teacher")) {
+        return res.status(400).json({ message: "That user is not a teacher." });
+      }
+      // No duplicate active assignment for the same class + subject + teacher.
+      const dupes = await storage.getClassTeacherAssignments(sid, { classId, teacherId: b.teacherId, activeOnly: true });
+      if (dupes.some((a: any) => (a.subjectId || null) === (b.subjectId || null))) {
+        return res.status(409).json({ message: "That teacher is already assigned to this class for this subject." });
+      }
       const a = await storage.createClassTeacherAssignment({
         schoolId: sid,
         classId,
