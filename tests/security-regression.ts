@@ -423,6 +423,23 @@ async function testWebsiteCmsSecurity() {
       } else {
         fail("Safe link passes validation", "A valid https URL was wrongly rejected");
       }
+
+      // Clean up: this positive-control POST actually persists a section, so the
+      // suite must delete it. Without this, every run leaves a stray "Good link"
+      // draft behind in the school's CMS.
+      const createdId = okBody?.id;
+      if (createdId) {
+        const delRes = await fetch(`${BASE}/api/website/sections/${createdId}`, {
+          method: "DELETE",
+          headers: { Cookie: adminCookie },
+          redirect: "manual",
+        });
+        if (delRes.status === 200 || delRes.status === 204) {
+          pass("Test section cleaned up", `deleted ${createdId}`);
+        } else {
+          fail("Test section cleaned up", `Could not delete ${createdId} (status ${delRes.status}) — remove it manually in Page Sections`);
+        }
+      }
     }
   }
 
