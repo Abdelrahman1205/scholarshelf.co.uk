@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
+import { PublicFooter } from "@/components/public-footer";
 
 export default function RegisterPage() {
   const [name, setName] = useState("");
@@ -99,6 +100,15 @@ export default function RegisterPage() {
                 <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{errorMessage}</div>
               )}
 
+              {/* Notice shown at the point of account creation — evidence that the
+                  privacy information was presented before any data was submitted. */}
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                By creating an account you confirm you have read our{" "}
+                <a href="/privacy" target="_blank" rel="noreferrer"
+                   className="underline hover:text-foreground">Privacy Policy</a>, which explains how
+                your information and your child's information are used.
+              </p>
+
               <Button type="submit" className="w-full" disabled={isSigningUp}>
                 <UserPlus className="mr-2 h-4 w-4" />
                 {isSigningUp ? "Creating account..." : "Create Account"}
@@ -113,6 +123,7 @@ export default function RegisterPage() {
             </div>
           </CardContent>
         </Card>
+        <PublicFooter />
       </div>
     </div>
   );

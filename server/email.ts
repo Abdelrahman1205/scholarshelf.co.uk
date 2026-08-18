@@ -118,6 +118,50 @@ function wrapEmail(title: string, body: string, branding?: EmailBranding): strin
 // ---------------------------------------------------------------------------
 // 1. Password Reset
 // ---------------------------------------------------------------------------
+// ── Contact form (public "Contact us" page) ──────────────────────────────────
+// Where enquiries are delivered. Hard-coded (with an env override) and NEVER
+// taken from the request body — a public form that emails an arbitrary address
+// would be an open relay for spam.
+const CONTACT_INBOX = process.env.CONTACT_INBOX_EMAIL || "abdelrahman-m@bytehubtech.co.uk";
+
+/** Escape user-supplied text before putting it in an HTML email. */
+function esc(s: string): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/** Deliver a contact-form enquiry to the ScholarShelf inbox. */
+export async function sendContactMessageEmail(msg: {
+  name: string; email: string; subject?: string | null; message: string;
+}): Promise<boolean> {
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">New enquiry from the ScholarShelf website</h2>
+    <table style="border-collapse:collapse;font-size:14px;">
+      <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">From</td><td><strong>${esc(msg.name)}</strong></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Email</td><td>${esc(msg.email)}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Subject</td><td>${esc(msg.subject || "—")}</td></tr>
+    </table>
+    <p style="margin-top:18px;color:#6b7280;font-size:13px;">Message</p>
+    <div style="white-space:pre-wrap;border-left:3px solid #e2e8f0;padding-left:12px;">${esc(msg.message)}</div>
+    <p style="margin-top:22px;font-size:12px;color:#6b7280;">Reply directly to ${esc(msg.email)}.</p>
+  `;
+  return sendEmail(CONTACT_INBOX, `ScholarShelf enquiry: ${msg.subject || msg.name}`, wrapEmail("New enquiry", body));
+}
+
+/** Acknowledge receipt to the person who submitted the form. */
+export async function sendContactAcknowledgementEmail(to: string, name: string): Promise<boolean> {
+  const body = `
+    <h2 style="margin-top:0;color:#1e3a5f;">Thank you for getting in touch</h2>
+    <p>Hello ${esc(name)},</p>
+    <p>We've received your message and will get back to you as soon as we can.</p>
+    <p style="margin-top:22px;font-size:12px;color:#6b7280;">
+      This is an automatic acknowledgement — please don't reply to it.
+    </p>
+  `;
+  return sendEmail(to, "We've received your message — ScholarShelf", wrapEmail("Thank you for getting in touch", body));
+}
+
 export async function sendPasswordResetEmail(
   to: string,
   resetLink: string,

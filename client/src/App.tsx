@@ -24,6 +24,8 @@ const AcceptInvitePage = lazy(() => import("@/pages/accept-invite"));
 const ForgotPasswordPage = lazy(() => import("@/pages/forgot-password"));
 const ResetPasswordPage = lazy(() => import("@/pages/reset-password"));
 const SecurityPage = lazy(() => import("@/pages/security"));
+const PrivacyPage = lazy(() => import("@/pages/privacy"));
+const ContactPage = lazy(() => import("@/pages/contact"));
 
 function PageFallback() {
   return (
@@ -103,6 +105,8 @@ function Router() {
 
       {/* Public school landing page */}
       <Route path="/school/:code" component={SchoolPublicPage} />
+      <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/contact" component={ContactPage} />
 
       {/* Admin routes */}
       <Route path="/admin/:section?">

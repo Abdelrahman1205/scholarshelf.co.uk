@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
 import { getRoleRoute } from "@/lib/role-routes";
+import { PublicFooter } from "@/components/public-footer";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -372,6 +373,9 @@ export default function LoginPage() {
               ))}
             </div>
           </div>
+
+          {/* Legal / contact links — reachable from the first screen */}
+          <PublicFooter />
         </div>
       </div>
     </div>

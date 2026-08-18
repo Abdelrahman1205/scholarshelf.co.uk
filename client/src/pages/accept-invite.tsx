@@ -8,6 +8,7 @@ import { MaterialSymbol } from "@/components/ui/material-symbol";
 import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
 import { getRoleRoute } from "@/lib/role-routes";
+import { PublicFooter } from "@/components/public-footer";
 
 // ─── STAFF INVITATION ACCEPTANCE (ScholarShelf design) ───────────────────────
 export default function AcceptInvitePage() {
@@ -189,6 +190,12 @@ export default function AcceptInvitePage() {
                 <div className="text-sm text-on-error-container bg-error-container px-3 py-2 rounded-lg">{errorMessage}</div>
               )}
 
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                By completing registration you confirm you have read our{" "}
+                <a href="/privacy" target="_blank" rel="noreferrer"
+                   className="underline hover:text-foreground">Privacy Policy</a>.
+              </p>
+
               <Button type="submit" className="w-full" disabled={isAcceptingInvite}>
                 <MaterialSymbol name="key" className="text-base mr-2" />
                 {isAcceptingInvite ? "Setting up account…" : "Complete Registration"}
@@ -202,6 +209,7 @@ export default function AcceptInvitePage() {
               </a>
             </div>
           </div>
+          <PublicFooter />
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
+import { PublicFooter } from "@/components/public-footer";
 
 export default function ResetPasswordPage() {
   const search = useSearch();
@@ -133,6 +134,7 @@ export default function ResetPasswordPage() {
             )}
           </CardContent>
         </Card>
+        <PublicFooter />
       </div>
     </div>
   );
