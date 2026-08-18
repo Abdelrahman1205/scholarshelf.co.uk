@@ -25,7 +25,6 @@
   ],
   "headers": [
     {
-      "//": "Static SPA assets are served by the Vercel CDN and never pass through Express, so helmet's headers don't apply to them. These mirror the helmet config in server/app.ts so the frontend is protected too.",
       "source": "/(.*)",
       "headers": [
         {
