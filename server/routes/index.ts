@@ -24,8 +24,8 @@ import { registerMessageRoutes } from "./message.routes.js";
 import { registerNotificationRoutes } from "./notification.routes.js";
 import { registerOwnerRoutes } from "./owner.routes.js";
 import { registerDashboardRoutes } from "./dashboard.routes.js";
-// Legacy family.routes.ts (registerFamilyRoutes) decommissioned — all
-// /api/admin/families/* endpoints have zero frontend consumers since the
+// Legacy family.routes.ts (registerFamilyRoutes) was removed — its
+// /api/admin/families/* endpoints had zero frontend consumers after the
 // family-first refactor migrated to /api/families/* in family-enrollment.routes.ts.
 import { registerFamilyEnrollmentRoutes } from "./family-enrollment.routes.js";
 import { registerPublicRoutes } from "./public.routes.js";
