@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, Users, UserPlus, Plus, Trash2, Check, CircleCheck, Circle, Link as LinkIcon,
-  ArrowLeft, Loader2, AlertTriangle, Camera, GraduationCap, Home,
+  ArrowLeft, Loader2, AlertTriangle, Camera, GraduationCap, Home, FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { navigateTo } from "./shared";
+import { ImportStudentSheetDialog } from "./family-enrollment-import";
 
 type Guardian = { fullName: string; relationship: string; email: string; phone: string; isPrimaryContact: boolean };
 type Student = { fullName: string; dateOfBirth: string; gender: string; gradeLevel: string; classId: string; preferredReadingLevel: string; photoUrl: string };
@@ -34,6 +35,9 @@ function FamilyEnrollmentSection() {
   // Remember the family created by "Save Draft" so a later "Enroll" updates the
   // SAME record instead of creating a duplicate family.
   const [draftFamilyId, setDraftFamilyId] = useState<string | null>(null);
+  // Spreadsheet enrollment — the SECOND way to enrol from this same screen.
+  // It opens over New Enrollment as a dialog; the administrator never leaves.
+  const [importOpen, setImportOpen] = useState(false);
 
   const { data: classes = [] } = useQuery<any[]>({ queryKey: ["/api/classes"], queryFn: getQueryFn({ on401: "throw" }) });
 
@@ -133,7 +137,14 @@ function FamilyEnrollmentSection() {
       <div className="flex items-center gap-3">
         <button onClick={() => navigateTo("/admin/families")} className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Back to Directory</button>
       </div>
-      <h1 className="text-3xl font-bold tracking-tight text-foreground">New Family Enrollment</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">New Family Enrollment</h1>
+        {/* Second enrollment method, in the SAME screen — opens a dialog over
+            this form rather than navigating anywhere. */}
+        <Button variant="outline" onClick={() => setImportOpen(true)}>
+          <FileSpreadsheet className="w-4 h-4 mr-2" /> Import Student Sheet
+        </Button>
+      </div>
 
       {/* Stepper */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -282,6 +293,36 @@ function FamilyEnrollmentSection() {
             <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> All students added here are automatically linked to this family record.</p>
           </section>
 
+          {/* ── OR · the spreadsheet route ──
+              Same screen, same enrollment rules, same database — just a
+              different way in for an administrator holding a class list. */}
+          <div className="flex items-center gap-3 py-1">
+            <div className="h-px flex-1 bg-border" />
+            <span className={cn(mono, "shrink-0")}>OR</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <section className="rounded-2xl border border-dashed border-border bg-muted/20 p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-foreground">Enrol from a spreadsheet</h2>
+                  <p className="text-sm text-muted-foreground max-w-xl">
+                    Upload an XLSX or CSV class list — one student per row. You'll map the columns,
+                    review a full preview, and confirm before anything is saved. Missing classes are
+                    created automatically and students already on roll are updated, not duplicated.
+                  </p>
+                </div>
+              </div>
+              <Button onClick={() => setImportOpen(true)} className="shrink-0">
+                <FileSpreadsheet className="w-4 h-4 mr-2" /> Import Student Sheet
+              </Button>
+            </div>
+          </section>
+
           {/* Duplicate warning */}
           {dupMatches && (
             <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
@@ -334,6 +375,17 @@ function FamilyEnrollmentSection() {
           )}
         </aside>
       </div>
+
+      {/* The importer lives here, inside New Enrollment. Closing it returns the
+          administrator to this same form with their manual entry intact. */}
+      <ImportStudentSheetDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/classes"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/families"] });
+        }}
+      />
     </div>
   );
 }

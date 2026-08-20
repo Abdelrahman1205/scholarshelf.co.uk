@@ -16,7 +16,9 @@
     "test:custody": "tsx tests/custody-machine.ts",
     "test:stock": "tsx tests/stock-idempotency.ts",
     "test:payments": "tsx tests/payment-idempotency.ts",
-    "test": "npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:family && npm run test:staff"
+    "test": "npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:tenant && npm run test:family && npm run test:staff && npm run test:import",
+    "test:tenant": "tsx tests/tenant-isolation.ts",
+    "test:import": "tsx tests/enrollment-import.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

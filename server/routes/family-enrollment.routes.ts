@@ -19,6 +19,14 @@ import {
   generateLinkingCode, getEmailBrandingForSchool,
 } from "../middleware/auth.js";
 import { sendParentCodeEmail } from "../email.js";
+import multer from "multer";
+import {
+  analyzeImport, commitImport, SpreadsheetParseError,
+} from "../services/enrollment-import/import-service.js";
+import { buildTemplateWorkbook } from "../services/enrollment-import/template.js";
+import {
+  IMPORT_MAX_FILE_BYTES, IMPORT_ALLOWED_EXTENSIONS, IMPORT_FIELDS,
+} from "../../shared/enrollment-import.js";
 
 const genFamilyCode = () => `FAM-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 const genStudentCode = () => `STU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -147,7 +155,187 @@ async function findGuardianContactMatches(
   return matches;
 }
 
+// ── Spreadsheet import (inside New Enrollment) ────────────────────────────────
+// The uploaded sheet contains children's personal data, so it is buffered in
+// MEMORY ONLY and never written to disk — there is no uploads path a student
+// sheet could later be served from. Extension and declared MIME are a first
+// pass; the parser re-checks the actual magic bytes before reading anything.
+const IMPORT_ALLOWED_MIME = new Set([
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel",                                          // .xls (and some .csv)
+  "text/csv", "application/csv", "text/plain",
+  "application/octet-stream",                                          // some browsers send this
+]);
+
+const sheetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: IMPORT_MAX_FILE_BYTES, files: 1, fields: 10 },
+  fileFilter: (_req, file, cb) => {
+    const name = (file.originalname || "").toLowerCase();
+    const ext = name.slice(name.lastIndexOf("."));
+    if (!(IMPORT_ALLOWED_EXTENSIONS as readonly string[]).includes(ext)) {
+      cb(new Error("Only .xlsx, .xls and .csv files can be imported."));
+      return;
+    }
+    if (file.mimetype && !IMPORT_ALLOWED_MIME.has(file.mimetype)) {
+      cb(new Error(`Unsupported file type "${file.mimetype}". Upload an .xlsx, .xls or .csv file.`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+/** Run multer for one field and surface its errors as clean 400s. */
+function runSheetUpload(req: Request, res: Response): Promise<void> {
+  return new Promise((resolve, reject) => {
+    sheetUpload.single("file")(req as any, res as any, (err: unknown) => {
+      if (!err) return resolve();
+      const message = err instanceof Error ? err.message : "Upload failed";
+      reject(Object.assign(
+        new Error(
+          message.includes("File too large")
+            ? `That file is larger than ${Math.round(IMPORT_MAX_FILE_BYTES / (1024 * 1024))} MB.`
+            : message,
+        ),
+        { httpStatus: 400 },
+      ));
+    });
+  });
+}
+
+/** Parse the optional `mapping` form field (column index → field key). */
+function parseMappingField(raw: unknown): Record<string, string | null> | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw Object.assign(new Error("Column mapping was not valid JSON."), { httpStatus: 400 }); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw Object.assign(new Error("Column mapping must be an object."), { httpStatus: 400 });
+  }
+  const out: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!/^\d{1,3}$/.test(k)) continue;                       // column indices only
+    out[k] = v === null || v === "" || v === "ignore" ? null : String(v).slice(0, 60);
+  }
+  return out;
+}
+
 export function registerFamilyEnrollmentRoutes(app: Express): void {
+  // ── Import: the field registry, so the dialog renders the same fields the
+  //    server accepts (single source of truth: shared/enrollment-import.ts) ──
+  app.get("/api/families/enroll/import/fields", requireRole(...ADMIN_UI_ROLES), (_req, res) => {
+    res.json({
+      fields: IMPORT_FIELDS.map((f) => ({
+        key: f.key, label: f.label, group: f.group, required: f.required, hint: f.hint || null,
+      })),
+      maxFileBytes: IMPORT_MAX_FILE_BYTES,
+      allowedExtensions: IMPORT_ALLOWED_EXTENSIONS,
+    });
+  });
+
+  // ── Import: downloadable template, built from the same field registry ──
+  app.get("/api/families/enroll/import/template", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      const buf = buildTemplateWorkbook();
+      await auditLog(req, "student_import_template_downloaded", `school:${sid}`);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", 'attachment; filename="scholarshelf-student-import-template.xlsx"');
+      res.setHeader("Cache-Control", "no-store");
+      res.send(buf);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ── Import step 1: ANALYSE. Read-only — nothing is written to the database.
+  //    Returns detected columns, the proposed mapping, per-row validation, the
+  //    existing/new student split and the classes that would be created. ──
+  app.post("/api/families/enroll/import/analyze", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      if (await rateLimit(`student-import-analyze:${sid}:${req.session.userId}`, 30, 60 * 1000)) {
+        return res.status(429).json({ message: "Too many import previews. Please slow down." });
+      }
+      await runSheetUpload(req, res);
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file?.buffer?.length) return res.status(400).json({ message: "Choose a spreadsheet to import." });
+
+      const result = await analyzeImport({
+        db: getDb(),
+        schoolId: sid,
+        buffer: file.buffer,
+        filename: file.originalname || "import.xlsx",
+        mappingOverrides: parseMappingField((req as any).body?.mapping),
+      });
+
+      // Record that a student sheet was opened — the file itself is never stored.
+      await auditLog(req, "student_import_previewed", `school:${sid}`, {
+        filename: file.originalname,
+        rows: result.summary.studentsDetected,
+        newStudents: result.summary.newStudents,
+        existingStudents: result.summary.existingStudents,
+        invalidRows: result.summary.invalidRows,
+        newClasses: result.summary.newClasses,
+      });
+
+      res.json(result);
+    } catch (e: any) {
+      const status = e instanceof SpreadsheetParseError ? 400 : (e?.httpStatus || 400);
+      res.status(status).json({ message: e?.message || "The spreadsheet could not be analysed." });
+    }
+  });
+
+  // ── Import step 2: COMMIT. The only endpoint that writes. Re-parses and
+  //    re-validates the ORIGINAL file (the browser's preview is never trusted)
+  //    and applies everything inside one transaction. ──
+  app.post("/api/families/enroll/import/commit", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      if (await rateLimit(`student-import-commit:${sid}:${req.session.userId}`, 10, 60 * 1000)) {
+        return res.status(429).json({ message: "Too many imports. Please slow down and try again shortly." });
+      }
+      await runSheetUpload(req, res);
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file?.buffer?.length) return res.status(400).json({ message: "Choose a spreadsheet to import." });
+
+      const result = await commitImport({
+        txDb: getTxDb(),
+        schoolId: sid,
+        buffer: file.buffer,
+        filename: file.originalname || "import.xlsx",
+        mappingOverrides: parseMappingField((req as any).body?.mapping),
+      });
+
+      // ── Audit (after commit) ──
+      await auditLog(req, "students_spreadsheet_imported", `school:${sid}`, {
+        filename: file.originalname,
+        processed: result.processed,
+        created: result.created,
+        updated: result.updated,
+        skipped: result.skipped,
+        classesCreated: result.classesCreated,
+        familiesCreated: result.familiesCreated,
+        guardiansCreated: result.guardiansCreated,
+        failedRows: result.errorCount,
+      });
+      // Auto-created classes are tagged with their origin so it is always clear
+      // a class came from a spreadsheet enrollment import rather than by hand.
+      for (const name of result.createdClassNames) {
+        await auditLog(req, "class_created", `school:${sid}`, {
+          name, source: "enrollment_spreadsheet_import", filename: file.originalname,
+        }).catch(() => {});
+      }
+
+      res.status(201).json(result);
+    } catch (e: any) {
+      const status = e instanceof SpreadsheetParseError ? 400 : (e?.httpStatus || 400);
+      res.status(status).json({ message: e?.message || "The import failed and nothing was changed." });
+    }
+  });
+
   // ── Search families by guardian name/email/phone or student name (with dup hints) ──
   app.get("/api/families/search", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
