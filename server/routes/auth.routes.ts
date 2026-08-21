@@ -7,7 +7,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { storage } from "../storage.js";
 import {
-  requireAuth, requireRole,
+  requireAuth, requireRole, clientIp, clearRateLimit,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
   getActiveRequestContext, resolveRole,
   auditLog, rateLimit,
@@ -68,8 +68,24 @@ export function registerAuthRoutes(app: Express): void {
       }
       const { username, password, schoolCode } = parsed.data;
 
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
-      if (await rateLimit(`signin:${ip}`, 10, 15 * 60 * 1000)) {
+      const ip = clientIp(req);
+
+      // Two independent limits.
+      //
+      // Per-ACCOUNT is the real brake on password guessing: it survives an
+      // attacker rotating IPs, because the account is the thing being attacked.
+      //
+      // Per-IP is deliberately generous. A primary school sits behind one public
+      // IP, so a tight per-IP cap locks the whole staff room out every Monday
+      // morning while doing nothing to a distributed attacker.
+      const accountKey = `signin-user:${username.trim().toLowerCase()}`;
+      if (await rateLimit(accountKey, 5, 15 * 60 * 1000)) {
+        await auditLog(req, "login_account_locked", `username:${username}`, { ip });
+        return res.status(429).json({
+          message: "Too many failed attempts for this account. Please try again in 15 minutes, or reset your password.",
+        });
+      }
+      if (await rateLimit(`signin:${ip}`, 50, 15 * 60 * 1000)) {
         await auditLog(req, "login_rate_limited", `ip:${ip}`);
         return res.status(429).json({ message: "Too many login attempts. Please try again later." });
       }
@@ -90,6 +106,11 @@ export function registerAuthRoutes(app: Express): void {
         await auditLog(req, "login_failed", `user:${user.id}`, { reason: "invalid_password" });
         return res.status(401).json({ message: "Invalid username or password" });
       }
+
+      // The password was correct, so this attempt was not an attack. Reset the
+      // per-account counter — it must only ever accumulate FAILED attempts, or a
+      // legitimate user signing in six times in an afternoon would lock themselves out.
+      await clearRateLimit(accountKey);
 
       if (user.schoolId) {
         const school = await storage.getSchoolById(user.schoolId);
@@ -146,6 +167,8 @@ export function registerAuthRoutes(app: Express): void {
         req.session.userId = user.id;
         req.session.role = user.role;
         req.session.activeContext = resolveRole(user.role);
+        req.session.mfaEnabled = !!user.mfaEnabled;
+        req.session.username = user.username;
         req.session.schoolId = user.schoolId;
         // Apply role-based session lifetime (privileged roles get 8h, parents 30d).
         if (req.session.cookie) {
@@ -178,7 +201,7 @@ export function registerAuthRoutes(app: Express): void {
       }
       const { name, email, username, password } = parsed.data;
 
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      const ip = clientIp(req);
       if (await rateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many registration attempts. Please try again later." });
       }
@@ -219,6 +242,7 @@ export function registerAuthRoutes(app: Express): void {
         req.session.userId = user.id;
         req.session.role = user.role;
         req.session.activeContext = "parent";
+        req.session.mfaEnabled = false;
         req.session.schoolId = null;
         // Parents get a longer session; apply the role-based lifetime.
         if (req.session.cookie) {
@@ -269,7 +293,11 @@ export function registerAuthRoutes(app: Express): void {
       }
 
       const response = await buildAuthUserResponse(req, user);
-      await auditLog(req, "context_switched", `user:${user.id}`, { context: activeContext, availableContexts: profile.contexts.map((item) => item.key) });
+      // Role simulation by the test account is worth telling apart from a real
+      // user switching between roles they genuinely hold.
+      await auditLog(req, profile.isTestAccount ? "test_account_context_switched" : "context_switched",
+        `user:${user.id}`,
+        { context: activeContext, availableContexts: profile.contexts.map((item) => item.key) });
       res.json(response);
     } catch (e: any) {
       res.status(400).json({ message: e.message || "Failed to switch context" });
@@ -293,7 +321,7 @@ export function registerAuthRoutes(app: Express): void {
 
   app.get("/api/invites/:token", async (req, res) => {
     try {
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      const ip = clientIp(req);
       if (await rateLimit(`invite-lookup:${ip}`, 20, 15 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many requests. Please try again later." });
       }
@@ -327,7 +355,7 @@ export function registerAuthRoutes(app: Express): void {
 
   app.post("/api/invites/:token/accept", async (req, res) => {
     try {
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      const ip = clientIp(req);
       if (await rateLimit(`invite-accept:${ip}`, 10, 15 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many requests. Please try again later." });
       }
@@ -353,7 +381,7 @@ export function registerAuthRoutes(app: Express): void {
       }
       const { email } = parsed.data;
 
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      const ip = clientIp(req);
       if (await rateLimit(`forgot:${ip}`, 3, 15 * 60 * 1000)) {
         return res.json({ message: "If an account with that email exists, a password reset link has been sent." });
       }
@@ -416,7 +444,7 @@ export function registerAuthRoutes(app: Express): void {
   // POST /api/auth/reset-password
   app.post("/api/auth/reset-password", async (req, res) => {
     try {
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      const ip = clientIp(req);
       if (await rateLimit(`reset-password:${ip}`, 5, 15 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many requests. Please try again later." });
       }

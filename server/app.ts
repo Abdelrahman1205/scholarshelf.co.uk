@@ -7,8 +7,13 @@ import connectPgSimple from "connect-pg-simple";
 import { Pool } from "pg";
 import { createServer, type Server } from "http";
 import path from "path";
+import { randomUUID } from "crypto";
 import { registerRoutes } from "./routes.js";
 import { serveStatic } from "./static.js";
+// SECURITY: one implementation only. app.ts previously carried its own copy with
+// no DATABASE_SSL_STRICT escape hatch, which meant the SESSION store could never
+// be hardened even when the flag was set. Both pools now share this one.
+import { buildSslConfig } from "./config/database.js";
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const FORCE_MEMORY_STORAGE =
@@ -40,6 +45,27 @@ declare module "express-session" {
     supportSchoolId: string | null;
     supportSchoolName: string | null;
     /**
+     * Whether this user has MFA enrolled, stamped at login so guards can check
+     * it without a database round-trip on every request. Kept in sync wherever
+     * MFA is enabled or disabled.
+     */
+    mfaEnabled?: boolean;
+    /**
+     * Cached for the console audit trail, so an entry reads "who" without a
+     * lookup. A UUID in an audit log is not an answer to "who did this?".
+     */
+    username?: string;
+    /**
+     * Break-glass write access to the BytHub console. Granted only by a fresh
+     * TOTP code plus a written reason, and expires on its own. Absent or expired
+     * means the console is read-only, which is its normal state.
+     */
+    consoleElevation?: {
+      id: string;
+      expiresAt: number;
+      reason: string;
+    } | null;
+    /**
      * Partial-auth marker set after a correct password when the account has MFA
      * enabled. The user is NOT authenticated (no userId) until they pass the
      * TOTP/recovery challenge at /api/auth/mfa/verify.
@@ -50,6 +76,18 @@ declare module "express-session" {
     } | null;
     /** Secret generated during MFA enrolment, held server-side until the user confirms a code. */
     pendingMfaSetupSecret?: string | null;
+    /**
+     * Universal Test Account marker. Stamped at login (and refreshed on every
+     * context switch) from `user_permissions`, so guards can ask "is this the
+     * test account?" without a database round-trip.
+     *
+     * SECURITY: written only by the server, only after a database check, and
+     * only while the feature is enabled — which it is not in production. It is
+     * never read from, or influenced by, anything the client sends. The role
+     * being simulated is `activeContext`, which is validated on every switch by
+     * syncSessionActiveContext() against the account's real available contexts.
+     */
+    testSuperuser?: boolean;
   }
 }
 
@@ -76,132 +114,6 @@ const SESSION_MAX_AGE: Record<string, number> = {
   parent:        30 * 24 * 60 * 60 * 1000, // 30 days
 };
 const DEFAULT_SESSION_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours fallback
-
-// ── SSL helper ─────────────────────────────────────────────────────────────
-// Prefer strict certificate validation. Fall back to permissive only when
-// DATABASE_SSL_CA is absent AND we are NOT in production.
-function buildSslConfig(): object {
-  const ca = process.env.DATABASE_SSL_CA;
-  if (ca) return { rejectUnauthorized: true, ca };
-  if (IS_PRODUCTION) {
-    // Warn but do not fail — Neon typically uses a trusted CA already.
-    // Set DATABASE_SSL_CA in Vercel env vars for full verification.
-    console.warn(
-      "[SECURITY WARNING] DATABASE_SSL_CA is not set. SSL certificate " +
-      "verification is disabled for the database connection. " +
-      "Set DATABASE_SSL_CA to the Neon CA certificate for full MitM protection.",
-    );
-  }
-  return { rejectUnauthorized: false };
-}
-
-async function ensureBootstrapSchema() {
-  if (!RESOLVED_DATABASE_URL) return;
-
-  const pool = new Pool({
-    connectionString: RESOLVED_DATABASE_URL,
-    ssl: buildSslConfig(),
-  });
-
-  try {
-    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS setup_status text NOT NULL DEFAULT 'pending_admin_invite'`);
-    await pool.query(`UPDATE schools SET setup_status = CASE WHEN status = 'active' THEN 'active' ELSE 'pending_admin_invite' END WHERE setup_status IS NULL OR setup_status = ''`);
-    await pool.query(`ALTER TABLE invites ADD COLUMN IF NOT EXISTS invitee_name text`);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_permissions (
-        id varchar(36) PRIMARY KEY,
-        user_id varchar(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        permission text NOT NULL,
-        created_at timestamp DEFAULT now(),
-        UNIQUE (user_id, permission)
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS user_permissions_user_id_idx ON user_permissions(user_id)`);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS school_branding (
-        id varchar(36) PRIMARY KEY,
-        school_id varchar(36) NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-        logo_url text,
-        logo_file_id text,
-        favicon_url text,
-        favicon_file_id text,
-        banner_image_url text,
-        banner_file_id text,
-        email_header_logo_url text,
-        email_header_logo_file_id text,
-        pdf_logo_url text,
-        pdf_logo_file_id text,
-        primary_colour text DEFAULT '#2563EB',
-        secondary_colour text DEFAULT '#1E3A8A',
-        accent_colour text DEFAULT '#0EA5E9',
-        theme_name text DEFAULT 'default',
-        font_preference text DEFAULT 'Inter',
-        setup_status text DEFAULT 'pending',
-        created_at timestamp DEFAULT now(),
-        updated_at timestamp DEFAULT now(),
-        updated_by varchar(36) REFERENCES users(id),
-        UNIQUE (school_id)
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS school_branding_school_id_idx ON school_branding(school_id)`);
-    // Student soft-delete columns
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_at timestamp`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS archived_by varchar(36)`);
-    // Family-first enrollment columns (additive only)
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS family_id varchar(36)`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS date_of_birth text`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS gender text`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS grade_level text`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS preferred_reading_level text`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS photo_url text`);
-    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS family_code text`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS household_name text`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS primary_contact_guardian_id varchar(36)`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS primary_phone text`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS primary_email text`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS address text`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'enrolled'`);
-    await pool.query(`ALTER TABLE families ADD COLUMN IF NOT EXISTS updated_at timestamp DEFAULT now()`);
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS families_family_code_key ON families(family_code)`);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS guardians (
-        id varchar(36) PRIMARY KEY,
-        school_id varchar(36),
-        family_id varchar(36) NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-        full_name text NOT NULL,
-        relationship text,
-        email text,
-        phone text,
-        is_primary_contact boolean NOT NULL DEFAULT false,
-        portal_access_status text NOT NULL DEFAULT 'none',
-        created_at timestamp DEFAULT now(),
-        updated_at timestamp DEFAULT now()
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS guardians_family_id_idx ON guardians(family_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS guardians_school_id_idx ON guardians(school_id)`);
-    // teacher_profiles table (used by getUserWithDetail and getTeacherProfile)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS teacher_profiles (
-        id varchar(36) PRIMARY KEY,
-        user_id varchar(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        school_id varchar(36) NOT NULL,
-        department text,
-        subjects text,
-        created_at timestamp DEFAULT now(),
-        created_by_admin_id varchar(36),
-        UNIQUE (user_id, school_id)
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS teacher_profiles_user_id_idx ON teacher_profiles(user_id)`);
-  } catch (error) {
-    console.warn("Schema bootstrap warning:", error);
-  } finally {
-    await pool.end().catch(() => {});
-  }
-}
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -336,9 +248,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     if (!req.path.startsWith("/api/") || !WRITE_METHODS.has(req.method)) return next();
     if (RL_EXEMPT.some((re) => re.test(req.path))) return next();
     try {
-      const fwd = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
-      const id = (req.session as any)?.userId || fwd || req.socket?.remoteAddress || "anon";
-      const { rateLimit } = await import("./middleware/auth.js");
+      const { rateLimit, clientIp } = await import("./middleware/auth.js");
+      // Prefer the session identity; fall back to the proxy-resolved IP. Never
+      // x-forwarded-for directly — the leftmost entry is client-controlled.
+      const id = (req.session as any)?.userId || clientIp(req);
       if (await rateLimit(`mutations:${id}`, 240, 60_000)) {
         return res.status(429).json({
           success: false,
@@ -350,21 +263,45 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     next();
   });
 
-  await ensureBootstrapSchema();
+  // ensureBootstrapSchema() used to run here — roughly 30 ALTER TABLE / CREATE
+  // TABLE statements fired at production Postgres on EVERY serverless cold start,
+  // with every failure swallowed by `catch { console.warn }`.
+  //
+  // Three problems, now gone: it added a stack of sequential round-trips to every
+  // cold start; ALTER TABLE takes an ACCESS EXCLUSIVE lock, so concurrent cold
+  // starts on a busy morning contended on students/families/schools; and a column
+  // that failed to add did not stop startup, it surfaced later as a query error
+  // nobody could explain.
+  //
+  // Every table it created is declared in shared/schema.ts, so this was pure
+  // duplication. Schema changes now go through `npm run db:push` (or, better, a
+  // reviewed migration) as a deliberate deploy step rather than a side effect of
+  // someone loading a page.
 
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
 
     if (res.headersSent) {
       return next(err);
     }
 
-    return res.status(status).json({ message });
+    if (status >= 500) {
+      // SECURITY: never return err.message on a 5xx. Postgres errors carry table,
+      // column and constraint names — and occasionally row values — straight to
+      // the client. Log the detail against a correlation id and return only the id,
+      // so support can still trace it without leaking the schema.
+      const errorId = randomUUID();
+      console.error(`[error ${errorId}]`, err);
+      return res.status(status).json({
+        message: "Something went wrong on our end. Quote this reference if you contact support.",
+        errorId,
+      });
+    }
+
+    // 4xx messages are written by us and are safe to surface.
+    return res.status(status).json({ message: err.message || "Request failed" });
   });
 
   if (!options.serverless) {

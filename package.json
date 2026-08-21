@@ -10,15 +10,18 @@
     "start": "node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
+    "seed:test-account": "tsx script/seed-test-account.ts",
     "test:family": "tsx tests/family-enrollment.ts",
     "test:security": "tsx tests/security-regression.ts",
     "test:staff": "tsx tests/staff-parent.ts",
     "test:custody": "tsx tests/custody-machine.ts",
     "test:stock": "tsx tests/stock-idempotency.ts",
     "test:payments": "tsx tests/payment-idempotency.ts",
-    "test": "npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:tenant && npm run test:family && npm run test:staff && npm run test:import",
+    "test": "npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:tenant && npm run test:family && npm run test:staff && npm run test:import && npm run test:verification && npm run test:superuser",
     "test:tenant": "tsx tests/tenant-isolation.ts",
-    "test:import": "tsx tests/enrollment-import.ts"
+    "test:import": "tsx tests/enrollment-import.ts",
+    "test:verification": "tsx tests/payment-verification.ts",
+    "test:superuser": "tsx tests/test-superuser.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

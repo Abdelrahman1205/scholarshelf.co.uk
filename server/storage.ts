@@ -5,6 +5,7 @@ import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import * as schema from "../shared/schema.js";
+import { currentAcademicYear } from "../shared/academic-year.js";
 import {
   isValidCustodyStatus, isTransitionAllowed, CustodyTransitionError,
   deriveCustodyFromLegacy, type CustodyStatus,
@@ -437,6 +438,8 @@ export interface IStorage {
   deleteWebsiteSection(id: string, schoolId: string): Promise<void>;
   moveWebsiteSection(id: string, schoolId: string, direction: "up" | "down"): Promise<void>;
   getUserPermissions(userId: string): Promise<string[]>;
+  addUserPermission(userId: string, permission: string): Promise<void>;
+  removeUserPermission(userId: string, permission: string): Promise<void>;
   setUserPermissions(userId: string, permissions: string[]): Promise<void>;
 
   // === Messaging ===
@@ -831,6 +834,39 @@ class DatabaseStorage implements IStorage {
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
       return Array.from(memoryUserPermissions.get(userId) || []);
+    }
+  }
+
+  /**
+   * Grant one permission. Idempotent — the table has a unique index on
+   * (user_id, permission), so re-granting is a no-op rather than a duplicate.
+   * Mirrors addSecondaryRole(), which stores its own entries in this same table.
+   */
+  async addUserPermission(userId: string, permission: string): Promise<void> {
+    try {
+      await getDb()
+        .insert(schema.userPermissions)
+        .values({ userId, permission } as any)
+        .onConflictDoNothing();
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const set = memoryUserPermissions.get(userId) || new Set<string>();
+      set.add(permission);
+      memoryUserPermissions.set(userId, set);
+    }
+  }
+
+  /** Revoke one permission, leaving the user's other permissions untouched. */
+  async removeUserPermission(userId: string, permission: string): Promise<void> {
+    try {
+      await getDb().delete(schema.userPermissions).where(and(
+        eq(schema.userPermissions.userId, userId),
+        eq(schema.userPermissions.permission, permission),
+      ));
+    } catch (e) {
+      if (!isDbUnavailableError(e)) throw e;
+      const set = memoryUserPermissions.get(userId);
+      if (set) { set.delete(permission); memoryUserPermissions.set(userId, set); }
     }
   }
 
@@ -1352,9 +1388,63 @@ class DatabaseStorage implements IStorage {
   }
 
   // Look up a single link code by its code string — for preview (does not consume)
+  /**
+   * Canonical form of a linking code.
+   *
+   * Codes are generated uppercase with a dash (ABC-123) and printed on paper, so
+   * parents type them by hand — often in lowercase, often with a stray space from
+   * a paste. Both lookups below MUST normalise identically: the preview endpoint
+   * used to uppercase its input while confirm did not, so a parent could see
+   * their own child's name on the preview screen, press Confirm, and be told the
+   * code was invalid. Normalising here means no caller can reintroduce that.
+   */
+  /**
+   * What was true about this student when a history row was written.
+   *
+   * Allocations reach a class only through students.classId, which is
+   * overwritten every September. Capturing the class here means a distribution
+   * recorded in Year 3 still reads as Year 3 after the child moves to Year 4.
+   *
+   * Best-effort: if the lookup fails we still write the row, just without the
+   * snapshot. Losing a label is acceptable; losing the allocation is not.
+   */
+  private async snapshotStudentContext(studentId: string | null | undefined): Promise<{
+    academicYear: string;
+    classIdAtAllocation: string | null;
+    classNameAtAllocation: string | null;
+    yearGroupAtAllocation: string | null;
+  }> {
+    const base = {
+      academicYear: currentAcademicYear(),
+      classIdAtAllocation: null as string | null,
+      classNameAtAllocation: null as string | null,
+      yearGroupAtAllocation: null as string | null,
+    };
+    if (!studentId) return base;
+    try {
+      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, studentId));
+      if (!student?.classId) return base;
+      const [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+      return {
+        // Prefer the class's own recorded year over today's date — a class
+        // explicitly labelled 2025/26 should stamp that, not the wall clock.
+        academicYear: cls?.academicYear?.trim() || base.academicYear,
+        classIdAtAllocation: student.classId,
+        classNameAtAllocation: cls?.name ?? null,
+        yearGroupAtAllocation: cls?.yearGroup ?? student.gradeLevel ?? null,
+      };
+    } catch {
+      return base;
+    }
+  }
+
+  private normaliseLinkingCode(code: string): string {
+    return String(code ?? "").trim().toUpperCase();
+  }
+
   async getLinkingCodeByCode(code: string): Promise<(schema.ChildLinkingCode & { student?: schema.Student; class?: schema.Class; family?: schema.Family & { students?: (schema.Student & { class?: schema.Class })[] } }) | null> {
     const [linkingCode] = await getDb().select().from(schema.childLinkingCodes)
-      .where(eq(schema.childLinkingCodes.code, code));
+      .where(eq(schema.childLinkingCodes.code, this.normaliseLinkingCode(code)));
     if (!linkingCode) return null;
 
     // Family code path
@@ -1406,7 +1496,7 @@ class DatabaseStorage implements IStorage {
 
   async useLinkingCode(code: string, parentIdentifier: string): Promise<{ student?: schema.Student; students?: schema.Student[]; linkingCode: schema.ChildLinkingCode; isFamily?: boolean } | null> {
     const [linkingCode] = await getDb().select().from(schema.childLinkingCodes).where(
-      eq(schema.childLinkingCodes.code, code)
+      eq(schema.childLinkingCodes.code, this.normaliseLinkingCode(code))
     );
     if (!linkingCode) return null;
 
@@ -1739,7 +1829,11 @@ class DatabaseStorage implements IStorage {
   // === PAYMENTS ===
 
   async createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment> {
-    const created = await insertAndFetchById(schema.bookPayments, payment);
+    // Revenue has to stay attributable to the year it was taken in.
+    const created = await insertAndFetchById(schema.bookPayments, {
+      academicYear: currentAcademicYear(),
+      ...payment,
+    } as schema.InsertBookPayment);
     for (const basketId of basketIds) {
       await getDb().insert(schema.basketPayments).values({ basketId, paymentId: created.id });
       await getDb().update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
@@ -1882,6 +1976,9 @@ class DatabaseStorage implements IStorage {
       }
 
       await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
+      // Resolved once per basket, not per book — every item in a basket belongs
+      // to the same child in the same class on the same day.
+      const snapshot = await this.snapshotStudentContext(basket.studentId);
       for (const item of basket.items) {
         await getDb().insert(schema.financeBookAllocations).values({
           studentId: basket.studentId,
@@ -1889,6 +1986,7 @@ class DatabaseStorage implements IStorage {
           basketId: basket.id,
           status: "allocated",
           schoolId: existing.schoolId,
+          ...snapshot,
         });
         try {
           await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
@@ -2073,7 +2171,13 @@ class DatabaseStorage implements IStorage {
   }
 
   async createAllocation(allocation: schema.InsertAllocation): Promise<schema.FinanceBookAllocation> {
-    const created = await insertAndFetchById(schema.financeBookAllocations, allocation);
+    // Stamp the year and class BEFORE inserting, so the row records what was
+    // true at allocation time rather than depending on a join that changes.
+    const snapshot = await this.snapshotStudentContext((allocation as any).studentId);
+    const created = await insertAndFetchById(schema.financeBookAllocations, {
+      ...snapshot,
+      ...allocation, // an explicit value from the caller always wins
+    } as schema.InsertAllocation);
     // Slice 4: seed the custody timeline with the opening state (null → reserved).
     try {
       await getDb().insert(schema.custodyEvents).values({

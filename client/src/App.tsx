@@ -1,3 +1,4 @@
+import { ALL_ACCESS_CONTEXT, ALL_ACCESS_DEFAULT_PATH } from "@shared/test-superuser";
 import { useEffect, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
@@ -39,14 +40,24 @@ function AuthGuard({ children, allowedRoles }: { children: React.ReactNode; allo
   const { user, isLoading, isAuthenticated } = useAuth();
   const [, setLocation] = useLocation();
 
+  /**
+   * The Universal Test Account in "All Features" mode may open any route.
+   *
+   * This only decides what is RENDERED. Every one of these pages still calls
+   * APIs guarded by requireRole() on the server, which performs the same check
+   * against the session — so this is a convenience, not a permission.
+   */
+  const allAccess = user?.isTestAccount === true && user?.role === ALL_ACCESS_CONTEXT;
+  const permitted = allAccess || (user ? allowedRoles.includes(user.role) : false);
+
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
       setLocation("/login");
-    } else if (!allowedRoles.includes(user!.role)) {
+    } else if (!permitted) {
       setLocation(getRoleRoute(user!.role));
     }
-  }, [isLoading, isAuthenticated, user, allowedRoles, setLocation]);
+  }, [isLoading, isAuthenticated, user, permitted, setLocation]);
 
   if (isLoading) {
     return (
@@ -56,7 +67,7 @@ function AuthGuard({ children, allowedRoles }: { children: React.ReactNode; allo
     );
   }
 
-  if (!isAuthenticated || !allowedRoles.includes(user!.role)) {
+  if (!isAuthenticated || !permitted) {
     return null;
   }
 

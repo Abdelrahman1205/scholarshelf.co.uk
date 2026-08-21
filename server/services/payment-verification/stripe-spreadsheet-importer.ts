@@ -1,0 +1,344 @@
+/**
+ * server/services/payment-verification/stripe-spreadsheet-importer.ts
+ *
+ * Turns a Stripe CSV/XLSX export into `NormalisedProviderPayment` records.
+ *
+ * This file is ONE implementation of `ProviderPaymentSource`. It is the only
+ * place in the finance feature that knows what a Stripe export looks like.
+ * When the Stripe API replaces it, this file is the only thing that becomes
+ * optional — matching, verification and the workflow are untouched, because
+ * they never see a spreadsheet.
+ *
+ * SECURITY — this is finance data arriving as an untrusted upload:
+ *   · magic-byte sniffing, not just the extension or declared MIME
+ *   · no formula evaluation (cellFormula:false — cached values only, and
+ *     formula source is discarded rather than carried through)
+ *   · no macros (.xlsm is not accepted; bookVBA is off, so the VBA part of an
+ *     .xlsx is never read)
+ *   · row and column caps so a crafted file cannot exhaust memory
+ *   · buffers stay in memory; no Stripe export is ever written to disk
+ *
+ * COLUMN HANDLING — Stripe's exports are not one fixed format. "Payments",
+ * "Balance", "Payouts reconciliation" and custom column sets all differ, and
+ * metadata columns are named by the merchant. So headers are matched by alias
+ * (like the enrollment importer), and the ScholarShelf reference is recovered
+ * from metadata, description or the statement descriptor.
+ */
+import * as XLSX from "xlsx";
+import {
+  normaliseProviderStatus, parseMoney, normaliseCurrency,
+  type NormalisedProviderPayment, type ProviderPaymentSource,
+} from "./provider-payment.js";
+import type { PaymentProvider } from "../../../shared/schema.js";
+
+export class StripeImportError extends Error {}
+
+export const STRIPE_IMPORT_MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+export const STRIPE_IMPORT_MAX_ROWS = 20000;
+export const STRIPE_IMPORT_MAX_COLUMNS = 120;
+export const STRIPE_IMPORT_ALLOWED_EXTENSIONS = [".csv", ".xlsx", ".xls"] as const;
+
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const CFB_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+function normHeader(h: string): string {
+  return String(h ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Header aliases for the fields we need. Order matters within a list: the first
+ * matching column in the file wins, so more specific spellings come first.
+ */
+const COLUMN_ALIASES = {
+  paymentId: [
+    "id", "paymentintentid", "paymentintent", "chargeid", "charge",
+    "transactionid", "balancetransactionid", "sourceid", "piid",
+  ],
+  chargeId: ["chargeid", "charge", "latestchargeid"],
+  status: ["status", "paymentstatus", "chargestatus", "state", "paymentintentstatus"],
+  amount: ["amount", "convertedamount", "grossamount", "gross", "total", "amountcaptured", "amountpaid"],
+  amountRefunded: ["amountrefunded", "refundedamount", "refunded", "amountreturned"],
+  currency: ["currency", "convertedcurrency", "presentmentcurrency"],
+  customerEmail: ["customeremail", "email", "receiptemail", "billingemail", "customeremailaddress"],
+  customerName: ["customername", "name", "cardholdername", "billingname", "customerdescription"],
+  description: ["description", "statementdescriptor", "memo", "note"],
+  createdAt: ["created", "createddate", "createdutc", "capturedat", "date", "paidat", "availableon"],
+  disputed: ["disputed", "isdisputed", "dispute", "disputestatus"],
+  refundedFlag: ["refunded", "isrefunded"],
+} as const;
+
+type ColumnKey = keyof typeof COLUMN_ALIASES;
+
+/**
+ * Locate each field's column. Also collects every `metadata[...]` column, since
+ * that is where a ScholarShelf reference most often lives once payments are
+ * created through Stripe with metadata attached.
+ */
+function mapColumns(headers: string[]) {
+  const found: Partial<Record<ColumnKey, number>> = {};
+  const metadataColumns: number[] = [];
+  const referenceColumns: number[] = [];
+
+  headers.forEach((raw, index) => {
+    const h = normHeader(raw);
+    const original = String(raw ?? "");
+    if (/^metadata[\[(.]/i.test(original.trim()) || h.startsWith("metadata")) metadataColumns.push(index);
+    // Any column that looks like it holds our own reference.
+    if (/(scholarshelf|edubook|order|payment)?ref(erence)?(number|no|id)?$/i.test(original.trim().replace(/^metadata[\[(]?/i, "").replace(/[\])]$/, ""))) {
+      referenceColumns.push(index);
+    }
+  });
+
+  // First alias that appears in the file wins. Two keys may legitimately resolve
+  // to the same column (an export with a single "id" column is both the payment
+  // id and the charge id) — that is handled where the values are read.
+  for (const key of Object.keys(COLUMN_ALIASES) as ColumnKey[]) {
+    for (const alias of COLUMN_ALIASES[key]) {
+      const idx = headers.findIndex((h) => normHeader(h) === alias);
+      if (idx !== -1) { found[key] = idx; break; }
+    }
+  }
+  return { found, metadataColumns, referenceColumns };
+}
+
+/**
+ * A ScholarShelf payment reference, as generated by generatePaymentReference():
+ *   EDU-<base36 timestamp>-<8 hex>
+ * Recovered from anywhere in a text value, because merchants put it in
+ * metadata, the description or the statement descriptor depending on setup.
+ */
+const SCHOLARSHELF_REFERENCE_RE = /\bEDU-[0-9A-Z]{6,12}-[0-9A-F]{8}\b/i;
+
+export function extractScholarShelfReference(...values: unknown[]): string | null {
+  for (const v of values) {
+    if (v === null || v === undefined) continue;
+    const m = SCHOLARSHELF_REFERENCE_RE.exec(String(v));
+    if (m) return m[0].toUpperCase();
+  }
+  return null;
+}
+
+// ── File reading ────────────────────────────────────────────────────────────
+
+export function sniffStripeFile(buffer: Buffer, filename: string): "csv" | "xlsx" | "xls" {
+  const lower = (filename || "").toLowerCase();
+  const ext = lower.slice(lower.lastIndexOf("."));
+  if (!(STRIPE_IMPORT_ALLOWED_EXTENSIONS as readonly string[]).includes(ext)) {
+    throw new StripeImportError(`Unsupported file type "${ext || "unknown"}". Upload a Stripe .csv, .xlsx or .xls export.`);
+  }
+  if (buffer.length === 0) throw new StripeImportError("The uploaded file is empty.");
+
+  if (buffer.subarray(0, 4).equals(ZIP_MAGIC)) {
+    if (ext !== ".xlsx") throw new StripeImportError(`This file's contents are an Excel workbook but it is named "${ext}".`);
+    return "xlsx";
+  }
+  if (buffer.subarray(0, 8).equals(CFB_MAGIC)) {
+    if (ext !== ".xls") throw new StripeImportError(`This file's contents are a legacy Excel workbook but it is named "${ext}".`);
+    return "xls";
+  }
+  if (ext === ".csv") {
+    if (buffer.subarray(0, 4096).includes(0x00)) {
+      throw new StripeImportError("This .csv file contains binary data and was rejected.");
+    }
+    return "csv";
+  }
+  throw new StripeImportError("The file contents are not a readable spreadsheet.");
+}
+
+function readSheet(buffer: Buffer, filename: string): { headers: string[]; rows: unknown[][] } {
+  const kind = sniffStripeFile(buffer, filename);
+  const common: XLSX.ParsingOptions = {
+    cellFormula: false, cellHTML: false, cellStyles: false,
+    sheetStubs: false, bookVBA: false, bookFiles: false, bookDeps: false,
+  };
+
+  let wb: XLSX.WorkBook;
+  try {
+    wb = kind === "csv"
+      // Raw, like the enrollment importer: Stripe timestamps and references must
+      // not be silently re-typed by the parser before we look at them.
+      ? XLSX.read(buffer.toString("utf8").replace(/^﻿/, ""), { ...common, type: "string", raw: true, cellDates: false })
+      : XLSX.read(buffer, { ...common, type: "buffer", cellDates: true });
+  } catch (e: any) {
+    throw new StripeImportError(`The file could not be read as a spreadsheet${e?.message ? `: ${e.message}` : "."}`);
+  }
+
+  const sheetName = wb.SheetNames?.[0];
+  if (!sheetName) throw new StripeImportError("The workbook has no worksheets.");
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetName], {
+    header: 1, blankrows: false, defval: null, raw: true,
+  });
+  if (matrix.length === 0) throw new StripeImportError("The Stripe export is empty.");
+
+  const rawHeaders = (matrix[0] ?? []).slice(0, STRIPE_IMPORT_MAX_COLUMNS);
+  const headers = rawHeaders.map((h, i) => (h === null || h === undefined || h === "" ? `Column ${i + 1}` : String(h).trim().slice(0, 200)));
+  const rows = matrix.slice(1, 1 + STRIPE_IMPORT_MAX_ROWS)
+    .map((r) => (r as unknown[]).slice(0, headers.length))
+    .filter((r) => r.some((c) => c !== null && c !== undefined && c !== ""));
+
+  return { headers, rows };
+}
+
+// ── Parsing ─────────────────────────────────────────────────────────────────
+
+export interface StripeRowError { row: number; reason: string }
+
+export interface StripeParseResult {
+  payments: NormalisedProviderPayment[];
+  errors: StripeRowError[];
+  totalRows: number;
+  headers: string[];
+  /** Fields we could not find a column for — surfaced to the uploader. */
+  missingColumns: string[];
+}
+
+function cellText(row: unknown[], index: number | undefined): string | null {
+  if (index === undefined) return null;
+  const v = row[index];
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
+  const s = String(v).trim();
+  return s ? s.slice(0, 2000) : null;
+}
+
+function parseDate(value: unknown): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const s = String(value).trim();
+  // Stripe exports use ISO-8601 or "YYYY-MM-DD HH:MM:SS" in UTC; both parse.
+  const d = new Date(s.includes(" ") && !s.includes("T") ? s.replace(" ", "T") + "Z" : s);
+  if (!Number.isNaN(d.getTime())) return d;
+  const epoch = Number(s);
+  // A bare 10-digit number is a Unix timestamp in seconds.
+  if (Number.isFinite(epoch) && epoch > 1_000_000_000 && epoch < 4_000_000_000) return new Date(epoch * 1000);
+  return null;
+}
+
+function truthy(value: unknown): boolean {
+  const s = String(value ?? "").trim().toLowerCase();
+  return s === "true" || s === "yes" || s === "1" || s === "y";
+}
+
+/**
+ * Parse a Stripe export into normalised payments.
+ *
+ * Rows that cannot be understood are reported, not dropped silently and not
+ * allowed to abort the file: a finance import that half-works must say so.
+ */
+export function parseStripeExport(
+  buffer: Buffer,
+  filename: string,
+  opts: { minorUnits?: boolean } = {},
+): StripeParseResult {
+  const { headers, rows } = readSheet(buffer, filename);
+  const { found, metadataColumns, referenceColumns } = mapColumns(headers);
+
+  const missingColumns: string[] = [];
+  if (found.paymentId === undefined) missingColumns.push("payment / charge id");
+  if (found.status === undefined) missingColumns.push("status");
+  if (found.amount === undefined) missingColumns.push("amount");
+  if (found.currency === undefined) missingColumns.push("currency");
+  if (missingColumns.length > 0) {
+    throw new StripeImportError(
+      `This does not look like a Stripe export — no column for: ${missingColumns.join(", ")}. ` +
+      `Export "Payments" from the Stripe Dashboard with the default columns.`,
+    );
+  }
+
+  const payments: NormalisedProviderPayment[] = [];
+  const errors: StripeRowError[] = [];
+
+  rows.forEach((row, i) => {
+    const sheetRow = i + 2; // 1-based, header is row 1
+    const providerPaymentId = cellText(row, found.paymentId);
+    if (!providerPaymentId) { errors.push({ row: sheetRow, reason: "No payment / charge id" }); return; }
+
+    const amount = parseMoney(row[found.amount!], { minorUnits: opts.minorUnits });
+    if (amount === null) { errors.push({ row: sheetRow, reason: `Amount "${String(row[found.amount!] ?? "")}" is not a number` }); return; }
+
+    const currency = normaliseCurrency(row[found.currency!]);
+    if (!currency) { errors.push({ row: sheetRow, reason: `Currency "${String(row[found.currency!] ?? "")}" is not a 3-letter code` }); return; }
+
+    const rawStatus = cellText(row, found.status);
+    let status = normaliseProviderStatus(rawStatus);
+
+    const amountRefunded = parseMoney(row[found.amountRefunded ?? -1], { minorUnits: opts.minorUnits }) ?? "0.00";
+    const refundedFlag = found.refundedFlag !== undefined && truthy(row[found.refundedFlag]);
+    const disputed = found.disputed !== undefined
+      && (truthy(row[found.disputed]) || normaliseProviderStatus(cellText(row, found.disputed)) === "disputed");
+
+    // A refund or dispute recorded in its own column outranks the status column:
+    // Stripe's "Payments" export keeps Status = "Paid" on a refunded charge.
+    if (disputed) status = "disputed";
+    else if (Number(amountRefunded) > 0 || refundedFlag) {
+      status = Number(amountRefunded) > 0 && Number(amountRefunded) < Number(amount)
+        ? "partially_refunded" : "refunded";
+    }
+
+    // The ScholarShelf reference: dedicated reference column first, then any
+    // metadata column, then the description / statement descriptor.
+    const referenceCandidates: unknown[] = [
+      ...referenceColumns.map((c) => row[c]),
+      ...metadataColumns.map((c) => row[c]),
+      cellText(row, found.description),
+    ];
+    const reference = extractScholarShelfReference(...referenceCandidates)
+      // A dedicated reference column may hold the bare reference without the
+      // EDU- shape (e.g. a merchant's own numbering) — take it verbatim.
+      ?? (referenceColumns.length ? cellText(row, referenceColumns[0]) : null);
+
+    const raw: Record<string, unknown> = {};
+    headers.forEach((h, idx) => {
+      const v = row[idx];
+      if (v !== null && v !== undefined && v !== "") {
+        raw[h] = v instanceof Date ? v.toISOString() : String(v).slice(0, 500);
+      }
+    });
+
+    payments.push({
+      provider: "stripe" as PaymentProvider,
+      providerPaymentId,
+      providerChargeId: found.chargeId !== undefined && found.chargeId !== found.paymentId
+        ? cellText(row, found.chargeId) : null,
+      status,
+      rawStatus,
+      amount,
+      amountRefunded,
+      currency,
+      reference,
+      customerEmail: cellText(row, found.customerEmail)?.toLowerCase() ?? null,
+      customerName: cellText(row, found.customerName),
+      description: cellText(row, found.description),
+      disputed,
+      paidAt: parseDate(row[found.createdAt ?? -1]),
+      source: "spreadsheet_import",
+      sourceFilename: filename.slice(0, 200),
+      raw,
+    });
+  });
+
+  return { payments, errors, totalRows: rows.length, headers, missingColumns };
+}
+
+/**
+ * The spreadsheet as a `ProviderPaymentSource`.
+ *
+ * It holds an already-parsed batch rather than a file path, so the same
+ * interface fits an API-backed source that fetches over the network. This is
+ * the seam the future `StripeApiSource` slots into.
+ */
+export class StripeSpreadsheetSource implements ProviderPaymentSource {
+  readonly provider: PaymentProvider = "stripe";
+  readonly kind = "spreadsheet_import" as const;
+
+  constructor(private readonly parsed: NormalisedProviderPayment[]) {}
+
+  static fromFile(buffer: Buffer, filename: string, opts?: { minorUnits?: boolean }): { source: StripeSpreadsheetSource; result: StripeParseResult } {
+    const result = parseStripeExport(buffer, filename, opts);
+    return { source: new StripeSpreadsheetSource(result.payments), result };
+  }
+
+  async fetchPayments(_context?: { schoolId: string }): Promise<NormalisedProviderPayment[]> {
+    return this.parsed;
+  }
+}

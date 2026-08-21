@@ -7,11 +7,12 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import { storage } from "../storage.js";
+import { verifyOrder } from "../services/payment-verification/payment-verification-service.js";
 import {
   requireAuth, requireRole,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
   getActiveRequestContext, resolveRole,
-  auditLog, rateLimit,
+  auditLog, rateLimit, clientIp,
   routeParam, normalizeEmail, normalizeSchoolCode, extractSupportReason,
   PLATFORM_OWNER_ROLES, ADMIN_UI_ROLES, FINANCE_ROLES,
   BRANDING_VIEW_PERMISSION, BRANDING_MANAGE_PERMISSION,
@@ -39,7 +40,7 @@ import {
  * Keyed per authenticated parent (falls back to IP), sliding 15-minute window.
  */
 async function linkCodeRateLimited(req: Request, res: Response): Promise<boolean> {
-  const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+  const ip = clientIp(req);
   const key = `linkcode:${req.session.userId ?? ip}`;
   if (await rateLimit(key, 10, 15 * 60 * 1000)) {
     void auditLog(req, "link_code_rate_limited", `key:${key}`);
@@ -344,7 +345,30 @@ export function registerParentRoutes(app: Express): void {
         console.log(`[PAYMENT REF SUBMITTED] Parent: ${user.email}, Ref: ${cleanRef}, OrderRef: ${payment.paymentReference}`);
       }
 
-      res.json(payment);
+      // ── The order has now REACHED the finance stage ──
+      // Try to settle it automatically against imported provider payment data.
+      // On a confident match this performs the same approval the finance Confirm
+      // button performs and the order carries on down the existing workflow; on
+      // anything less it goes to the Finance Officer's investigation queue.
+      // Never fails the parent's submission: if verification errors, the order
+      // simply stays at `reference_submitted` for a human, which is the
+      // behaviour ScholarShelf had before automation existed.
+      let verified: Awaited<ReturnType<typeof verifyOrder>> | null = null;
+      if (payment.schoolId) {
+        try {
+          verified = await verifyOrder(paymentId, payment.schoolId, { actorUserId: req.session.userId! });
+        } catch (err) {
+          console.error("[VERIFY] automatic verification failed, leaving order for finance:", err);
+        }
+      }
+
+      const latest = verified?.payment ?? payment;
+      res.json({
+        ...latest,
+        automaticVerification: verified
+          ? { outcome: verified.outcome, reasonCode: verified.reasonCode }
+          : null,
+      });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }

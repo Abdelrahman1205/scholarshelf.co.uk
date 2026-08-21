@@ -27,6 +27,8 @@ export interface AuthUser {
   schoolName?: string | null;
   schoolCode?: string | null;
   availableContexts?: AvailableContext[];
+  /** Universal Test Account marker, set by the server from user_permissions. */
+  isTestAccount?: boolean;
   contextMetadata?: {
     assignedClassIds?: string[];
     linkedStudentIds?: string[];

@@ -5,8 +5,13 @@
  * accept-invite uses a slightly different mapping for school_admin (→ /admin/setup
  * instead of /admin) because new admins must complete onboarding first.
  */
+import { ALL_ACCESS_CONTEXT, ALL_ACCESS_DEFAULT_PATH } from "@shared/test-superuser";
+
 export function getRoleRoute(role: string, opts?: { isNewAccount?: boolean }): string {
   switch (role) {
+    // "All Features" mode on the Universal Test Account.
+    case ALL_ACCESS_CONTEXT:
+      return ALL_ACCESS_DEFAULT_PATH;
     case "owner":
     case "platform_admin":
       return "/admin/owner";
