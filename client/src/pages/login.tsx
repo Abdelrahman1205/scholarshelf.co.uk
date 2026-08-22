@@ -88,19 +88,33 @@ export default function LoginPage() {
     } catch {}
   }
 
+  // Read the STATUS, not the message text.
+  //
+  // throwIfResNotOk() starts with `${status}: ${body}` but replaces it with the
+  // JSON body's `message` field whenever the server sends one — and every auth
+  // response does. So the status code is never present in `error.message`, and
+  // matching on "401"/"429" silently never fired: a wrong password, a missing
+  // school code and a genuine 500 all fell through to the same useless
+  // "Sign in failed. Please try again." The status is on the error object.
+  const statusOf = (e: unknown) => (e as { status?: number } | null)?.status;
+
   const mfaErrorMessage = verifyMfaError
-    ? verifyMfaError.message.includes("429")
+    ? statusOf(verifyMfaError) === 429
       ? "Too many attempts. Please sign in again."
       : "Invalid code. Please try again."
     : null;
 
   const errorMessage = loginError
-    ? loginError.message.includes("401")
+    ? statusOf(loginError) === 401
       ? loginError.message.toLowerCase().includes("school code")
-        ? "Invalid school code for this account."
+        ? "Enter your school code — this account belongs to a school."
         : "Incorrect username or password."
-      : loginError.message.includes("429")
-        ? "Too many attempts. Please wait a moment."
+      : (statusOf(loginError) ?? 500) < 500
+        // 429 (rate limited), 403 (school suspended), 400 (malformed) — the
+        // server's own wording is the specific one, so show it.
+        ? loginError.message
+        // 5xx and network failures: the server's "Login failed" says nothing
+        // the user can act on, so keep the neutral wording.
         : "Sign in failed. Please try again."
     : null;
 
