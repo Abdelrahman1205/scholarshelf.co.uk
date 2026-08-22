@@ -4,8 +4,14 @@
  * Creates (or refreshes) the Universal Test Account — the development login that
  * can view ScholarShelf as any role without logging out.
  *
- *   npm run seed:test-account
- *   npm run seed:test-account -- --school DEMO-001 --username qa --password '…'
+ * RUN IT WITH npx, NOT npm:
+ *
+ *   npx tsx script/seed-test-account.ts
+ *   npx tsx script/seed-test-account.ts --username qa --password '…' --school DEMO-001
+ *
+ * `npm run seed:test-account -- --username x` does NOT work: npm swallows
+ * --username/--password/--force as its own options and the script receives only
+ * the bare values. npx passes arguments through untouched.
  *
  * The account is an ordinary user row plus ONE row in `user_permissions`
  * (`TEST_SUPERUSER`). There is no new table and no migration: the flag reuses
@@ -19,6 +25,9 @@
  *     database with a guessable login.
  *   · Prints the password only when it generated one.
  */
+// Loads .env, exactly as server/app.ts and the other scripts in this folder do.
+// Without it this script sees no DATABASE_URL even though .env defines one.
+import "dotenv/config";
 import { Client } from "pg";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -44,7 +53,14 @@ async function main() {
   }
 
   const url = process.env.DATABASE_URL;
-  if (!url) { console.error("✗ DATABASE_URL is not set."); process.exit(1); }
+  if (!url) {
+    console.error(
+      "✗ DATABASE_URL is not set.\n" +
+      "  Expected it in .env (the same file the app and drizzle-kit read),\n" +
+      "  or pass it inline:  $env:DATABASE_URL='…'; npx tsx script/seed-test-account.ts",
+    );
+    process.exit(1);
+  }
 
   const username = arg("username", "testuser")!;
 

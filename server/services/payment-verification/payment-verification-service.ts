@@ -51,6 +51,38 @@ export interface VerificationRunResult {
   changed: boolean;
 }
 
+
+/**
+ * True when a query failed because this feature's tables are not there yet.
+ *
+ * Deploy order is a real hazard: the code ships from git, the tables ship from a
+ * migration, and nothing guarantees the migration ran first. Rather than let a
+ * missing table turn the whole Payments page into a 500, the verification data
+ * is treated as ADDITIVE — absent, not fatal — until the migration lands.
+ *
+ * Deliberately narrow: only Postgres 42P01 (undefined_table). Every other
+ * database error still propagates, because swallowing those would hide real
+ * faults.
+ */
+function isMissingTable(e: unknown): boolean {
+  const code = (e as any)?.code ?? (e as any)?.cause?.code;
+  if (code === "42P01") return true;
+  const msg = String((e as any)?.message ?? "");
+  return /relation "(provider_payments|payment_verification_attempts)" does not exist/i.test(msg);
+}
+
+/** Log once per process per table, so a missing migration is loud but not spam. */
+const _warnedMissing = new Set<string>();
+function warnMissing(where: string): void {
+  if (_warnedMissing.has(where)) return;
+  _warnedMissing.add(where);
+  console.warn(
+    `[VERIFICATION] ${where}: payment-verification tables are missing. ` +
+    `Run migrations/005_payment_verification.sql (or npm run db:push). ` +
+    `Automatic verification is inactive until then; the manual finance workflow is unaffected.`,
+  );
+}
+
 // ── Audit ───────────────────────────────────────────────────────────────────
 
 /**
@@ -70,7 +102,8 @@ export async function recordAttempt(input: {
   evidence?: Record<string, unknown> | null;
   actorUserId?: string | null;
 }): Promise<void> {
-  await getDb().insert(paymentVerificationAttempts).values({
+  try {
+    await getDb().insert(paymentVerificationAttempts).values({
     schoolId: input.schoolId,
     paymentId: input.paymentId,
     outcome: input.outcome,
@@ -80,8 +113,12 @@ export async function recordAttempt(input: {
     matchedProviderPaymentId: input.matchedProviderPaymentId ?? null,
     candidateCount: input.candidateCount ?? 0,
     evidence: input.evidence ? JSON.stringify(input.evidence).slice(0, 20000) : null,
-    actorUserId: input.actorUserId ?? null,
-  });
+      actorUserId: input.actorUserId ?? null,
+    });
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    warnMissing("recordAttempt");
+  }
 }
 
 /** The most recent attempt for each of the given orders, for the finance UI. */
@@ -91,24 +128,35 @@ export async function latestAttemptsFor(
 ): Promise<Map<string, PaymentVerificationAttempt>> {
   const out = new Map<string, PaymentVerificationAttempt>();
   if (paymentIds.length === 0) return out;
-  const rows: PaymentVerificationAttempt[] = await getDb()
-    .select().from(paymentVerificationAttempts)
-    .where(eq(paymentVerificationAttempts.schoolId, schoolId))
-    .orderBy(desc(paymentVerificationAttempts.createdAt));
-  for (const r of rows) {
-    if (!out.has(r.paymentId)) out.set(r.paymentId, r);
+  try {
+    const rows: PaymentVerificationAttempt[] = await getDb()
+      .select().from(paymentVerificationAttempts)
+      .where(eq(paymentVerificationAttempts.schoolId, schoolId))
+      .orderBy(desc(paymentVerificationAttempts.createdAt));
+    for (const r of rows) {
+      if (!out.has(r.paymentId)) out.set(r.paymentId, r);
+    }
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    warnMissing("latestAttemptsFor");
   }
   return out;
 }
 
 /** Full history for one order, oldest first — never truncated or overwritten. */
 export async function attemptHistory(schoolId: string, paymentId: string): Promise<PaymentVerificationAttempt[]> {
-  return getDb().select().from(paymentVerificationAttempts)
+  try {
+    return await getDb().select().from(paymentVerificationAttempts)
     .where(and(
       eq(paymentVerificationAttempts.schoolId, schoolId),
       eq(paymentVerificationAttempts.paymentId, paymentId),
     ))
     .orderBy(paymentVerificationAttempts.createdAt);
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    warnMissing("attemptHistory");
+    return [];
+  }
 }
 
 // ── The finance stage ───────────────────────────────────────────────────────
@@ -152,12 +200,22 @@ export async function verifyOrder(
     };
   }
 
-  const stats = await providerPaymentStats(db, schoolId);
-  const candidates: ProviderPayment[] = await findCandidatePayments(db, schoolId, {
-    scholarShelfReference: order.paymentReference,
-    externalReference: order.paymentReferenceNumber,
-    customerEmail: order.parentIdentifier,
-  });
+  // If the tables are not there yet, there is simply no provider data — which
+  // the matcher already handles as "send it to a Finance Officer". The order is
+  // never auto-verified on missing data, and the page never 500s.
+  let stats = { total: 0, byStatus: {} as Record<string, number> };
+  let candidates: ProviderPayment[] = [];
+  try {
+    stats = await providerPaymentStats(db, schoolId);
+    candidates = await findCandidatePayments(db, schoolId, {
+      scholarShelfReference: order.paymentReference,
+      externalReference: order.paymentReferenceNumber,
+      customerEmail: order.parentIdentifier,
+    });
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    warnMissing("verifyOrder");
+  }
 
   const decision: MatchDecision = matchPayment(toOrder(order), candidates, {
     providerDataPresent: stats.total > 0,
@@ -316,12 +374,19 @@ export async function verifyPendingOrders(
  */
 export async function flagReversedPayments(schoolId: string): Promise<{ flagged: number; details: Array<{ paymentId: string; reason: string }> }> {
   const db = getDb();
-  const attempts: PaymentVerificationAttempt[] = await db.select()
-    .from(paymentVerificationAttempts)
-    .where(and(
-      eq(paymentVerificationAttempts.schoolId, schoolId),
-      eq(paymentVerificationAttempts.outcome, "verified"),
-    ));
+  let attempts: PaymentVerificationAttempt[] = [];
+  try {
+    attempts = await db.select()
+      .from(paymentVerificationAttempts)
+      .where(and(
+        eq(paymentVerificationAttempts.schoolId, schoolId),
+        eq(paymentVerificationAttempts.outcome, "verified"),
+      ));
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    warnMissing("flagReversedPayments");
+    return { flagged: 0, details: [] };
+  }
 
   const details: Array<{ paymentId: string; reason: string }> = [];
   const seen = new Set<string>();

@@ -167,6 +167,12 @@ export function registerPaymentRoutes(app: Express): void {
       if (!sid) return res.status(400).json({ message: "School context required" });
       res.json(await providerPaymentStats(getDb(), sid));
     } catch (e: any) {
+      // Before the migration runs there is no provider table — report "none
+      // held" rather than an error, so the finance screen still renders and
+      // tells the user to import.
+      if (e?.code === "42P01" || /relation "provider_payments" does not exist/i.test(String(e?.message))) {
+        return res.json({ total: 0, byStatus: {}, tablesMissing: true });
+      }
       res.status(500).json({ message: e.message });
     }
   });
