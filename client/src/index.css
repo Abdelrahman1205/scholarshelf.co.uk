@@ -27,7 +27,21 @@
   --color-accent-foreground: hsl(var(--accent-foreground));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+    /* Semantic status colours. Use these instead of reaching for emerald or amber
+     directly: `text-success`, `bg-success-bg`, `border-warning`, and so on.
+     A status the whole product agrees on is what makes distribution day scannable. */
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-success-bg: hsl(var(--success-bg));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-warning-bg: hsl(var(--warning-bg));
+
   --color-border: hsl(var(--border));
+  /* For control boundaries that must meet WCAG 1.4.11 (3:1): inputs, selects,
+     toggles — anything whose outline is the only cue that it is interactive. */
+  --color-border-strong: hsl(var(--border-strong));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
 
@@ -92,9 +106,35 @@
   --destructive: 0 75% 42%;
   --destructive-foreground: 0 0% 100%;
 
-  /* Borders — outline-variant #c5c6cd, softened */
-  --border: 233 9% 85%;
-  --input: 0 0% 100%;
+  /* Success and warning.
+     These did not exist. The design document promised "Emerald for confirmed
+     distributions, Amber for pending", but only --destructive was ever defined,
+      so 357 ad-hoc emerald, amber, and red Tailwind classes grew across the UI to
+     fill the gap — which is why "Present", "Received" and "In Stock" can end up
+     looking identical on the teacher's distribution screen.
+     Foreground values are >=5:1 on a white card; the -bg values are for pills. */
+  --success: 152 62% 30%;              /* #1d7c50 — 5.18:1 on white */
+  --success-foreground: 0 0% 100%;
+  --success-bg: 152 62% 94%;           /* #e6f9f0 — pill fill */
+  --warning: 32 88% 34%;               /* #a35c0a — 5.13:1 on white */
+  --warning-foreground: 0 0% 100%;
+  --warning-bg: 32 88% 94%;            /* #fdf1e2 — pill fill */
+
+  /* Borders.
+     --border was 233 9% 85% (#d5d6dc), which is 1.45:1 against a white card.
+     WCAG 1.4.11 asks 3:1 for anything that carries meaning, and at 1.45 a card
+     simply has no perceivable edge for a low-vision user. Raised to 2.09:1 —
+     visible without turning every card into a box — and --border-strong added
+     at 3.29:1 for the places the rule genuinely bites: inputs, selects and any
+     control whose boundary is the only thing telling you it is a control. */
+  --border: 233 9% 72%;                /* #b1b3be — 2.09:1 on white */
+  --border-strong: 233 9% 58%;         /* #8a8d9e — 3.29:1 on white */
+  /* --input is the BORDER colour for inputs, selects and textareas (they use
+     `border-input`). It was 0 0% 100% — pure white — so every form control in
+     the product had a white border on a white card: 1:1 contrast, i.e. no
+     visible boundary at all. This is precisely the case WCAG 1.4.11 exists for,
+     because the outline is the only thing telling you the control is a control. */
+  --input: 233 9% 58%;                 /* #8a8d9e — 3.29:1 on white */
   --ring: 217 62% 9%;
 
   /* Design radius — rounded-xl cards */
@@ -128,8 +168,20 @@
   --accent-foreground: 0 0% 100%;
   --destructive: 0 62% 52%;
   --destructive-foreground: 0 0% 100%;
-  --border: 222 30% 18%;
-  --input: 222 30% 14%;
+
+  /* Dark-theme semantic colours — same roles, inverted weights. */
+  --success: 152 55% 62%;              /* #69d3a2 — 9.7:1 on the dark card */
+  --success-foreground: 152 62% 12%;
+  --success-bg: 152 45% 16%;
+  --warning: 32 85% 62%;               /* #f0a44c — 8.6:1 on the dark card */
+  --warning-foreground: 32 88% 12%;
+  --warning-bg: 32 60% 16%;
+
+  --border: 222 30% 32%;               /* was 18% (1.22:1) — now 1.97:1 */
+  --border-strong: 222 30% 44%;
+  /* Was 222 30% 14% — darker than the card it sits on, so form controls had no
+     visible boundary in dark mode either. Matched to --border-strong. */
+  --input: 222 30% 44%;
   --ring: 243 80% 66%;
 
   --sidebar: 222 47% 7%;

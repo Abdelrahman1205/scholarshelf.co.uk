@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/format";
 
 // ─── REPORTS (Stitch redesign) ──────────────────────────────────────────────
 function ReportsSection() {
@@ -52,7 +53,7 @@ function ReportsSection() {
           <BarChart2 className="h-6 w-6" /> School Reports
         </h1>
         <p className="text-muted-foreground mt-1">
-          Operational metrics and data summaries — generated {new Date(report.generatedAt).toLocaleString()}
+          Operational metrics and data summaries — generated {formatDateTime(report.generatedAt)}
         </p>
       </div>
 

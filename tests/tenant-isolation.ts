@@ -64,7 +64,13 @@ async function signIn(u: { user: string; pass: string; code: string }): Promise<
   const res = await fetch(`${BASE}/api/auth/sign-in`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: u.user, password: u.pass, schoolCode: u.code }),
+    // An empty schoolCode is rejected by the endpoint's validation, which is NOT
+    // the same thing as an account that has no school — omit the field entirely
+    // so the school-less probe exercises the real sign-in path.
+    body: JSON.stringify({
+      username: u.user, password: u.pass,
+      ...(u.code ? { schoolCode: u.code } : {}),
+    }),
     redirect: "manual",
   });
   if (res.status !== 200) return null;
@@ -164,6 +170,136 @@ async function main() {
       fail(`${r.label}: collections overlap`, `${overlap.length} id(s) visible to BOTH schools, e.g. ${overlap[0]}`);
     } else {
       pass(`${r.label}: collections disjoint (${idsA.size} vs ${idsB.size})`);
+    }
+  }
+
+  // ── Findings from the 22 August restructuring report ─────────────────────
+  //
+  // The probes above are generic: list a resource, request it as the other
+  // school. They cannot reach the specific defects below, each of which was a
+  // live cross-tenant path that returned 200 or 201 on a foreign record.
+
+  console.log("\n── S2 · linking-code IDOR ──");
+  {
+    const listB = await req("/api/students", cookieB);
+    const studentB = firstId(listB.body);
+    if (!studentB) {
+      fail("S2 probe", "school B has no students — cannot test");
+    } else {
+      const minted = await req(`/api/students/${studentB}/linking-code`, cookieA, {
+        method: "POST",
+        body: JSON.stringify({ parentEmail: "attacker@example.com" }),
+      });
+      if (minted.status === 201 || minted.body?.code) {
+        fail("S2: A minted a parent credential for B's child",
+          `POST returned ${minted.status}${minted.body?.code ? " WITH A LIVE CODE IN THE BODY" : ""}`);
+      } else {
+        pass(`S2: linking code refused for another school's child (${minted.status})`);
+      }
+    }
+  }
+
+  console.log("\n── S4 · book-level items across tenants ──");
+  {
+    const levelsB = await req("/api/book-levels", cookieB);
+    const levelB = firstId(levelsB.body);
+    if (!levelB) {
+      fail("S4 probe", "school B has no book levels — cannot test");
+    } else {
+      const read = await req(`/api/book-levels/${levelB}/items`, cookieA);
+      if (read.status === 200) fail("S4: A read B's bundle contents", `GET returned 200`);
+      else pass(`S4: bundle contents not readable across tenants (${read.status})`);
+
+      const booksA = await req("/api/books", cookieA);
+      const bookA = firstId(booksA.body);
+      const write = await req(`/api/book-levels/${levelB}/items`, cookieA, {
+        method: "POST",
+        body: JSON.stringify({ bookId: bookA, quantity: 1 }),
+      });
+      if (write.status === 201) {
+        fail("S4: A injected a book into B's bundle",
+          "POST returned 201 — this changes what B's parents are billed");
+      } else {
+        pass(`S4: cannot add items to another school's bundle (${write.status})`);
+      }
+    }
+  }
+
+  console.log("\n── S5 · student book-level overrides ──");
+  {
+    const listB = await req("/api/students", cookieB);
+    const studentB = firstId(listB.body);
+    const levelsA = await req("/api/book-levels", cookieA);
+    const levelA = firstId(levelsA.body);
+    if (!studentB || !levelA) {
+      fail("S5 probe", "need a student in B and a book level in A");
+    } else {
+      const set = await req(`/api/students/${studentB}/book-level-override`, cookieA, {
+        method: "PUT",
+        body: JSON.stringify({ bookLevelId: levelA }),
+      });
+      if (set.status === 200) {
+        fail("S5: A rewrote which books B's child is billed for", "PUT returned 200");
+      } else {
+        pass(`S5: override refused on another school's child (${set.status})`);
+      }
+
+      const cleared = await req(`/api/students/${studentB}/book-level-override`, cookieA, {
+        method: "DELETE",
+      });
+      if (cleared.status === 200) fail("S5: A deleted B's child's override", "DELETE returned 200");
+      else pass(`S5: override delete refused across tenants (${cleared.status})`);
+    }
+  }
+
+  console.log("\n── S7 · mass-assignment on user update ──");
+  {
+    const meA = await req("/api/auth/me", cookieA);
+    const myId = meA.body?.user?.id ?? meA.body?.id;
+    const schoolsB = await req("/api/students", cookieB);
+    void schoolsB;
+    if (!myId) {
+      fail("S7 probe", "could not read A's own user id");
+    } else {
+      const moved = await req(`/api/users/${myId}`, cookieA, {
+        method: "PATCH",
+        body: JSON.stringify({ schoolId: "some-other-school-id", status: "active" }),
+      });
+      const after = await req(`/api/users/${myId}`, cookieA);
+      const stillMine = after.status === 200;
+      if (moved.status === 200 && !stillMine) {
+        fail("S7: PATCH moved a user into another tenant", "schoolId was writable");
+      } else {
+        pass(`S7: schoolId is not writable through PATCH /api/users/:id (${moved.status})`);
+      }
+    }
+  }
+
+  console.log("\n── S1 · a staff session with no school ──");
+  {
+    // Seeded by script/seed-school-b.ts. Such an account reaches every storage
+    // method with schoolId null, which schoolFilter renders as "no WHERE clause"
+    // — i.e. every tenant. It must not be able to read anything at all.
+    const orphan = await signIn({
+      user: process.env.ORPHAN_ADMIN || "orphanadmin",
+      pass: process.env.ORPHAN_PASSWORD || "admin123",
+      code: "",
+    });
+    if (!orphan) {
+      // Sign-in itself is not the gate — the report is explicit that such an
+      // account signs in normally, because the school-code prompt is wrapped in
+      // `if (user.schoolId)`. If sign-in fails here the fixture is missing, and
+      // a passing probe would be vacuous.
+      fail("S1 probe", "could not sign in as the school-less fixture — run npm run seed:school-b");
+    } else {
+      const listed = await req("/api/students", orphan);
+      if (listed.status === 200) {
+        const n = Array.isArray(listed.body) ? listed.body.length : "?";
+        fail("S1: school-less staff account read the whole platform",
+          `GET /api/students returned 200 with ${n} pupils across all tenants`);
+      } else {
+        pass(`S1: school-less staff session refused (${listed.status})`);
+      }
     }
   }
 

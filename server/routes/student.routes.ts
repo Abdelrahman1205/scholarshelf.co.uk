@@ -5,7 +5,7 @@
  * Extracted from routes.ts monolith.
  */
 import type { Express, Request, Response, NextFunction } from "express";
-import { storage } from "../storage.js";
+import { storage, NotFoundError } from "../storage.js";
 import {
   requireAuth, requireRole,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
@@ -30,6 +30,24 @@ import {
 } from "../middleware/auth.js";
 
 import { sendParentCodeEmail, isResendConfigured } from "../email.js";
+
+/**
+ * Log fallback for a failed linking-code email.
+ *
+ * A linking code is a working credential for a named child, so outside
+ * development we log that delivery failed and to whom — never the code itself.
+ * An operator who needs the code can rotate it; nobody needs it out of a log.
+ */
+function logLinkingCodeFallback(parentEmail: string, studentName: string, code: string): void {
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      `[LINKING CODE] Email delivery failed for ${parentEmail}. ` +
+      "Code withheld from logs — rotate it from the admin UI to issue a fresh one.",
+    );
+    return;
+  }
+  console.log(`[LINKING CODE] Code for ${parentEmail} (student: ${studentName}): ${code}`);
+}
 
 export function registerStudentRoutes(app: Express): void {
   app.get("/api/linking-codes", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
@@ -56,11 +74,23 @@ export function registerStudentRoutes(app: Express): void {
       const expiresAt = new Date();
       expiresAt.setMonth(expiresAt.getMonth() + 3);
 
-      const student = await storage.getStudentById(routeParam(req.params.id), sid);
-      const studentName = student?.name || "your child";
+      // SECURITY (S2): storage.createLinkingCode is a bare insert with no
+      // ownership check, and useLinkingCode never checks that the redeeming
+      // parent belongs to the student's school. Without this guard, an admin at
+      // school A could POST another school's student id, read the live code out
+      // of the 201 response body, redeem it, and hold a permanent parent link to
+      // another school's child — their books, allocations and payment history.
+      // getStudentById is already school-scoped; the only thing missing was
+      // refusing to continue when it finds nothing.
+      const studentId = routeParam(req.params.id);
+      const student = await storage.getStudentById(studentId, sid);
+      if (!student) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+      const studentName = student.name || "your child";
 
       const linkingCode = await storage.createLinkingCode({
-        studentId: routeParam(req.params.id),
+        studentId,
         code,
         parentEmail,
         expiresAt,
@@ -71,7 +101,12 @@ export function registerStudentRoutes(app: Express): void {
       if (parentEmail) {
         const sent = await sendParentCodeEmail(parentEmail, studentName, code, expiresAt);
         if (!sent) {
-          console.log(`[LINKING CODE] Code for ${parentEmail} (student: ${studentName}): ${code}`);
+          // SECURITY (S10): the code is a working credential for a named child.
+          // Logging it puts a live credential plus a pupil's name into the
+          // platform log store, which is readable by a wider group than the
+          // database. The dev fallback is kept because it is genuinely useful
+          // locally; in production the operator gets the failure, not the secret.
+          logLinkingCodeFallback(parentEmail, studentName, code);
           if (!isResendConfigured()) {
             console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for linking codes.");
           }
@@ -106,7 +141,7 @@ export function registerStudentRoutes(app: Express): void {
       // Email the new code to the parent
       if (parentEmail) {
         const sent = await sendParentCodeEmail(parentEmail.trim(), student.name ?? "your child", newCode.code, expiresAt);
-        if (!sent) console.log(`[ROTATE CODE] New code for ${parentEmail}: ${newCode.code}`);
+        if (!sent) logLinkingCodeFallback(parentEmail.trim(), student.name ?? "your child", newCode.code);
       }
 
       res.status(201).json(newCode);
@@ -228,9 +263,11 @@ export function registerStudentRoutes(app: Express): void {
   app.get("/api/students/:id/book-level-override", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
-      const override = await storage.getStudentBookLevelOverride(String(req.params.id));
+      // SECURITY (S5): sid was computed here and then never used.
+      const override = await storage.getStudentBookLevelOverride(String(req.params.id), sid);
       res.json(override ?? null);
     } catch (e: any) {
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
       res.status(500).json({ message: e.message });
     }
   });
@@ -245,6 +282,7 @@ export function registerStudentRoutes(app: Express): void {
       await auditLog(req, "student_book_level_override_set", "student:" + req.params.id, { bookLevelId });
       res.json(result);
     } catch (e: any) {
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
       res.status(400).json({ message: e.message });
     }
   });
@@ -252,10 +290,13 @@ export function registerStudentRoutes(app: Express): void {
   // DELETE override (revert to class default)
   app.delete("/api/students/:id/book-level-override", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
-      await storage.deleteStudentBookLevelOverride(String(req.params.id));
+      // SECURITY (S5): this took no school id at all — an unconditional delete
+      // on any child in any school.
+      await storage.deleteStudentBookLevelOverride(String(req.params.id), sessionSchoolId(req));
       await auditLog(req, "student_book_level_override_cleared", "student:" + req.params.id, {});
       res.json({ ok: true });
     } catch (e: any) {
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
       res.status(400).json({ message: e.message });
     }
   });

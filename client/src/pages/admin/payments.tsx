@@ -11,6 +11,7 @@ import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./shared";
+import { formatDate, formatDateTime } from "@/lib/format";
 
 // ─── PAYMENTS — Review & Collection Lifecycle (ScholarShelf design) ─────────
 
@@ -71,7 +72,7 @@ function PaymentsSection() {
       ...filteredPayments.map((p: any) => [
         p.paymentReference ?? "", p.studentName ?? "", p.className ?? "", p.parentIdentifier ?? "",
         parseFloat(p.totalAmount || "0").toFixed(2), p.paymentReferenceNumber ?? "", p.status ?? "",
-        p.paymentReferenceSubmittedAt ? new Date(p.paymentReferenceSubmittedAt).toLocaleDateString() : "",
+        p.paymentReferenceSubmittedAt ? formatDate(p.paymentReferenceSubmittedAt) : "",
       ]),
     ];
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -201,7 +202,7 @@ function PaymentsSection() {
                 </div>
                 {p.paymentReferenceSubmittedAt && (
                   <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
-                    <MaterialSymbol name="account_balance" className="text-sm" /> Reference submitted {new Date(p.paymentReferenceSubmittedAt).toLocaleString()}
+                    <MaterialSymbol name="account_balance" className="text-sm" /> Reference submitted {formatDateTime(p.paymentReferenceSubmittedAt)}
                   </div>
                 )}
               </div>
@@ -256,7 +257,7 @@ function PaymentsSection() {
                 {p.paymentReviewedAt && (
                   <div className="rounded-lg border border-dashed border-border p-3 bg-surface-container-low text-sm space-y-1">
                     <div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground flex items-center gap-1"><MaterialSymbol name="history" className="text-sm" /> Review Notes</div>
-                    <p>Reviewed {new Date(p.paymentReviewedAt).toLocaleString()}{p.paymentReviewedBy && <span className="text-muted-foreground"> by {p.paymentReviewedBy}</span>}</p>
+                    <p>Reviewed {formatDateTime(p.paymentReviewedAt)}{p.paymentReviewedBy && <span className="text-muted-foreground"> by {p.paymentReviewedBy}</span>}</p>
                     {p.paymentReviewNote && <p><span className="text-muted-foreground">Note:</span> {p.paymentReviewNote}</p>}
                   </div>
                 )}

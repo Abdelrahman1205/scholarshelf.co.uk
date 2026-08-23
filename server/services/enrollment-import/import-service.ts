@@ -23,8 +23,9 @@
  * Everything the database sees goes through Drizzle's parameterised query
  * builder — no spreadsheet value is ever concatenated into SQL.
  */
-import { and, eq } from "drizzle-orm";
-import { families, guardians, students, familyStudents, classes } from "../../../shared/schema.js";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { randomBytes } from "crypto";
+import { families, guardians, students, familyStudents, classes, childLinkingCodes } from "../../../shared/schema.js";
 import { academicYearFor } from "../../../shared/academic-year.js";
 import {
   autoMapHeaders, IMPORT_FIELD_BY_KEY, type ImportFieldKey,
@@ -44,6 +45,24 @@ import {
 // ── Public result shapes (also the API response shapes) ─────────────────────
 
 export type RowAction = "create" | "update" | "duplicate" | "error";
+
+/**
+ * One parent invitation the commit created but has NOT sent.
+ *
+ * Emails are deliberately not sent inside the transaction: a send is slow, and
+ * an email cannot be un-sent if the transaction later rolls back. The commit
+ * writes the linking-code rows atomically with the import and hands the caller
+ * this list to deliver afterwards.
+ */
+export interface PendingInvitation {
+  familyId: string;
+  familyName: string;
+  guardianId: string;
+  guardianName: string;
+  email: string;
+  code: string;
+  expiresAt: Date;
+}
 
 export interface PreviewRow {
   sheetRow: number;
@@ -114,6 +133,11 @@ export interface CommitResult {
   guardiansCreated: number;
   errorCount: number;
   failedRows: Array<{ sheetRow: number; studentName: string; problem: string }>;
+  /**
+   * Linking codes written for guardians who can now be invited. The caller is
+   * responsible for actually sending these — see PendingInvitation.
+   */
+  pendingInvitations: PendingInvitation[];
 }
 
 // ── Shared analysis core (used by both entry points) ────────────────────────
@@ -387,6 +411,32 @@ export async function analyzeImport(opts: {
 const genFamilyCode = () => `FAM-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 const genStudentCode = () => `STU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
+/**
+ * A linking code is a credential: it lets whoever holds it attach a parent
+ * account to a family's children. Math.random() is predictable and must never
+ * generate one — this mirrors generateLinkingCode() in middleware/auth.ts.
+ * Ambiguous characters (I, O, 0, 1) are excluded because parents read these
+ * off a screen and type them on a phone.
+ */
+const LINK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function genLinkingCode(): string {
+  const bytes = randomBytes(6);
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    if (i === 3) code += "-";
+    code += LINK_CODE_ALPHABET[bytes[i] % LINK_CODE_ALPHABET.length];
+  }
+  return code;
+}
+
+/** Loose but sufficient: the real validation is that Resend accepts it. */
+function looksLikeEmail(value: string | null | undefined): value is string {
+  return !!value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+/** Parent invitations expire after 30 days, matching manual family enrolment. */
+const INVITE_TTL_MS = 30 * 86_400_000;
+
 export async function commitImport(opts: {
   /** A transaction-capable Drizzle handle — see getTxDb(). */
   txDb: any;
@@ -438,6 +488,8 @@ export async function commitImport(opts: {
 
     let created = 0, updated = 0, skipped = 0, familiesCreated = 0, guardiansCreated = 0;
     const failedRows: CommitResult["failedRows"] = [];
+    /** Families this import created or wrote a student into — the invite candidates. */
+    const touchedFamilyIds = new Set<string>();
 
     for (const a of analyzed) {
       if (a.action === "error") {
@@ -496,6 +548,7 @@ export async function commitImport(opts: {
         }
       }
       familyByGroup.set(a.familyKey, familyId!);
+      touchedFamilyIds.add(familyId!);
 
       // ── Guardian: attach once per family, never duplicated across siblings ──
       if (n.guardian.fullName) {
@@ -571,6 +624,87 @@ export async function commitImport(opts: {
       }
     }
 
+    // ── Parent invitations ────────────────────────────────────────────────
+    //
+    // This is the step whose absence made the importer unusable for a real
+    // school. Manual enrolment issues a family linking code and emails it;
+    // commitImport did not, so importing 300 families produced 300 households
+    // in which NOT ONE parent could log in. The only remedy was clicking the
+    // per-guardian invite button three hundred times.
+    //
+    // One code per family, matching manual enrolment: the code links a parent
+    // account to the household, so siblings do not need one each.
+    const pendingInvitations: PendingInvitation[] = [];
+    if (touchedFamilyIds.size > 0) {
+      const familyIds = [...touchedFamilyIds];
+
+      const familyRows = await trx.select({
+        id: families.id, name: families.name, householdName: families.householdName,
+      }).from(families).where(inArray(families.id, familyIds));
+      const familyNameById = new Map<string, string>(
+        familyRows.map((f: any) => [f.id, f.householdName || f.name || "your family"]),
+      );
+
+      const guardianRows = await trx.select({
+        id: guardians.id, familyId: guardians.familyId, fullName: guardians.fullName,
+        email: guardians.email, isPrimaryContact: guardians.isPrimaryContact,
+        portalAccessStatus: guardians.portalAccessStatus, userId: guardians.userId,
+      }).from(guardians).where(inArray(guardians.familyId, familyIds));
+
+      // A family that already has a live, unredeemed code does not need another.
+      // Re-running an import is a normal thing to do — it must not re-issue
+      // credentials, or the code in the parent's inbox stops working.
+      const now = new Date();
+      const existingCodes = await trx.select({
+        familyId: childLinkingCodes.familyId,
+        isUsed: childLinkingCodes.isUsed,
+        expiresAt: childLinkingCodes.expiresAt,
+      }).from(childLinkingCodes).where(inArray(childLinkingCodes.familyId, familyIds));
+
+      const familiesWithLiveCode = new Set<string>(
+        existingCodes
+          .filter((c: any) => !c.isUsed && (!c.expiresAt || new Date(c.expiresAt) > now))
+          .map((c: any) => c.familyId)
+          .filter(Boolean),
+      );
+
+      const byFamily = new Map<string, any[]>();
+      for (const g of guardianRows) {
+        byFamily.set(g.familyId, [...(byFamily.get(g.familyId) || []), g]);
+      }
+
+      for (const familyId of familyIds) {
+        if (familiesWithLiveCode.has(familyId)) continue;
+        const candidates = (byFamily.get(familyId) || []).filter((g: any) => looksLikeEmail(g.email));
+        // Already has a portal account, or was invited earlier — leave alone.
+        if (candidates.some((g: any) => g.userId || g.portalAccessStatus === "active")) continue;
+        const guardian = candidates.find((g: any) => g.isPrimaryContact) || candidates[0];
+        if (!guardian) continue;   // no email on file: the admin invites by hand
+
+        const email = String(guardian.email).trim().toLowerCase();
+        const code = genLinkingCode();
+        const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+
+        await trx.insert(childLinkingCodes).values({
+          studentId: null, familyId, code, parentEmail: email,
+          expiresAt, schoolId: opts.schoolId,
+        });
+        await trx.update(guardians)
+          .set({ portalAccessStatus: "invited", updatedAt: new Date() })
+          .where(eq(guardians.id, guardian.id));
+
+        pendingInvitations.push({
+          familyId,
+          familyName: familyNameById.get(familyId) || "your family",
+          guardianId: guardian.id,
+          guardianName: guardian.fullName || "Parent/Guardian",
+          email,
+          code,
+          expiresAt,
+        });
+      }
+    }
+
     return {
       processed: analyzed.length,
       created,
@@ -582,6 +716,7 @@ export async function commitImport(opts: {
       guardiansCreated,
       errorCount: failedRows.filter((f) => !f.problem.startsWith("Duplicate of row")).length,
       failedRows,
+      pendingInvitations,
     } satisfies CommitResult;
   });
 }

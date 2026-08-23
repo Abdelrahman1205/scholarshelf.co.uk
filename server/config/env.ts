@@ -38,6 +38,13 @@ const schema = z.object({
     ? z.string().min(16, "PAYMENT_WEBHOOK_SECRET must be set in production")
     : z.string().optional().default(""),
 
+  // ── BytHub console ────────────────────────────────────────────────────
+  // Separate least-privilege connection strings. Absent = that console tier is
+  // simply unavailable, which is the correct failure mode: no silent fallback
+  // onto the application's own high-privilege connection.
+  CONSOLE_RO_DATABASE_URL: z.string().url().optional(),
+  CONSOLE_RW_DATABASE_URL: z.string().url().optional(),
+
   // ── Dev toggles ───────────────────────────────────────────────────────
   ALLOW_MEMORY_STORAGE: z.enum(["true", "false"]).optional().default("false"),
   FORCE_MEMORY_STORAGE: z.enum(["true", "false"]).optional().default("false"),

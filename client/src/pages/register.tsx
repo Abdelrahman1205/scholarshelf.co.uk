@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { PublicFooter } from "@/components/public-footer";
+import { describeApiError } from "@/lib/errors";
 
 export default function RegisterPage() {
   const [name, setName] = useState("");
@@ -29,6 +30,15 @@ export default function RegisterPage() {
     e.preventDefault();
     setValidationError("");
 
+    if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
+      // Checked here so the parent is told before a round trip, in the same
+      // words the server would use.
+      setValidationError(
+        "Username can only contain letters, numbers, dots, hyphens and underscores. "
+        + "If you'd like to use your email address, try the part before the @.",
+      );
+      return;
+    }
     if (password !== confirmPassword) {
       setValidationError("Passwords do not match");
       return;
@@ -44,12 +54,16 @@ export default function RegisterPage() {
     } catch {}
   }
 
+  // C1: this used to test signUpError.message.includes("409"), which stopped
+  // being true when the error contract changed — so every failure, including a
+  // rejected username, showed "Registration failed. Please try again." with no
+  // way to discover the rule. describeApiError surfaces the server's per-field
+  // explanation, which is the only thing that lets the parent fix it.
   const errorMessage = validationError || (signUpError
-    ? signUpError.message.includes("409")
-      ? "Username or email is already taken"
-      : signUpError.message.includes("429")
-      ? "Too many attempts. Please try again later."
-      : "Registration failed. Please try again."
+    ? describeApiError(signUpError, {
+        statusMessages: { 409: "Username or email is already taken" },
+        fallback: "Registration failed. Please try again.",
+      })
     : "");
 
   return (
@@ -80,7 +94,27 @@ export default function RegisterPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="username">Username</Label>
-                <Input id="username" type="text" placeholder="Choose a username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} />
+                {/* The server enforces /^[a-zA-Z0-9_.-]+$/ (shared/schema.ts).
+                    The form only enforced a minimum length, so an apostrophe, a
+                    space, or an email address was accepted here and rejected
+                    there — and the explanation was discarded. Say the rule
+                    before they type, and repeat the server's wording if it
+                    still fails. */}
+                <Input
+                  id="username"
+                  type="text"
+                  placeholder="e.g. sarah.obrien"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  minLength={3}
+                  maxLength={50}
+                  pattern="[a-zA-Z0-9_.\-]+"
+                  aria-describedby="username-hint"
+                />
+                <p id="username-hint" className="text-xs text-muted-foreground">
+                  Letters, numbers, dots, hyphens and underscores only — no spaces or apostrophes.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>

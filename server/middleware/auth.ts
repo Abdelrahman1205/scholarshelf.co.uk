@@ -36,6 +36,28 @@ export const COMPLETE_SETUP_STATUSES = new Set(["operational_setup_complete", "c
 
 export const PLATFORM_OWNER_ROLES = ["owner", "platform_admin"];
 export const ADMIN_UI_ROLES = ["admin", "school_admin", "owner", "platform_admin"] as const;
+
+/**
+ * Roles whose every query MUST be pinned to one school.
+ *
+ * SECURITY (S1): storage.schoolFilter treats a null school id as "no WHERE
+ * clause" — i.e. every tenant — and ~150 storage methods inherit that. That is
+ * correct for a platform owner and catastrophic for anyone else, so the
+ * invariant it relies on is enforced here, once, at the guard.
+ *
+ * Two roles are deliberately absent:
+ *   - owner / platform_admin: null genuinely means "all tenants" for them.
+ *   - parent: parents are scoped through parent_children, not through
+ *     users.school_id, and register with schoolId null by design. Blocking them
+ *     here would take out the whole parent portal.
+ */
+export const TENANT_SCOPED_ROLES = [
+  "admin", "school_admin", "teacher", "finance", "it_personnel", "student",
+] as const;
+
+export function isTenantScopedRole(role: string | null | undefined): boolean {
+  return (TENANT_SCOPED_ROLES as readonly string[]).includes(resolveRole(role || ""));
+}
 export const IT_WEBSITE_ROLES = ["it_personnel"] as const;
 export const FINANCE_ROLES = [...ADMIN_UI_ROLES, "finance"] as const;
 
@@ -332,7 +354,32 @@ export async function ensureSessionSchoolIsActive(req: Request, res: Response): 
   const sessionRole = resolveRole(req.session.role || "");
   if (isPlatformOwnerRole(sessionRole)) return true;
   const schoolId = sessionSchoolId(req);
-  if (!schoolId) return true;
+  if (!schoolId) {
+    // SECURITY (S1): a staff account with no school is not "unscoped", it is
+    // scoped to EVERYTHING — schoolFilter emits no WHERE clause, so /api/students
+    // returns every child on the platform, with dates of birth and photo URLs.
+    //
+    // Such an account is created with no bug involved: ADMIN_UI_ROLES includes
+    // owner, so a platform owner who is not in support mode creates a user or an
+    // invite with schoolId null, and sign-in never asks for a school code because
+    // that prompt is wrapped in `if (user.schoolId)`.
+    //
+    // There is no legitimate request this blocks: a teacher or finance officer
+    // with no school cannot do anything correct. Refuse it rather than serve
+    // every tenant's data.
+    const activeContext = getActiveRequestContext(req);
+    if (isTenantScopedRole(sessionRole) || isTenantScopedRole(activeContext)) {
+      await auditLog(req, "session_blocked_missing_school_scope", `user:${req.session.userId}`, {
+        role: req.session.role || null,
+        activeContext: req.session.activeContext || null,
+      }).catch(() => {});
+      res.status(403).json({
+        message: "This account is not linked to a school. Please contact your administrator.",
+      });
+      return false;
+    }
+    return true;
+  }
 
   const school = await storage.getSchoolById(schoolId);
   if (!school) {
@@ -960,6 +1007,26 @@ export async function getTeacherAssignedClasses(
       assignedById.set(cls.id, cls);
     }
   }
+
+  // H2: this function is what /api/allocations and every custody guard consult,
+  // and it did NOT read class_teacher_assignments — while the near-identical
+  // copy in book.routes.ts did. That divergence is the whole bug: a teacher
+  // assigned by subject got a teacher dashboard and their classes from one code
+  // path, and an empty distribution list from the other. There is now one
+  // implementation, and it reads both models.
+  try {
+    const assignedIds = await storage.getAssignedClassIdsForTeacher(teacherUserId, schoolId);
+    const need = assignedIds.filter((cid) => !assignedById.has(cid));
+    if (need.length) {
+      const byId = new Map(scopedClasses.map((c) => [c.id, c]));
+      const fallback = need.some((cid) => !byId.has(cid)) ? await storage.getClasses() : [];
+      for (const cid of need) {
+        const cls = byId.get(cid) || fallback.find((c) => c.id === cid);
+        if (cls) assignedById.set(cid, cls);
+      }
+    }
+  } catch { /* assignments are additive — never block legacy access */ }
+
   return Array.from(assignedById.values());
 }
 

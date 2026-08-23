@@ -142,12 +142,15 @@ function BooksCatalogue() {
         <div className="grid gap-2"><Label>ISBN</Label><Input value={form.isbn} onChange={(e) => setForm({ ...form, isbn: e.target.value })} onBlur={(e) => e.target.value && lookupIsbn(e.target.value)} /></div>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <div className="grid gap-2"><Label>Price (£)</Label><Input type="number" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
-        <div className="grid gap-2"><Label>Stock Quantity</Label><Input type="number" value={form.stockQuantity} onChange={(e) => setForm({ ...form, stockQuantity: parseInt(e.target.value) || 0 })} /></div>
+        {/* C6: neither input had a `min`, so a negative price or stock count was
+            reachable by typing — and the server accepted it, because
+            insertBookSchema was never applied to the route. Both ends now agree. */}
+        <div className="grid gap-2"><Label>Price (£)</Label><Input type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+        <div className="grid gap-2"><Label>Stock Quantity</Label><Input type="number" min="0" value={form.stockQuantity} onChange={(e) => setForm({ ...form, stockQuantity: Math.max(0, parseInt(e.target.value) || 0) })} /></div>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <div className="grid gap-2"><Label>Low Stock Threshold</Label><Input type="number" value={form.lowStockThreshold} onChange={(e) => setForm({ ...form, lowStockThreshold: parseInt(e.target.value) || 10 })} /></div>
-        <div className="grid gap-2"><Label>Reorder Quantity</Label><Input type="number" value={form.reorderQuantity} onChange={(e) => setForm({ ...form, reorderQuantity: parseInt(e.target.value) || 50 })} /></div>
+        <div className="grid gap-2"><Label>Low Stock Threshold</Label><Input type="number" min="0" value={form.lowStockThreshold} onChange={(e) => setForm({ ...form, lowStockThreshold: Math.max(0, parseInt(e.target.value) || 10) })} /></div>
+        <div className="grid gap-2"><Label>Reorder Quantity</Label><Input type="number" min="0" value={form.reorderQuantity} onChange={(e) => setForm({ ...form, reorderQuantity: Math.max(0, parseInt(e.target.value) || 50) })} /></div>
       </div>
       <div className="grid gap-2"><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
     </>

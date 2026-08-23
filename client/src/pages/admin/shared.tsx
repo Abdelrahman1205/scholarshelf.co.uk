@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { formatDateTime as sharedFormatDateTime } from "@/lib/format";
 
 // ─── NAVIGATION HELPER ─────────────────────────────────────────────────────
 export function navigateTo(href: string) {
@@ -43,11 +44,14 @@ export function StatusBadge({ status }: { status: string }) {
   return <Badge variant="outline" className={`${c.class} text-xs font-medium`}>{c.label}</Badge>;
 }
 
+/**
+ * Kept as an export because communications.tsx and parents.tsx import it from
+ * here. The implementation now delegates so every screen shares one locale —
+ * this used to call toLocaleString() with no locale, rendering in whatever the
+ * viewer's browser was set to.
+ */
 export function formatDateTime(value: string | null | undefined) {
-  if (!value) return "Not available";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Not available";
-  return date.toLocaleString();
+  return sharedFormatDateTime(value, "Not available");
 }
 
 export function normalizeRole(role: string | null | undefined) {

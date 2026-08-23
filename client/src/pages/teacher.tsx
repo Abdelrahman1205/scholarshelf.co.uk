@@ -12,6 +12,7 @@ import { Search, CheckCircle2, Circle, Users, BookOpen, Package, LayoutDashboard
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
+import { formatDate } from "@/lib/format";
 
 interface ClassItem { id: string; name: string; academicYear: string | null; teacherId: string | null; }
 
@@ -43,12 +44,14 @@ interface StudentRecord { id: string; name: string; studentCode: string | null; 
 
 function StatusBadge({ status }: { status: string }) {
   const m: Record<string, string> = {
-    allocated: "bg-amber-500/10 text-amber-600",
-    received: "bg-emerald-500/10 text-emerald-600",
-    absent: "bg-red-500/10 text-red-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    approved: "bg-emerald-500/10 text-emerald-600",
-    rejected: "bg-red-500/10 text-red-600",
+    // Semantic tokens, not ad-hoc palette classes. text-emerald-600 is ~3.5:1 on
+    // white; --success is 5.18:1, and it means the same thing everywhere.
+    allocated: "bg-warning-bg text-warning",
+    received: "bg-success-bg text-success",
+    absent: "bg-destructive/10 text-destructive",
+    pending: "bg-warning-bg text-warning",
+    approved: "bg-success-bg text-success",
+    rejected: "bg-destructive/10 text-destructive",
   };
   return (
     <Badge className={m[status] || "bg-muted text-muted-foreground"}>
@@ -106,7 +109,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
               <span className="text-xs font-medium text-muted-foreground">Distributed</span>
               <CheckCircle2 className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <div className="text-2xl font-bold tracking-tight text-emerald-600">{isLoading ? "—" : `${pct}%`}</div>
+            <div className="text-2xl font-bold tracking-tight text-success">{isLoading ? "—" : `${pct}%`}</div>
           </CardContent>
         </Card>
         <Card className="border-border shadow-none rounded-2xl">
@@ -115,7 +118,7 @@ function DashboardSection({ classes, allocations, extraRequests, students, isLoa
               <span className="text-xs font-medium text-muted-foreground">Pending</span>
               <Package className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <div className="text-2xl font-bold tracking-tight text-amber-600">{isLoading ? "—" : pending}</div>
+            <div className="text-2xl font-bold tracking-tight text-warning">{isLoading ? "—" : pending}</div>
           </CardContent>
         </Card>
       </div>
@@ -188,6 +191,10 @@ function DistributionSection({ classes, classesLoading, students: allStudents }:
   const absentMut = useMutation({
     mutationFn: async (id: string) => { await apiRequest("POST", `/api/teacher/book-distribution/${id}/mark-absent`); },
     onSuccess: () => { toast({ title: "Marked Absent" }); queryClient.invalidateQueries({ queryKey: ["/api/teacher/book-distribution"] }); },
+    // Its three siblings all had onError; this one did not, so a failed
+    // "Mark Absent" was a silent no-op. The teacher taps, nothing happens, and
+    // they move on believing the register is right.
+    onError: (e: Error) => { toast({ title: "Could not mark absent", description: e.message, variant: "destructive" }); },
   });
 
   const issueMut = useMutation({
@@ -768,7 +775,7 @@ function TeacherMessagesSection() {
     if (hrs < 24) return `${hrs}h ago`;
     const days = Math.floor(hrs / 24);
     if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString();
+    return formatDate(d);
   };
 
   // Thread detail view

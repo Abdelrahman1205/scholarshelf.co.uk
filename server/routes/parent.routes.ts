@@ -6,7 +6,7 @@
  * Linking-code endpoints are rate-limited (see linkCodeRateLimited).
  */
 import type { Express, Request, Response, NextFunction } from "express";
-import { storage } from "../storage.js";
+import { storage , DuplicatePaymentError } from "../storage.js";
 import { verifyOrder } from "../services/payment-verification/payment-verification-service.js";
 import {
   requireAuth, requireRole,
@@ -281,6 +281,11 @@ export function registerParentRoutes(app: Express): void {
 
       res.status(201).json(payment);
     } catch (e: any) {
+      // D5: a double submit (impatient parent, double-tapped button, retried
+      // request) must not create a second full-price order for the same books.
+      if (e instanceof DuplicatePaymentError) {
+        return res.status(409).json({ message: e.message, code: "duplicate_order" });
+      }
       res.status(400).json({ message: e.message });
     }
   });

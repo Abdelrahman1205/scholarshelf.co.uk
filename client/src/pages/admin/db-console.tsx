@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  Database, Play, Trash2, Pencil, ChevronLeft, ChevronRight, Search,
+  Database, Play, Trash2, ChevronLeft, ChevronRight, Search,
   AlertTriangle, Check, Copy, RefreshCw, Terminal, ShieldAlert, ShieldCheck, X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -74,9 +74,6 @@ function TableBrowser() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [editRow, setEditRow] = useState<Record<string, any> | null>(null);
-  const [editValues, setEditValues] = useState<Record<string, any>>({});
-  const [deleteRow, setDeleteRow] = useState<Record<string, any> | null>(null);
 
   const { data: tablesData } = useQuery({
     queryKey: ["/api/owner/db/tables"],
@@ -95,37 +92,10 @@ function TableBrowser() {
     enabled: !!selectedTable,
   });
 
-  const updateMutation = useMutation({
-    mutationFn: async ({ id, values }: { id: string; values: Record<string, any> }) => {
-      const r = await apiRequest("PATCH", `/api/owner/db/tables/${selectedTable}/${id}`, values);
-      return r.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Row updated" });
-      setEditRow(null);
-      qc.invalidateQueries({ queryKey: ["/api/owner/db/browse", selectedTable] });
-    },
-    onError: (e: any) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await apiRequest("DELETE", `/api/owner/db/tables/${selectedTable}/${id}`);
-      return r.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Row deleted" });
-      setDeleteRow(null);
-      qc.invalidateQueries({ queryKey: ["/api/owner/db/browse", selectedTable] });
-    },
-    onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
-  });
-
   const tables: string[] = tablesData?.tables ?? [];
   const columns: string[] = data?.columns ?? [];
   const rows: Record<string, any>[] = data?.rows ?? [];
 
-  function openEdit(row: Record<string, any>) { setEditRow(row); setEditValues({ ...row }); }
 
   return (
     <div className="space-y-5">
@@ -215,10 +185,10 @@ function TableBrowser() {
               ) : rows.map((row, i) => (
                 <tr key={row.id ?? i} className="border-b border-[#2d3449] hover:bg-[#222a3d] group transition-colors">
                   <td className="w-10 px-2 py-2">
-                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-[#2d3449] text-[#908fa0] hover:text-[#c0c1ff]"><Pencil className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => setDeleteRow(row)} className="p-1.5 rounded hover:bg-[#93000a33] text-[#908fa0] hover:text-[#ffb4ab]"><Trash2 className="w-3.5 h-3.5" /></button>
-                    </div>
+                    {/* Row editing was removed. The PATCH endpoint interpolated JSON
+                        object keys straight into SQL, and nothing typed replaces that.
+                        Changes go through Operations, which are audited. */}
+                    <span className="sr-only">Read-only row</span>
                   </td>
                   {columns.map((col) => (
                     <td key={col} className={`px-4 py-3 ${S.mono} text-[#dae2fd] whitespace-nowrap max-w-[240px] overflow-hidden text-ellipsis`}>
@@ -243,44 +213,6 @@ function TableBrowser() {
         </div>
       )}
 
-      {/* Edit modal */}
-      {editRow && (
-        <Modal onClose={() => setEditRow(null)} title={`Edit row — ${selectedTable}`} subtitle={`ID: ${editRow.id}`} wide>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-2 max-h-[55vh] overflow-y-auto">
-            {Object.keys(editValues).filter((k) => !["id", "created_at"].includes(k)).map((key) => (
-              <div key={key}>
-                <div className={`${S.label} mb-1 ${S.mono} normal-case tracking-normal`}>{key}</div>
-                <input
-                  value={editValues[key] === null ? "" : String(editValues[key])}
-                  onChange={(e) => setEditValues((p) => ({ ...p, [key]: e.target.value || null }))}
-                  className={`${S.input} ${S.mono}`}
-                />
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-end gap-2 pt-3">
-            <button className={S.btnGhost} onClick={() => setEditRow(null)}>Cancel</button>
-            <button className={S.btnPrimary} onClick={() => updateMutation.mutate({ id: editRow.id, values: editValues })} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? "Saving…" : "Save changes"}
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Delete modal */}
-      {deleteRow && (
-        <Modal onClose={() => setDeleteRow(null)} title="Delete row?" danger>
-          <p className="text-sm text-[#c7c4d7] py-2">
-            This permanently deletes the row with ID <span className={`${S.mono} text-[#ffb4ab]`}>{deleteRow.id}</span> from <span className={S.mono}>{selectedTable}</span>. This cannot be undone.
-          </p>
-          <div className="flex justify-end gap-2 pt-3">
-            <button className={S.btnGhost} onClick={() => setDeleteRow(null)}>Cancel</button>
-            <button className={S.btnDanger} onClick={() => deleteMutation.mutate(deleteRow.id)} disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending ? "Deleting…" : "Delete permanently"}
-            </button>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
@@ -294,14 +226,16 @@ function SqlConsole() {
   const [isRunning, setIsRunning] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  async function runQuery(dangerConfirm = false) {
+  async function runQuery() {
     setIsRunning(true); setError(null); setRequiresConfirm(false);
     try {
-      const r = await apiRequest("POST", "/api/owner/db/query", { query, dangerConfirm });
+      // The console connects as console_ro inside BEGIN READ ONLY and always
+      // rolls back, so there is no such thing as a "dangerous" query here any
+      // more — Postgres refuses writes before this code ever sees them.
+      const r = await apiRequest("POST", "/api/owner/db/query", { query });
       const data = await r.json();
       if (!r.ok) {
-        if (data.requiresConfirm) { setRequiresConfirm(true); setError(data.message); }
-        else setError(data.message || "Query failed");
+        setError(data.message || "Query failed");
         return;
       }
       setResult(data);
@@ -364,7 +298,7 @@ function SqlConsole() {
       {error && (
         <div className={`rounded-lg border px-4 py-3 text-sm flex items-center justify-between gap-4 ${requiresConfirm ? "border-[#f59e0b55] bg-[#f59e0b1a] text-[#f59e0b]" : "border-[#93000a] bg-[#93000a1a] text-[#ffb4ab]"}`}>
           <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 shrink-0" /> {error}</span>
-          {requiresConfirm && <button className={S.btnDanger} onClick={() => runQuery(true)}>Confirm &amp; Execute</button>}
+
         </div>
       )}
 
@@ -414,6 +348,7 @@ function DangerZone() {
   const qc = useQueryClient();
   const [wipeSchoolId, setWipeSchoolId] = useState("");
   const [wipeConfirmName, setWipeConfirmName] = useState("");
+  const [wipeReason, setWipeReason] = useState("");
   const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
   const [wipeResult, setWipeResult] = useState<string | null>(null);
 
@@ -427,19 +362,27 @@ function DangerZone() {
 
   const wipeMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", `/api/owner/db/danger/wipe-school/${wipeSchoolId}`, { dangerConfirm: true });
+      const r = await apiRequest("POST", `/api/owner/db/danger/wipe-school/${wipeSchoolId}`, {
+        confirmCode: wipeConfirmName.trim(),
+        reason: wipeReason.trim(),
+      });
       return r.json();
     },
     onSuccess: (data) => {
       setWipeResult(data.message);
-      setWipeDialogOpen(false); setWipeSchoolId(""); setWipeConfirmName("");
+      setWipeDialogOpen(false); setWipeSchoolId(""); setWipeConfirmName(""); setWipeReason("");
       qc.invalidateQueries({ queryKey: ["/api/owner/db/browse"] });
-      toast({ title: "School data wiped", description: data.message });
+      toast({ title: "School marked for deletion", description: data.message });
     },
     onError: (e: any) => toast({ title: "Wipe failed", description: e.message, variant: "destructive" }),
   });
 
-  const confirmNameMatches = selectedSchool && wipeConfirmName.trim().toLowerCase() === selectedSchool.name.trim().toLowerCase();
+  // The server compares the school CODE, so the UI must ask for the code.
+  // A code is unambiguous; two schools can share a name.
+  const confirmNameMatches =
+    !!selectedSchool &&
+    wipeConfirmName.trim().toUpperCase() === String(selectedSchool.code ?? "").trim().toUpperCase();
+  const reasonIsSufficient = wipeReason.trim().length >= 20;
 
   return (
     <div className="space-y-5">
@@ -489,20 +432,35 @@ function DangerZone() {
                   value={wipeConfirmName}
                   onChange={(e) => setWipeConfirmName(e.target.value)}
                   disabled={!wipeSchoolId}
-                  placeholder={selectedSchool ? `Type "${selectedSchool.name}"` : "Select a school first"}
+                  placeholder={selectedSchool ? `Type "${selectedSchool.code}"` : "Select a school first"}
                   className={`${S.input} disabled:opacity-50`}
                 />
               </div>
             </div>
 
+            <div>
+              <div className={`${S.label} mb-1`}>Reason (recorded in the audit trail)</div>
+              <textarea
+                value={wipeReason}
+                onChange={(e) => setWipeReason(e.target.value)}
+                disabled={!wipeSchoolId}
+                rows={2}
+                placeholder="Why is this school being deleted? Minimum 20 characters."
+                className={`${S.input} disabled:opacity-50 resize-y`}
+              />
+            </div>
+
             <div className="flex items-center justify-between pt-1 border-t border-[#2d3449]">
-              <p className="text-xs text-[#908fa0] max-w-xs">Type the exact school name to unlock the wipe control.</p>
+              <p className="text-xs text-[#908fa0] max-w-xs">
+                Type the exact school code and give a reason. This marks the school for
+                deletion — no data is removed, and it stays restorable for 7 days.
+              </p>
               <button
                 className={S.btnDanger}
-                disabled={!wipeSchoolId || !confirmNameMatches}
+                disabled={!wipeSchoolId || !confirmNameMatches || !reasonIsSufficient}
                 onClick={() => setWipeDialogOpen(true)}
               >
-                <Trash2 className="w-4 h-4" /> Wipe Tenant Data
+                <Trash2 className="w-4 h-4" /> Mark for deletion
               </button>
             </div>
           </div>
@@ -534,7 +492,7 @@ function DangerZone() {
             ))}
           </ul>
           <div className="mt-5 pt-4 border-t border-[#2d3449] text-xs text-[#908fa0]">
-            All wipe operations are recorded in <span className={S.mono}>audit_logs</span> with your user ID and timestamp.
+            Every console action — including browsing and queries — is recorded in <span className={S.mono}>console_audit</span> with your account, IP, statement and a before/after snapshot.
           </div>
         </div>
       </div>
@@ -543,14 +501,18 @@ function DangerZone() {
       {wipeDialogOpen && (
         <Modal onClose={() => setWipeDialogOpen(false)} title="Final confirmation" danger>
           <div className="space-y-2 py-2">
-            <p className="text-sm text-[#c7c4d7]">You are about to permanently wipe <strong className="text-[#dae2fd]">all data</strong> for:</p>
+            <p className="text-sm text-[#c7c4d7]">You are about to mark this school for deletion:</p>
             <p className="font-semibold text-[#dae2fd] text-base">{selectedSchool?.name} <span className={`${S.mono} text-[#908fa0]`}>({selectedSchool?.code})</span></p>
-            <p className="text-[#ffb4ab] font-medium text-sm">This cannot be undone.</p>
+            <p className="text-sm text-[#c7c4d7]">
+              Every user at the school loses access immediately. <strong className="text-[#dae2fd]">No data is removed.</strong>{" "}
+              You can restore it with “Reactivate school” for the next 7 days, after which it
+              becomes eligible for a permanent purge — which needs its own confirmation.
+            </p>
           </div>
           <div className="flex justify-end gap-2 pt-3">
             <button className={S.btnGhost} onClick={() => setWipeDialogOpen(false)}>Cancel</button>
             <button className={S.btnDanger} onClick={() => wipeMutation.mutate()} disabled={wipeMutation.isPending}>
-              {wipeMutation.isPending ? "Wiping…" : "Yes, wipe everything"}
+              {wipeMutation.isPending ? "Marking…" : "Mark for deletion"}
             </button>
           </div>
         </Modal>

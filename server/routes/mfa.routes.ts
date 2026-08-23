@@ -17,6 +17,7 @@ import { getDb } from "../config/database.js";
 import { users } from "../../shared/schema.js";
 import {
   requireAuth, resolveRole, auditLog, safeUser, buildAuthUserResponse, rateLimit,
+  isPlatformOwnerRole,
 } from "../middleware/auth.js";
 import { getSessionMaxAge } from "../app.js";
 import {
@@ -80,6 +81,8 @@ export function registerMfaRoutes(app: Express): void {
         req.session.userId = user.id;
         req.session.role = user.role;
         req.session.activeContext = resolveRole(user.role);
+        req.session.mfaEnabled = !!user.mfaEnabled;
+        req.session.username = user.username;
         req.session.schoolId = user.schoolId;
         if (req.session.cookie) req.session.cookie.maxAge = getSessionMaxAge(resolveRole(user.role));
         storage.updateLastLogin(user.id).catch(() => {});
@@ -146,6 +149,7 @@ export function registerMfaRoutes(app: Express): void {
         mfaEnrolledAt: new Date(),
       }).where(eq(users.id, user.id));
       req.session.pendingMfaSetupSecret = null;
+      req.session.mfaEnabled = true;
 
       await auditLog(req, "mfa_enabled", `user:${user.id}`).catch(() => {});
       res.json({ enabled: true, recoveryCodes });
@@ -161,6 +165,15 @@ export function registerMfaRoutes(app: Express): void {
       if (!user) return res.status(404).json({ message: "User not found" });
       if (!user.mfaEnabled) return res.status(400).json({ message: "MFA is not enabled." });
 
+      // SECURITY: MFA is mandatory for platform-owner roles — these accounts can
+      // reach every tenant's data. Allowing self-service disable would make the
+      // requirement advisory.
+      if (isPlatformOwnerRole(user.role)) {
+        return res.status(403).json({
+          message: "Two-factor authentication cannot be disabled on a platform administrator account.",
+        });
+      }
+
       const password = String(req.body?.password || "");
       if (!(await bcrypt.compare(password, user.passwordHash))) {
         return res.status(401).json({ message: "Incorrect password." });
@@ -173,6 +186,7 @@ export function registerMfaRoutes(app: Express): void {
         mfaEnrolledAt: null,
       }).where(eq(users.id, user.id));
       req.session.pendingMfaSetupSecret = null;
+      req.session.mfaEnabled = false;
 
       await auditLog(req, "mfa_disabled", `user:${user.id}`).catch(() => {});
       res.json({ enabled: false });

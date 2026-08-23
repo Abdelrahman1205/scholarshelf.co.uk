@@ -12,6 +12,7 @@ import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format";
 
 function EmailPreferences() {
   const { toast } = useToast();
@@ -186,7 +187,7 @@ export default function SecurityPage() {
             {enabled ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Enrolled</div><div className="text-foreground">{status?.enrolledAt ? new Date(status.enrolledAt).toLocaleDateString() : "—"}</div></div>
+                  <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Enrolled</div><div className="text-foreground">{status?.enrolledAt ? formatDate(status.enrolledAt) : "—"}</div></div>
                   <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Recovery codes left</div><div className="text-foreground">{status?.recoveryCodesRemaining ?? 0}</div></div>
                 </div>
                 <div className="border-t border-border pt-4 space-y-3">

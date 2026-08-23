@@ -40,7 +40,17 @@ export const LEGACY_ROLE_MAP: Record<string, UserRole> = {
 };
 
 // === PAYMENT & DISTRIBUTION STATUS ENUMS ===
-export const PAYMENT_STATUSES = ["awaiting_reference", "reference_submitted", "confirmed", "rejected", "needs_review"] as const;
+/**
+ * D6: these constants had drifted away from what the code writes. The three
+ * settlement statuses below were missing, so any filter built from this list
+ * silently skipped every settled order. Reconciled against the writes in
+ * server/storage.ts, and now enforced by a CHECK constraint (migration 006) so
+ * the two cannot drift apart again.
+ */
+export const PAYMENT_STATUSES = [
+  "awaiting_reference", "reference_submitted", "needs_review", "confirmed", "rejected",
+  "ready_for_collection", "collected", "cancelled",
+] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 export const ORDER_STATUSES = [
@@ -55,7 +65,19 @@ export const ORDER_STATUSES = [
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
-export const DISTRIBUTION_STATUSES = ["pending_distribution", "received_by_student", "student_absent", "issue_reported"] as const;
+/** finance_book_allocations.distribution_status — the teacher's hand-over state. */
+export const DISTRIBUTION_STATUSES = [
+  "pending_distribution", "received_by_student", "student_absent", "issue_reported",
+  "out_of_stock",
+] as const;
+
+/**
+ * finance_book_allocations.status — the allocation lifecycle, which is a
+ * DIFFERENT column from distribution_status above. Nothing declared this set
+ * before, which is how the two got conflated.
+ */
+export const ALLOCATION_STATUSES = ["allocated", "received", "absent", "cancelled"] as const;
+export type AllocationStatus = (typeof ALLOCATION_STATUSES)[number];
 export type DistributionStatus = (typeof DISTRIBUTION_STATUSES)[number];
 
 export const SCHOOL_STATUSES = ["active", "pending_setup", "suspended", "archived", "pending_deletion", "deleted"] as const;
@@ -485,7 +507,30 @@ export const books = pgTable("books", {
     schoolIdx: index("books_school_id_idx").on(table.schoolId),
 }));
 
-export const insertBookSchema = createInsertSchema(books).omit({ id: true, bookCode: true, barcodeGeneratedAt: true });
+/**
+ * C6: insertBookSchema existed but was never used by any route — POST /api/books
+ * spread the request body straight into the insert. A price of -50 reached the
+ * database and every basket containing that book was then billed a negative
+ * amount. The form had no `min` either, so it was reachable by typing.
+ *
+ * Money and stock are constrained here, once, so it holds for every call site
+ * rather than every form remembering.
+ */
+export const insertBookSchema = createInsertSchema(books)
+  .omit({ id: true, bookCode: true, barcodeGeneratedAt: true })
+  .extend({
+    title: z.string().trim().min(1, "A book needs a title").max(300),
+    // numeric columns arrive as strings from pg and as numbers from a form.
+    price: z.coerce.number()
+      .min(0, "Price cannot be negative")
+      .max(10000, "That price looks wrong — check the decimal point")
+      .transform((n) => n.toFixed(2)),
+    stockQuantity: z.coerce.number()
+      .int("Stock must be a whole number")
+      .min(0, "Stock cannot be negative")
+      .max(1000000)
+      .optional(),
+  });
 export type InsertBook = z.infer<typeof insertBookSchema>;
 export type Book = typeof books.$inferSelect;
 

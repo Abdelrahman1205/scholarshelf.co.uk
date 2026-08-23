@@ -66,6 +66,32 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+/**
+ * A dead session must not leave the user inside a fully-rendered app showing
+ * zeros.
+ *
+ * Every query throws on 401, each page falls back to [] or a zero, and nothing
+ * redirects — so with staleTime on /api/auth/me the user could sit in an app
+ * that looked fine, and quietly wrong, for minutes after their session died.
+ * One handler, in one place: the moment any query comes back 401, send them to
+ * sign in.
+ *
+ * Guarded so it fires once per session death rather than once per query — a
+ * dashboard fires a dozen queries and they will all 401 together.
+ */
+let redirectingToLogin = false;
+
+function handleUnauthorized(): void {
+  if (redirectingToLogin) return;
+  if (typeof window === "undefined") return;
+  const path = window.location.pathname;
+  // Already on an unauthenticated page — nothing to redirect away from.
+  if (["/login", "/register", "/forgot-password", "/reset-password", "/accept-invite"].some((p) => path.startsWith(p))) return;
+  redirectingToLogin = true;
+  queryClient.clear();
+  window.location.href = `/login?next=${encodeURIComponent(path + window.location.search)}`;
+}
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -73,10 +99,21 @@ export const queryClient = new QueryClient({
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: Infinity,
-      retry: false,
+      // Retry is deliberately off for correctness-sensitive data, but that makes
+      // a single dropped request final — which is why every consumer needs a
+      // visible error state (see components/query-state.tsx) rather than an
+      // empty one. A single retry on a network-level failure is safe: it means
+      // the request never reached the server.
+      retry: (failureCount, error: any) => failureCount < 1 && error?.status == null,
     },
     mutations: {
       retry: false,
     },
   },
+});
+
+queryClient.getQueryCache().subscribe((event: any) => {
+  if (event?.query?.state?.status === "error" && event.query.state.error?.status === 401) {
+    handleUnauthorized();
+  }
 });

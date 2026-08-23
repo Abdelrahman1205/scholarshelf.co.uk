@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { formatDateTime, formatMoney } from "@/lib/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Collection Sheet — the offline paid-roster for distribution day.
@@ -16,10 +17,10 @@ import { cn } from "@/lib/utils";
 // the safety net at hand-over.)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const money = (v: any) => `£${parseFloat(v || "0").toFixed(2)}`;
+const money = formatMoney;
 const STATUS_LABEL: Record<string, string> = { confirmed: "Paid", ready_for_collection: "Ready", collected: "Collected" };
 const STATUS_STYLE: Record<string, string> = {
-  confirmed: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  confirmed: "bg-success-bg text-success border-success/30",
   ready_for_collection: "bg-indigo-50 text-indigo-700 border-indigo-200",
   collected: "bg-gray-100 text-gray-600 border-gray-200",
 };
@@ -77,7 +78,7 @@ function CollectionSheetSection() {
       tr{page-break-inside:avoid}
     </style></head><body>
       <h1>Collection sheet — ${esc(title)}</h1>
-      <p class="sub">${rows.length} student${rows.length === 1 ? "" : "s"} · printed ${new Date().toLocaleString()}</p>
+      <p class="sub">${rows.length} student${rows.length === 1 ? "" : "s"} · printed ${formatDateTime(new Date())}</p>
       <table><thead><tr><th>✓</th><th>Student</th><th>Class</th><th>Amount</th><th>Reference</th><th>Status</th></tr></thead>
       <tbody>${body}</tbody></table>
     </body></html>`);

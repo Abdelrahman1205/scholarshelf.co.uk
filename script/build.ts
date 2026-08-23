@@ -2,33 +2,24 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile, mkdir } from "fs/promises";
 
-const allowlist = [
-  "@google/generative-ai",
-  "axios",
-  "cors",
-  "date-fns",
-  "@neondatabase/serverless",
-  "bcryptjs",
-  "drizzle-orm",
-  "drizzle-zod",
-  "express",
-  "express-rate-limit",
-  "express-session",
-  "jsonwebtoken",
-  "memorystore",
-  "multer",
-  "nanoid",
-  "nodemailer",
-  "openai",
-  "passport",
-  "passport-local",
-  "stripe",
-  "uuid",
-  "ws",
-  "xlsx",
-  "zod",
-  "zod-validation-error",
-];
+/**
+ * Which packages stay OUT of the server bundle.
+ *
+ * This used to be an allowlist of things to bundle, with everything else marked
+ * external — and esbuild never resolves an external import, so a package missing
+ * from the list produced a GREEN build with no warning and a crash at require()
+ * on the first request. The list was wrong in both directions: ten entries were
+ * not dependencies at all, and five packages the server imports were missing.
+ *
+ * Inverted, the default is safe. Runtime dependencies stay external because they
+ * are installed in production; everything else — including anything nobody
+ * remembered to declare — gets bundled, so a missing package fails the BUILD.
+ *
+ * ./vite.js is the one deliberate exception: server/app.ts reaches it through a
+ * dynamic import that only runs outside production, and bundling it would drag
+ * the entire dev toolchain into the production artefact.
+ */
+const DEV_ONLY_MODULES = ["./vite.js"];
 
 async function buildAll() {
   // Skip rm if filesystem doesn't support unlink; ensure dist exists
@@ -44,11 +35,7 @@ async function buildAll() {
 
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
-  const allDeps = [
-    ...Object.keys(pkg.dependencies || {}),
-    ...Object.keys(pkg.devDependencies || {}),
-  ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  const externals = [...Object.keys(pkg.dependencies || {}), ...DEV_ONLY_MODULES];
 
   await esbuild({
     entryPoints: ["server/index.ts"],

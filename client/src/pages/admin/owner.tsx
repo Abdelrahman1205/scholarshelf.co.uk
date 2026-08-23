@@ -23,6 +23,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { formatMoney } from "@/lib/format";
+import { describeApiError } from "@/lib/errors";
 import {
   navigateTo, formatSchoolDisplay, StatusBadge, formatDateTime,
   normalizeRole, roleLabel, isProtectedPlatformOwner, BRANDING_PERMISSION_OPTIONS
@@ -207,7 +209,7 @@ function OwnerDashboardSection() {
             <CardContent className="p-4">
               <TrendingUp className="h-4 w-4 mb-1.5 text-amber-500" />
               <p className="text-2xl font-bold">
-                {data?.totalRevenue !== undefined ? `£${parseFloat(data.totalRevenue).toLocaleString("en-GB", { minimumFractionDigits: 2 })}` : "—"}
+                {data?.totalRevenue !== undefined ? formatMoney(data.totalRevenue) : "—"}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">Total revenue</p>
             </CardContent>
@@ -857,17 +859,13 @@ function SchoolsSection() {
       setDangerReason("");
       setDangerConfirmText("");
     } catch (err: any) {
-      let msg = err.message || "Action failed";
-      let blockers: string[] | undefined;
-      // apiRequest throws Error("status: jsonBody") — try to parse the body portion
-      const colonIdx = msg.indexOf(": ");
-      if (colonIdx > 0) {
-        try {
-          const parsed = JSON.parse(msg.slice(colonIdx + 2));
-          msg = parsed.message || msg;
-          blockers = parsed.blockers;
-        } catch {}
-      }
+      // C1: this parsed the OLD "status: jsonBody" error format, which
+      // queryClient stopped producing — so the blockers list (the thing that
+      // tells an owner WHY a school cannot be deleted) was never extracted.
+      const msg = describeApiError(err, { fallback: "Action failed" });
+      const blockers: string[] | undefined = Array.isArray(err?.body?.blockers)
+        ? err.body.blockers
+        : undefined;
       toast({
         title: "Action blocked",
         description: blockers ? `${msg}\n${blockers.join("\n")}` : msg,

@@ -6,7 +6,7 @@
  */
 import type { Express } from "express";
 import { storage } from "../storage.js";
-import { rateLimit } from "../middleware/auth.js";
+import { rateLimit, clientIp } from "../middleware/auth.js";
 import { sendContactMessageEmail, sendContactAcknowledgementEmail } from "../email.js";
 
 export function registerPublicRoutes(app: Express): void {
@@ -18,8 +18,7 @@ export function registerPublicRoutes(app: Express): void {
    */
   app.post("/api/public/contact", async (req, res) => {
     try {
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
-        || req.socket?.remoteAddress || "unknown";
+      const ip = clientIp(req);
       if (await rateLimit(`contact:${ip}`, 5, 60 * 60 * 1000)) {
         return res.status(429).json({ message: "Too many messages sent. Please try again later." });
       }

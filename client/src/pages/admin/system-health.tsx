@@ -6,6 +6,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { getQueryFn, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/format";
 
 // ─── SYSTEM HEALTH & INFRASTRUCTURE (platform owner) ────────────────────────
 function SystemHealthSection() {
@@ -178,7 +179,7 @@ function SystemHealthSection() {
         })}
       </div>
 
-      <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" /> Generated {new Date(data.generatedAt).toLocaleString()} · auto-refreshes every 30s</p>
+      <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" /> Generated {formatDateTime(data.generatedAt)} · auto-refreshes every 30s</p>
     </div>
   );
 }

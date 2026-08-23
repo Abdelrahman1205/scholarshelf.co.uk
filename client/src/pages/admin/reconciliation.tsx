@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { getQueryFn } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { navigateTo } from "./shared";
+import { formatMoney } from "@/lib/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reconciliation — the exception worklist for the "Reconciliation Owner".
@@ -15,11 +16,11 @@ import { navigateTo } from "./shared";
 // (Council de-risk: name one owner, one place, don't solve exceptions ad-hoc.)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const money = (v: any) => `£${parseFloat(v || "0").toFixed(2)}`;
+const money = formatMoney;
 const EXCEPTION_STATUSES = ["needs_review", "rejected", "cancelled"];
 const META: Record<string, { label: string; tone: string; blurb: string }> = {
-  needs_review: { label: "Needs review", tone: "bg-orange-50 text-orange-700 border-orange-200", blurb: "Flagged — confirm the reference against the payment app, then approve or reject." },
-  rejected: { label: "Rejected", tone: "bg-red-50 text-red-700 border-red-200", blurb: "Reference couldn't be verified. Parent can resubmit, or follow up directly." },
+  needs_review: { label: "Needs review", tone: "bg-warning-bg text-warning border-warning/30", blurb: "Flagged — confirm the reference against the payment app, then approve or reject." },
+  rejected: { label: "Rejected", tone: "bg-destructive/10 text-destructive border-destructive/30", blurb: "Reference couldn't be verified. Parent can resubmit, or follow up directly." },
   cancelled: { label: "Cancelled", tone: "bg-gray-100 text-gray-600 border-gray-200", blurb: "Order was cancelled. Check whether a refund or re-order is owed." },
 };
 

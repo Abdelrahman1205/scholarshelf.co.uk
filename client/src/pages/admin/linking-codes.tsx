@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format";
 
 // ─── PARENT INVITES / LINKING CODES (redesign) ──────────────────────────────
 function LinkingCodesSection() {
@@ -96,7 +97,7 @@ function LinkingCodesSection() {
                     {code.isUsed ? "Linked" : "Pending"}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-muted-foreground text-sm">{code.expiresAt ? new Date(code.expiresAt).toLocaleDateString() : "—"}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{code.expiresAt ? formatDate(code.expiresAt) : "—"}</TableCell>
                 <TableCell className="text-right">
                   {!code.isUsed && (
                     <Button

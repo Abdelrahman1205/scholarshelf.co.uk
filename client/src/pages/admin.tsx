@@ -9,6 +9,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { normalizeRole, navigateTo } from "./admin/shared";
 
 // Retired routes → their family-first replacements (spec §10 redirects).
+// `parents` redirects here, so admin/parents.tsx was never rendered — it has
+// been deleted rather than left as a 182-line file that looks live in a grep.
 const RETIRED_SECTION_REDIRECTS: Record<string, string> = {
   parents: "/admin/families",
   "book-copies": "/admin/books",
@@ -28,7 +30,6 @@ import {
   SchoolsSection,
 }                                   from "./admin/owner";
 import { UserDetailPanel, UsersSection } from "./admin/users";
-import { ParentsSection }           from "./admin/parents";
 import { ClassesSection }           from "./admin/classes";
 import { StudentsSection }          from "./admin/students";
 import { BooksSection }             from "./admin/books";
@@ -86,7 +87,6 @@ export default function AdminPage({ section }: { section: string }) {
     reconciliation:     <ReconciliationSection />,
     classes:            <ClassesSection />,
     students:           <StudentsSection />,
-    parents:            <ParentsSection />,
     families:           <FamiliesSection />,
     "family-enroll":    <FamilyEnrollmentSection />,
     "db-console":       <DbConsoleSection />,

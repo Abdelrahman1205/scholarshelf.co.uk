@@ -17,11 +17,14 @@
     "test:custody": "tsx tests/custody-machine.ts",
     "test:stock": "tsx tests/stock-idempotency.ts",
     "test:payments": "tsx tests/payment-idempotency.ts",
-    "test": "npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:tenant && npm run test:family && npm run test:staff && npm run test:import && npm run test:verification && npm run test:superuser",
+    "test": "npm run test:smoke && npm run test:custody && npm run test:stock && npm run test:payments && npm run test:security && npm run test:tenant && npm run test:family && npm run test:staff && npm run test:teacher && npm run test:import && npm run test:verification && npm run test:superuser",
     "test:tenant": "tsx tests/tenant-isolation.ts",
     "test:import": "tsx tests/enrollment-import.ts",
     "test:verification": "tsx tests/payment-verification.ts",
-    "test:superuser": "tsx tests/test-superuser.ts"
+    "test:superuser": "tsx tests/test-superuser.ts",
+    "test:smoke": "tsx script/smoke-boot.ts",
+    "seed:school-b": "tsx script/seed-school-b.ts",
+    "test:teacher": "tsx tests/teacher-distribution.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

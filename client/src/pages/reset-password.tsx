@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { PublicFooter } from "@/components/public-footer";
+import { describeApiError } from "@/lib/errors";
 
 export default function ResetPasswordPage() {
   const search = useSearch();
@@ -54,10 +55,14 @@ export default function ResetPasswordPage() {
     } catch {}
   }
 
+  // C1: same dead string-matching as register.tsx. A 400 here really does mean
+  // the link is spent — the server cannot say so explicitly without confirming
+  // the token existed, so the page supplies that wording.
   const errorMessage = validationError || (resetPasswordError
-    ? resetPasswordError.message.includes("400")
-      ? "Invalid or expired reset link"
-      : "Failed to reset password. Please try again."
+    ? describeApiError(resetPasswordError, {
+        statusMessages: { 400: "This reset link is invalid or has expired. Request a new one." },
+        fallback: "Failed to reset password. Please try again.",
+      })
     : "");
 
   return (

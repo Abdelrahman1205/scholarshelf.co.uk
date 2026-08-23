@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { formatMoney, formatDate as sharedFormatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { QueryError } from "@/components/query-state";
 
 interface Payment {
   id: string;
@@ -94,13 +95,35 @@ const formatDate = sharedFormatDate;
 
 // ─── DASHBOARD SECTION ───────────────────────────────────────────
 function FinanceDashboard() {
-  const { data: summary, isLoading } = useQuery<FinanceSummary>({
+  const summaryQuery = useQuery<FinanceSummary>({
     queryKey: ["/api/finance/summary"],
     queryFn: getQueryFn({ on401: "throw" }),
   });
+  const { data: summary, isLoading } = summaryQuery;
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20"><p className="text-muted-foreground">Loading finance data...</p></div>;
+  }
+
+  // C2: this used to fall through to a zeroed object on failure, so a dropped
+  // request rendered "Total Revenue £0.00 · Outstanding £0.00" as fact. A bursar
+  // reading that could reasonably conclude the school has taken no money. An
+  // unanswered question must not be displayed as an answer.
+  if (summaryQuery.isError) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Finance Dashboard</h1>
+          <p className="text-muted-foreground mt-1">Payment overview and financial health of your school.</p>
+        </div>
+        <QueryError
+          error={summaryQuery.error}
+          label="the finance summary"
+          onRetry={() => summaryQuery.refetch()}
+          retrying={summaryQuery.isFetching}
+        />
+      </div>
+    );
   }
 
   const s = summary || { totalPayments: 0, totalRevenue: "0.00", totalOutstanding: "0.00", pendingReview: 0, awaitingRef: 0, confirmed: 0, rejected: 0, needsReview: 0, cancelled: 0 };

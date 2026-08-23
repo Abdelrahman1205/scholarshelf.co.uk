@@ -4,6 +4,10 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -72,9 +76,20 @@ function BookLevelsSection() {
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
+  /**
+   * C3: removing a class↔bundle assignment fired straight from an unlabelled
+   * icon — no confirmation, no undo. That single click changes what an entire
+   * class is billed for, and the two places it appears (a small × in a list and
+   * a smaller × in a chip) are the easiest things on the page to hit by mistake.
+   *
+   * Confirm names the class and the bundle, so a misclick is caught by reading
+   * rather than by remembering what was under the cursor.
+   */
+  const [pendingRemoval, setPendingRemoval] = useState<any>(null);
+
   const removeAssignmentMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/class-book-levels/${id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/class-book-levels"] }); toast({ title: "Assignment removed" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/class-book-levels"] }); toast({ title: "Assignment removed" }); setPendingRemoval(null); },
     onError: (err: any) => { toast({ title: "Error", description: err.message, variant: "destructive" }); },
   });
 
@@ -288,7 +303,7 @@ function BookLevelsSection() {
                         <div className="font-medium text-sm text-foreground truncate">{cbl.class?.name || "?"}</div>
                         <div className="text-xs text-muted-foreground">Assigned bundle: {cbl.bookLevel?.name || selectedLevel.name}</div>
                       </div>
-                      <button onClick={() => removeAssignmentMutation.mutate(cbl.id)} disabled={removeAssignmentMutation.isPending} className="p-1.5 rounded-lg text-muted-foreground hover:bg-error-container hover:text-on-error-container transition-colors" aria-label="Remove assignment">
+                      <button onClick={() => setPendingRemoval(cbl)} disabled={removeAssignmentMutation.isPending} className="p-1.5 rounded-lg text-muted-foreground hover:bg-error-container hover:text-on-error-container transition-colors" aria-label={`Remove ${cbl.bookLevel?.name || "bundle"} from ${cbl.class?.name || "class"}`} title={`Remove ${cbl.bookLevel?.name || "bundle"} from ${cbl.class?.name || "class"}`}>
                         <MaterialSymbol name="close" className="text-base" />
                       </button>
                     </div>
@@ -316,10 +331,11 @@ function BookLevelsSection() {
                 <MaterialSymbol name="arrow_forward" className="text-xs text-muted-foreground" />
                 <span className="text-muted-foreground">{cbl.bookLevel?.name || "?"}</span>
                 <button
-                  onClick={() => removeAssignmentMutation.mutate(cbl.id)}
+                  onClick={() => setPendingRemoval(cbl)}
                   disabled={removeAssignmentMutation.isPending}
                   className="ml-0.5 rounded-full text-muted-foreground hover:text-on-error-container transition-colors"
-                  aria-label="Remove assignment"
+                  aria-label={`Remove ${cbl.bookLevel?.name || "bundle"} from ${cbl.class?.name || "class"}`}
+                  title={`Remove ${cbl.bookLevel?.name || "bundle"} from ${cbl.class?.name || "class"}`}
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -393,6 +409,32 @@ function BookLevelsSection() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* C3: confirmation for the one click that rebills a whole class. */}
+      <AlertDialog open={!!pendingRemoval} onOpenChange={(open) => { if (!open) setPendingRemoval(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {pendingRemoval?.bookLevel?.name || "this bundle"} from{" "}
+              {pendingRemoval?.class?.name || "this class"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Every pupil in {pendingRemoval?.class?.name || "this class"} will stop being billed for
+              this bundle&rsquo;s books. Orders already placed are not affected. You can assign the
+              bundle again afterwards.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => pendingRemoval && removeAssignmentMutation.mutate(pendingRemoval.id)}
+              disabled={removeAssignmentMutation.isPending}
+            >
+              {removeAssignmentMutation.isPending ? "Removing…" : "Remove assignment"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,7 +1,6 @@
-import { eq, and, lt, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, lt, desc, sql, inArray, notInArray } from "drizzle-orm";
 // NOTE: getAllocations uses batched inArray lookups (no N+1).
-import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
+import { getDb as sharedGetDb, getTxDb, type AppDatabase } from "./config/database.js";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import * as schema from "../shared/schema.js";
@@ -28,15 +27,28 @@ export function getStorageMode(): "database" | "memory" | "unknown" {
   return _storageMode;
 }
 
-// Lazy DB initialisation — safe when DATABASE_URL is absent (falls back to memory)
-let _db: ReturnType<typeof drizzle> | null = null;
-function getDb(): ReturnType<typeof drizzle> {
-  if (!_db) {
-    if (!RESOLVED_DATABASE_URL) throw new Error("No DATABASE_URL configured");
-    const sql = neon(RESOLVED_DATABASE_URL);
-    _db = drizzle(sql, { schema });
-  }
-  return _db;
+/**
+ * The database handle for all 150+ storage methods.
+ *
+ * D4: this used to be a THIRD private client — `drizzle(neon(DATABASE_URL))`
+ * constructed right here — separate from the two in config/database.ts. Two
+ * consequences, both bad:
+ *
+ *   1. Nothing in storage could ever be transactional, because the Neon HTTP
+ *      driver has no interactive transactions. That is the direct cause of the
+ *      money-path defects: confirmPayment cannot be made atomic while it is
+ *      pinned to a client that has no transactions.
+ *   2. Storage only worked against Neon at all, so every database-backed test
+ *      suite was unrunnable on a local Postgres or in CI.
+ *
+ * It now delegates to the shared factory, which picks the right driver for the
+ * URL. The memory-storage fallback is preserved exactly: callers that reach
+ * here without a DATABASE_URL still get the same throw, which isDbUnavailableError
+ * turns into the in-memory path outside production.
+ */
+function getDb(): AppDatabase {
+  if (!RESOLVED_DATABASE_URL) throw new Error("No DATABASE_URL configured");
+  return sharedGetDb();
 }
 
 // PostgreSQL supports RETURNING — no need for a separate SELECT after insert/update
@@ -253,12 +265,57 @@ function ensureDemoUsersInMemory() {
   }
 }
 
-// Helper: build a school-scoped WHERE condition
+/**
+ * Thrown when a record does not exist *or* does not belong to the caller's
+ * school. Deliberately one error for both cases: telling an attacker apart
+ * "no such student" from "not your student" confirms the existence of records
+ * in another tenant. Routes map this to 404.
+ */
+/**
+ * Raised when a stock deduction would take a book below zero. A distinct type so
+ * confirmPayment can turn it into a clear "insufficient stock" message for the
+ * finance officer rather than a generic 400.
+ */
+/** Raised when an order — or part of one — has already been submitted for payment. */
+export class DuplicatePaymentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicatePaymentError";
+  }
+}
+
+export class InsufficientStockError extends Error {
+  constructor(bookTitle: string) {
+    super(`Not enough stock: ${bookTitle}`);
+    this.name = "InsufficientStockError";
+  }
+}
+
+export class NotFoundError extends Error {
+  constructor(message = "Not found") {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
+/**
+ * Build a school-scoped WHERE condition.
+ *
+ * SECURITY: a null/undefined school id produces NO filter — i.e. every tenant.
+ * That is intended for platform-owner reads and is catastrophic for anyone else,
+ * and ~150 storage methods inherit the behaviour.
+ *
+ * The invariant that makes this safe is enforced one layer up, in
+ * ensureSessionSchoolIsActive (server/middleware/auth.ts): a session whose role
+ * is tenant-scoped and whose school id is null is refused with a 403 before any
+ * route body runs. Do not weaken that guard, and do not call storage methods
+ * with a null school id from a path that has not been through it.
+ */
 function schoolFilter<T extends { schoolId: any }>(table: T, schoolId?: string | null) {
   if (typeof schoolId === "string") {
     return eq(table.schoolId, schoolId);
   }
-  return undefined; // no filter for owner/demo (null schoolId)
+  return undefined; // all tenants — platform owner only (see note above)
 }
 
 export interface IStorage {
@@ -1039,7 +1096,22 @@ class DatabaseStorage implements IStorage {
   }
 
   async adjustStock(bookId: string, quantity: number, type: string, reason?: string, schoolId?: string | null): Promise<schema.Book> {
-    const book = await this.getBook(bookId, schoolId);
+    return this.adjustStockOn(getDb(), bookId, quantity, type, reason, schoolId);
+  }
+
+  /**
+   * The body of adjustStock, parameterised by the database handle so it can run
+   * inside a caller's transaction. confirmPayment needs exactly this: a stock
+   * deduction that rolls back with the confirmation it belongs to.
+   */
+  private async adjustStockOn(
+    db: AppDatabase, bookId: string, quantity: number, type: string,
+    reason?: string, schoolId?: string | null,
+  ): Promise<schema.Book> {
+    const bookConditions = [eq(schema.books.id, bookId)];
+    const bookScope = schoolFilter(schema.books, schoolId);
+    if (bookScope) bookConditions.push(bookScope);
+    const [book] = await db.select().from(schema.books).where(and(...bookConditions));
     if (!book) throw new Error("Book not found");
 
     const qty = Math.abs(quantity);
@@ -1053,18 +1125,18 @@ class DatabaseStorage implements IStorage {
     const whereClause = isDeduction
       ? and(eq(schema.books.id, bookId), sql`${schema.books.stockQuantity} >= ${qty}`)
       : eq(schema.books.id, bookId);
-    const [updated] = await getDb()
+    const [updated] = await db
       .update(schema.books)
       .set({ stockQuantity: sql`${schema.books.stockQuantity} + ${delta}` })
       .where(whereClause)
       .returning();
     if (!updated) {
       // Book exists (checked above), so a missing row here means the guard failed.
-      throw new Error("Stock cannot go below zero");
+      throw new InsufficientStockError(book.title || "This book");
     }
 
     const newQty = updated.stockQuantity ?? 0;
-    await getDb().insert(schema.bookInventoryTransactions).values({
+    await db.insert(schema.bookInventoryTransactions).values({
       bookId,
       transactionType: type,
       quantity,
@@ -1163,6 +1235,38 @@ class DatabaseStorage implements IStorage {
     if (sf) conditions.push(sf);
     await getDb().delete(schema.classTeacherAssignments).where(and(...conditions));
   }
+  /**
+   * Every class this teacher is responsible for, under BOTH models.
+   *
+   * H2: there were two ways to make someone a class's teacher — the legacy
+   * `classes.teacher_id` column and the newer `class_teacher_assignments` table
+   * (added for schools where several teachers share a class by subject, with
+   * full CRUD and a UI). Different code paths consulted different ones:
+   * /api/classes and /api/students read both, while /api/allocations, every
+   * custody guard, and getDistributionsByTeacher read only `classes.teacher_id`.
+   *
+   * The result was that assigning a teacher THE NEW WAY silently broke the last
+   * stage of the term: they signed in, got a teacher dashboard, saw their
+   * classes — and an empty distribution list. Nothing errored.
+   *
+   * Everything now resolves through here, so the two models cannot disagree.
+   */
+  async getTeacherClassIds(teacherId: string, schoolId?: string | null): Promise<string[]> {
+    const ids = new Set<string>();
+
+    const legacyConditions: any[] = [eq(schema.classes.teacherId, teacherId)];
+    const classScope = schoolFilter(schema.classes, schoolId);
+    if (classScope) legacyConditions.push(classScope);
+    const legacy = await getDb().select({ id: schema.classes.id })
+      .from(schema.classes).where(and(...legacyConditions));
+    for (const row of legacy) ids.add(row.id);
+
+    for (const id of await this.getAssignedClassIdsForTeacher(teacherId, schoolId)) {
+      ids.add(id);
+    }
+    return Array.from(ids);
+  }
+
   async getAssignedClassIdsForTeacher(teacherId: string, schoolId?: string | null): Promise<string[]> {
     const conditions: any[] = [eq(schema.classTeacherAssignments.teacherId, teacherId), eq(schema.classTeacherAssignments.isActive, true)];
     const sf = schoolFilter(schema.classTeacherAssignments, schoolId);
@@ -1210,12 +1314,24 @@ class DatabaseStorage implements IStorage {
   }
 
   async createStudent(s: schema.InsertStudent): Promise<schema.Student> {
+    // SECURITY (S6): the route forces schoolId onto the row, but classId comes
+    // straight from the request body. Without this the child is filed under the
+    // caller's school while sitting in another school's class — and then appears
+    // on that school's teacher's distribution list.
+    if ((s as any).classId) {
+      await this.assertClassInSchool((s as any).classId, (s as any).schoolId ?? null);
+    }
     const code = `STU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const created = await insertAndFetchById(schema.students, { ...s, studentCode: code });
     return created;
   }
 
   async updateStudent(id: string, s: Partial<schema.InsertStudent>, schoolId?: string | null): Promise<schema.Student | undefined> {
+    // SECURITY (S6): moving a pupil into a class is the same body-supplied
+    // foreign key as on create.
+    if ((s as any).classId) {
+      await this.assertClassInSchool((s as any).classId, schoolId);
+    }
     const conditions = [eq(schema.students.id, id)];
     const sf = schoolFilter(schema.students, schoolId);
     if (sf) conditions.push(sf);
@@ -1276,7 +1392,49 @@ class DatabaseStorage implements IStorage {
     await getDb().delete(schema.bookLevels).where(and(...conditions));
   }
 
-  async getBookLevelItems(bookLevelId: string): Promise<(schema.BookLevelItem & { book?: schema.Book })[]> {
+  /**
+   * SECURITY (S4/S6): book_level_items has no school_id of its own — it inherits
+   * tenancy from its parent book level. These three methods took no school id at
+   * all, so read, write AND delete crossed tenants. Injecting a book into another
+   * school's bundle silently changes what that school's parents are billed.
+   *
+   * The scoping lives here rather than in the route because there are several
+   * call sites and this is the layer none of them can skip.
+   */
+  private async assertBookLevelInSchool(bookLevelId: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.bookLevels.id, bookLevelId)];
+    const sf = schoolFilter(schema.bookLevels, schoolId);
+    if (sf) conditions.push(sf);
+    const [level] = await getDb().select({ id: schema.bookLevels.id })
+      .from(schema.bookLevels).where(and(...conditions));
+    if (!level) throw new NotFoundError("Book level not found");
+  }
+
+  /**
+   * SECURITY (S6): validate a body-supplied foreign key against the caller's
+   * school. Route handlers force `schoolId` on the row they insert, which makes
+   * the row look correctly scoped while it points at another tenant's record.
+   */
+  private async assertBookInSchool(bookId: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.books.id, bookId)];
+    const sf = schoolFilter(schema.books, schoolId);
+    if (sf) conditions.push(sf);
+    const [book] = await getDb().select({ id: schema.books.id })
+      .from(schema.books).where(and(...conditions));
+    if (!book) throw new NotFoundError("Book not found");
+  }
+
+  private async assertClassInSchool(classId: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.classes.id, classId)];
+    const sf = schoolFilter(schema.classes, schoolId);
+    if (sf) conditions.push(sf);
+    const [cls] = await getDb().select({ id: schema.classes.id })
+      .from(schema.classes).where(and(...conditions));
+    if (!cls) throw new NotFoundError("Class not found");
+  }
+
+  async getBookLevelItems(bookLevelId: string, schoolId?: string | null): Promise<(schema.BookLevelItem & { book?: schema.Book })[]> {
+    await this.assertBookLevelInSchool(bookLevelId, schoolId);
     const items = await getDb().select().from(schema.bookLevelItems).where(eq(schema.bookLevelItems.bookLevelId, bookLevelId));
     const result = [];
     for (const item of items) {
@@ -1286,12 +1444,24 @@ class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async addBookLevelItem(item: schema.InsertBookLevelItem): Promise<schema.BookLevelItem> {
+  async addBookLevelItem(item: schema.InsertBookLevelItem, schoolId?: string | null): Promise<schema.BookLevelItem> {
+    await this.assertBookLevelInSchool(item.bookLevelId, schoolId);
+
+    // SECURITY (S6): bookId arrives in the request body. Without this check a
+    // caller could attach another school's book — or a book that does not exist
+    // — to their own bundle. The same pattern is already used correctly in
+    // family-enrollment.routes.ts.
+    await this.assertBookInSchool(item.bookId, schoolId);
+
     const created = await insertAndFetchById(schema.bookLevelItems, item);
     return created;
   }
 
-  async removeBookLevelItem(id: string): Promise<void> {
+  async removeBookLevelItem(id: string, schoolId?: string | null): Promise<void> {
+    const [item] = await getDb().select({ bookLevelId: schema.bookLevelItems.bookLevelId })
+      .from(schema.bookLevelItems).where(eq(schema.bookLevelItems.id, id));
+    if (!item) return;
+    await this.assertBookLevelInSchool(item.bookLevelId, schoolId);
     await getDb().delete(schema.bookLevelItems).where(eq(schema.bookLevelItems.id, id));
   }
 
@@ -1310,7 +1480,12 @@ class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async assignClassBookLevel(cbl: schema.InsertClassBookLevel): Promise<schema.ClassBookLevel> {
+  async assignClassBookLevel(cbl: schema.InsertClassBookLevel, schoolId?: string | null): Promise<schema.ClassBookLevel> {
+    // SECURITY (S6): both ids arrive in the request body, and this row decides
+    // what an entire class is billed for. removeClassBookLevel already checked
+    // ownership; the create path did not.
+    await this.assertClassInSchool(cbl.classId, schoolId);
+    await this.assertBookLevelInSchool(cbl.bookLevelId, schoolId);
     const created = await insertAndFetchById(schema.classBookLevels, cbl);
     return created;
   }
@@ -1326,7 +1501,24 @@ class DatabaseStorage implements IStorage {
     await getDb().delete(schema.classBookLevels).where(eq(schema.classBookLevels.id, id));
   }
 
-  async getStudentBookLevelOverride(studentId: string): Promise<(schema.StudentBookLevel & { bookLevel?: schema.BookLevel }) | undefined> {
+  /**
+   * SECURITY (S5): these took a student id straight from the URL and never
+   * checked which school the child belongs to — the route computed `sid` and
+   * then never used it. setStudentBookLevelOverride in particular did an
+   * unconditional delete-then-insert, so an admin at school A could rewrite
+   * which books a child at school B is billed for.
+   */
+  private async assertStudentInSchool(studentId: string, schoolId?: string | null): Promise<void> {
+    const conditions = [eq(schema.students.id, studentId)];
+    const sf = schoolFilter(schema.students, schoolId);
+    if (sf) conditions.push(sf);
+    const [student] = await getDb().select({ id: schema.students.id })
+      .from(schema.students).where(and(...conditions));
+    if (!student) throw new NotFoundError("Student not found");
+  }
+
+  async getStudentBookLevelOverride(studentId: string, schoolId?: string | null): Promise<(schema.StudentBookLevel & { bookLevel?: schema.BookLevel }) | undefined> {
+    await this.assertStudentInSchool(studentId, schoolId);
     const [row] = await getDb().select().from(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
     if (!row) return undefined;
     const [bl] = await getDb().select().from(schema.bookLevels).where(eq(schema.bookLevels.id, row.bookLevelId));
@@ -1334,12 +1526,18 @@ class DatabaseStorage implements IStorage {
   }
 
   async setStudentBookLevelOverride(studentId: string, bookLevelId: string, schoolId?: string | null): Promise<schema.StudentBookLevel> {
+    await this.assertStudentInSchool(studentId, schoolId);
+    // SECURITY (S6): bookLevelId is body-supplied — it must belong to the same
+    // tenant, or a school could point one of its pupils at another school's
+    // bundle and be billed for books it does not stock.
+    await this.assertBookLevelInSchool(bookLevelId, schoolId);
     await getDb().delete(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
     const created = await insertAndFetchById(schema.studentBookLevels, { studentId, bookLevelId, schoolId: schoolId ?? null });
     return created;
   }
 
-  async deleteStudentBookLevelOverride(studentId: string): Promise<void> {
+  async deleteStudentBookLevelOverride(studentId: string, schoolId?: string | null): Promise<void> {
+    await this.assertStudentInSchool(studentId, schoolId);
     await getDb().delete(schema.studentBookLevels).where(eq(schema.studentBookLevels.studentId, studentId));
   }
 
@@ -1408,7 +1606,11 @@ class DatabaseStorage implements IStorage {
    * Best-effort: if the lookup fails we still write the row, just without the
    * snapshot. Losing a label is acceptable; losing the allocation is not.
    */
-  private async snapshotStudentContext(studentId: string | null | undefined): Promise<{
+  private async snapshotStudentContext(studentId: string | null | undefined) {
+    return this.snapshotStudentContextOn(getDb(), studentId);
+  }
+
+  private async snapshotStudentContextOn(db: AppDatabase, studentId: string | null | undefined): Promise<{
     academicYear: string;
     classIdAtAllocation: string | null;
     classNameAtAllocation: string | null;
@@ -1422,9 +1624,9 @@ class DatabaseStorage implements IStorage {
     };
     if (!studentId) return base;
     try {
-      const [student] = await getDb().select().from(schema.students).where(eq(schema.students.id, studentId));
+      const [student] = await db.select().from(schema.students).where(eq(schema.students.id, studentId));
       if (!student?.classId) return base;
-      const [cls] = await getDb().select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+      const [cls] = await db.select().from(schema.classes).where(eq(schema.classes.id, student.classId));
       return {
         // Prefer the class's own recorded year over today's date — a class
         // explicitly labelled 2025/26 should stamp that, not the wall clock.
@@ -1812,15 +2014,21 @@ class DatabaseStorage implements IStorage {
   }
 
   async getBasket(id: string, schoolId?: string | null): Promise<any> {
+    return this.getBasketOn(getDb(), id, schoolId);
+  }
+
+  /** getBasket against a caller-supplied handle, so it can read its own writes
+   *  inside a transaction. */
+  private async getBasketOn(db: AppDatabase, id: string, schoolId?: string | null): Promise<any> {
     const conditions = [eq(schema.childBookBaskets.id, id)];
     const sf = schoolFilter(schema.childBookBaskets, schoolId);
     if (sf) conditions.push(sf);
-    const [basket] = await getDb().select().from(schema.childBookBaskets).where(and(...conditions));
+    const [basket] = await db.select().from(schema.childBookBaskets).where(and(...conditions));
     if (!basket) return null;
-    const items = await getDb().select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
+    const items = await db.select().from(schema.basketItems).where(eq(schema.basketItems.basketId, basket.id));
     const itemsWithBooks = [];
     for (const item of items) {
-      const [book] = await getDb().select().from(schema.books).where(eq(schema.books.id, item.bookId));
+      const [book] = await db.select().from(schema.books).where(eq(schema.books.id, item.bookId));
       itemsWithBooks.push({ ...item, book });
     }
     return { ...basket, items: itemsWithBooks };
@@ -1828,17 +2036,49 @@ class DatabaseStorage implements IStorage {
 
   // === PAYMENTS ===
 
+  /**
+   * D5: an order could be paid twice. basket_payments had no unique constraint
+   * on basket_id and nothing checked, so two POSTs with the same basketIds
+   * produced two full-price payment rows — the parent charged twice for the
+   * same books, with no error anywhere.
+   *
+   * Migration 006 adds the unique index, which is the real guarantee. This check
+   * exists so the parent sees "this order has already been submitted" instead of
+   * a raw constraint violation, and so the duplicate is refused before a payment
+   * row is written at all.
+   *
+   * The whole thing runs in one transaction: previously a failure partway
+   * through left a payment row with only some of its baskets attached.
+   */
   async createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment> {
-    // Revenue has to stay attributable to the year it was taken in.
-    const created = await insertAndFetchById(schema.bookPayments, {
-      academicYear: currentAcademicYear(),
-      ...payment,
-    } as schema.InsertBookPayment);
-    for (const basketId of basketIds) {
-      await getDb().insert(schema.basketPayments).values({ basketId, paymentId: created.id });
-      await getDb().update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
-    }
-    return created;
+    return getTxDb().transaction(async (trx) => {
+      if (basketIds.length > 0) {
+        const already = await trx
+          .select({ basketId: schema.basketPayments.basketId })
+          .from(schema.basketPayments)
+          .where(inArray(schema.basketPayments.basketId, basketIds));
+        if (already.length > 0) {
+          throw new DuplicatePaymentError(
+            already.length === basketIds.length
+              ? "This order has already been submitted for payment."
+              : "Part of this order has already been submitted for payment.",
+          );
+        }
+      }
+
+      // Revenue has to stay attributable to the year it was taken in.
+      const [created] = await trx.insert(schema.bookPayments).values({
+        academicYear: currentAcademicYear(),
+        ...payment,
+      } as schema.InsertBookPayment).returning();
+
+      for (const basketId of basketIds) {
+        await trx.insert(schema.basketPayments).values({ basketId, paymentId: created.id });
+        await trx.update(schema.childBookBaskets).set({ status: "paid" })
+          .where(eq(schema.childBookBaskets.id, basketId));
+      }
+      return created;
+    });
   }
 
   async updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
@@ -1934,69 +2174,130 @@ class DatabaseStorage implements IStorage {
     return payment;
   }
 
+  /**
+   * Turn a confirmed order into allocations, atomically.
+   *
+   * This method had three compounding defects (D1–D3 in the 22 August report),
+   * all of which came from the same root cause: it ran statement-by-statement
+   * with no transaction, because storage was pinned to a client that had none.
+   *
+   *   D1  Status was written to "confirmed" FIRST, then baskets were looped.
+   *       A timeout partway through left the order marked confirmed with only
+   *       some baskets allocated — and the idempotency guard then read
+   *       "confirmed" and returned immediately, so the missing allocations
+   *       could never be created. The parent had paid, and two children never
+   *       appeared on any teacher's list. Nothing logged an error, and no query
+   *       in the codebase would have surfaced it.
+   *
+   *   D2  The stock deduction was wrapped in `catch {}` with the comment
+   *       "Stock adjustment failure should not block allocation" — so 40 orders
+   *       against 30 copies produced 40 allocations and stock at zero. Ten
+   *       children held an allocation for a book that did not exist, discovered
+   *       by a teacher on distribution day.
+   *
+   *   D3  SELECT → check → UPDATE is check-then-act with no lock. A finance
+   *       officer clicking while the auto-verifier processed the same order:
+   *       both read "reference_submitted", both passed, both created a full set
+   *       of allocations, stock deducted twice.
+   *
+   * All three are closed the same way: one transaction, and the status write is
+   * a CONDITIONAL UPDATE used as the lock. Zero rows updated means another
+   * caller already claimed this order — return what they produced rather than
+   * doing it again. Because the claim is inside the transaction, a failure
+   * anywhere below rolls the status back too, so a retry is not just safe but
+   * necessary and will work.
+   */
   async confirmPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
+    /** Statuses meaning "this order has already produced its side effects". */
+    const ALREADY_PROCESSED = ["confirmed", "ready_for_collection", "collected"];
+
     const conditions = [eq(schema.bookPayments.id, paymentId)];
     const sf = schoolFilter(schema.bookPayments, schoolId);
     if (sf) conditions.push(sf);
-    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
-    if (!existing) throw new Error("Payment not found");
 
-    // Idempotency (Slice 5): confirming creates allocations and DEDUCTS STOCK —
-    // side effects that must happen at most once. If this order is already
-    // confirmed or further along, return it unchanged instead of double-processing
-    // (a repeated click must never duplicate allocations or double-deduct stock).
-    const ALREADY_PROCESSED = ["confirmed", "ready_for_collection", "collected"];
-    if (ALREADY_PROCESSED.includes(existing.status)) {
-      return existing;
-    }
+    return getTxDb().transaction(async (trx) => {
+      const [existing] = await trx.select().from(schema.bookPayments).where(and(...conditions));
+      if (!existing) throw new NotFoundError("Payment not found");
 
-    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
-      status: "confirmed",
-      confirmedAt: new Date(),
-      paymentReviewedAt: new Date(),
-      paymentReviewedBy: reviewedBy,
-      paymentReviewNote: reviewNote || null,
-    });
+      // ── The lock. Claim the order by moving it out of the payable states in
+      //    a single guarded UPDATE. Two concurrent callers race here; exactly
+      //    one gets a row back.
+      const [claimed] = await trx
+        .update(schema.bookPayments)
+        .set({
+          status: "confirmed",
+          confirmedAt: new Date(),
+          paymentReviewedAt: new Date(),
+          paymentReviewedBy: reviewedBy,
+          paymentReviewNote: reviewNote || null,
+        })
+        .where(and(
+          eq(schema.bookPayments.id, paymentId),
+          notInArray(schema.bookPayments.status, ALREADY_PROCESSED),
+        ))
+        .returning();
 
-    // Create allocations from linked baskets — guarded PER BASKET so a retry (or a
-    // partially-completed prior run) never duplicates allocations or re-deducts stock.
-    const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
-    for (const bp of bps) {
-      const basket = await this.getBasket(bp.basketId);
-      if (!basket) continue;
-
-      const existingAllocs = await getDb()
-        .select({ id: schema.financeBookAllocations.id })
-        .from(schema.financeBookAllocations)
-        .where(eq(schema.financeBookAllocations.basketId, basket.id));
-      if (basket.status === "allocated" || existingAllocs.length > 0) {
-        // Already turned into allocations — just ensure the basket flag is set.
-        await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
-        continue;
+      if (!claimed) {
+        // Someone else won, or it was already settled. Either way the side
+        // effects belong to that run — return the current row unchanged.
+        const [current] = await trx.select().from(schema.bookPayments).where(and(...conditions));
+        return current ?? existing;
       }
 
-      await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
-      // Resolved once per basket, not per book — every item in a basket belongs
-      // to the same child in the same class on the same day.
-      const snapshot = await this.snapshotStudentContext(basket.studentId);
-      for (const item of basket.items) {
-        await getDb().insert(schema.financeBookAllocations).values({
-          studentId: basket.studentId,
-          bookId: item.bookId,
-          basketId: basket.id,
-          status: "allocated",
-          schoolId: existing.schoolId,
-          ...snapshot,
-        });
-        try {
-          await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
-        } catch (e) {
-          // Stock adjustment failure should not block allocation
+      // ── Allocations. Still guarded per basket, because a basket may already
+      //    have been allocated by an earlier partial run against the old
+      //    non-transactional code.
+      const bps = await trx.select().from(schema.basketPayments)
+        .where(eq(schema.basketPayments.paymentId, paymentId));
+
+      for (const bp of bps) {
+        const basket = await this.getBasketOn(trx, bp.basketId);
+        if (!basket) continue;
+
+        const existingAllocs = await trx
+          .select({ id: schema.financeBookAllocations.id })
+          .from(schema.financeBookAllocations)
+          .where(eq(schema.financeBookAllocations.basketId, basket.id));
+
+        if (basket.status === "allocated" || existingAllocs.length > 0) {
+          await trx.update(schema.childBookBaskets)
+            .set({ status: "allocated" })
+            .where(eq(schema.childBookBaskets.id, bp.basketId));
+          continue;
+        }
+
+        await trx.update(schema.childBookBaskets)
+          .set({ status: "allocated" })
+          .where(eq(schema.childBookBaskets.id, bp.basketId));
+
+        // Resolved once per basket, not per book — every item in a basket
+        // belongs to the same child in the same class on the same day.
+        const snapshot = await this.snapshotStudentContextOn(trx, basket.studentId);
+
+        for (const item of basket.items) {
+          await trx.insert(schema.financeBookAllocations).values({
+            studentId: basket.studentId,
+            bookId: item.bookId,
+            basketId: basket.id,
+            status: "allocated",
+            schoolId: existing.schoolId,
+            ...snapshot,
+          });
+
+          // D2: NO try/catch. adjustStockOn refuses to take stock below zero and
+          // throws; that throw must roll the whole confirmation back so the
+          // finance officer is told "insufficient stock" instead of silently
+          // promising books that do not exist.
+          await this.adjustStockOn(
+            trx, item.bookId, item.quantity, "allocation",
+            `Allocated to student via payment ${paymentId}`,
+            existing.schoolId,
+          );
         }
       }
-    }
 
-    return payment;
+      return claimed;
+    });
   }
 
   async rejectPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
@@ -2111,18 +2412,20 @@ class DatabaseStorage implements IStorage {
   }
 
   async isPaymentReferenceDuplicate(referenceNumber: string, schoolId: string, excludePaymentId?: string): Promise<boolean> {
+    // Compared the same way the unique index in migration 006 compares them —
+    // upper(btrim(...)). A parent types this reference by hand off a bank app,
+    // so " abc123 " and "ABC123" are the same reference to everyone except a
+    // naive string equality, and the code check must not disagree with the
+    // constraint that will ultimately reject the row.
+    const normalized = referenceNumber.trim().toUpperCase();
     const conditions = [
-      eq(schema.bookPayments.paymentReferenceNumber, referenceNumber),
+      sql`upper(btrim(${schema.bookPayments.paymentReferenceNumber})) = ${normalized}`,
       eq(schema.bookPayments.schoolId, schoolId),
     ];
     if (excludePaymentId) {
-      // We need sql`!=` but drizzle doesn't have neq in simple form, use raw
-      // Actually drizzle has `ne` — but safer to just filter in JS for one check
+      conditions.push(sql`${schema.bookPayments.id} <> ${excludePaymentId}`);
     }
     const rows = await getDb().select({ id: schema.bookPayments.id }).from(schema.bookPayments).where(and(...conditions));
-    if (excludePaymentId) {
-      return rows.some(r => r.id !== excludePaymentId);
-    }
     return rows.length > 0;
   }
 
@@ -2171,6 +2474,18 @@ class DatabaseStorage implements IStorage {
   }
 
   async createAllocation(allocation: schema.InsertAllocation): Promise<schema.FinanceBookAllocation> {
+    // SECURITY (S6): studentId and bookId are body-supplied. The route stamps
+    // its own schoolId on the row, so an allocation pointing at another school's
+    // child would look correctly scoped in every list while quietly binding a
+    // foreign pupil to this school's stock.
+    const allocationSchoolId = (allocation as any).schoolId ?? null;
+    if ((allocation as any).studentId) {
+      await this.assertStudentInSchool((allocation as any).studentId, allocationSchoolId);
+    }
+    if ((allocation as any).bookId) {
+      await this.assertBookInSchool((allocation as any).bookId, allocationSchoolId);
+    }
+
     // Stamp the year and class BEFORE inserting, so the row records what was
     // true at allocation time rather than depending on a join that changes.
     const snapshot = await this.snapshotStudentContext((allocation as any).studentId);
@@ -2379,12 +2694,11 @@ class DatabaseStorage implements IStorage {
   // === TEACHER-LED DISTRIBUTION ===
 
   async getDistributionsByTeacher(teacherId: string, schoolId: string, filters?: { classId?: string; status?: string }): Promise<any[]> {
-    // Get classes assigned to this teacher
-    const teacherClasses = await getDb().select().from(schema.classes)
-      .where(and(eq(schema.classes.teacherId, teacherId), eq(schema.classes.schoolId, schoolId)));
-    if (teacherClasses.length === 0) return [];
-
-    const classIds = teacherClasses.map(c => c.id);
+    // H2: this queried ONLY classes.teacherId and early-returned [] — which is
+    // why a subject-assigned teacher saw an empty distribution list on the day
+    // the books were handed out.
+    const classIds = await this.getTeacherClassIds(teacherId, schoolId);
+    if (classIds.length === 0) return [];
     // Get students in those classes
     let studentQuery = getDb().select().from(schema.students)
       .where(and(
@@ -2416,7 +2730,9 @@ class DatabaseStorage implements IStorage {
     const books = await getDb().select().from(schema.books).where(eq(schema.books.schoolId, schoolId));
     const bookMap = new Map(books.map(b => [b.id, b]));
     const studentMap = new Map(students.map(s => [s.id, s]));
-    const classMap = new Map(teacherClasses.map(c => [c.id, c]));
+    const teacherClasses = await getDb().select().from(schema.classes)
+      .where(inArray(schema.classes.id, classIds));
+    const classMap = new Map(teacherClasses.map((c) => [c.id, c]));
 
     return allocations.map(a => {
       const student = studentMap.get(a.studentId);
@@ -2646,6 +2962,23 @@ class DatabaseStorage implements IStorage {
     try {
       // Preserve invite history while allowing inviter accounts to be removed.
       await getDb().update(schema.invites).set({ invitedBy: null }).where(eq(schema.invites.invitedBy, id));
+
+      // SECURITY (S3): parent_children keys on an email string, not a user id,
+      // so deleting a parent used to leave their child links behind pointing at
+      // an address with no account. Anyone could then register at the public
+      // parent-signup endpoint with that address and inherit the children.
+      // Read the user first — after the delete there is nothing left to match on.
+      const [victim] = await getDb()
+        .select({ email: schema.users.email, role: schema.users.role })
+        .from(schema.users)
+        .where(eq(schema.users.id, id));
+
+      if (victim?.email) {
+        await getDb()
+          .delete(schema.parentChildren)
+          .where(sql`lower(${schema.parentChildren.parentIdentifier}) = ${victim.email.toLowerCase().trim()}`);
+      }
+
       await getDb().delete(schema.users).where(eq(schema.users.id, id));
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;

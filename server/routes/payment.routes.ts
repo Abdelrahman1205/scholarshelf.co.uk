@@ -5,7 +5,7 @@
  * Extracted from routes.ts monolith.
  */
 import type { Express, Request, Response, NextFunction } from "express";
-import { storage } from "../storage.js";
+import { storage , InsufficientStockError, NotFoundError } from "../storage.js";
 import {
   requireAuth, requireRole,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
@@ -391,6 +391,16 @@ export function registerPaymentRoutes(app: Express): void {
 
       res.json(payment);
     } catch (e: any) {
+      // D2: an insufficient-stock error now rolls the whole confirmation back
+      // rather than being swallowed, so the finance officer is told the truth
+      // instead of the order silently promising books that do not exist.
+      if (e instanceof InsufficientStockError) {
+        return res.status(409).json({
+          message: `${e.message}. Restock before confirming this order — nothing has been changed.`,
+          code: "insufficient_stock",
+        });
+      }
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
       res.status(400).json({ message: e.message });
     }
   });

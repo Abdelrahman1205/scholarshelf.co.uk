@@ -37,43 +37,113 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
+      # The check that catches the failure that has reached production three
+      # times: compile api/index.ts — the artefact Vercel actually runs — and
+      # boot it under production-shaped env. Ordered before the build because it
+      # is faster and its failure message is more specific.
+      - name: Smoke boot (compile + boot api/index.ts, GET /api/health)
+        run: npm run test:smoke
+
       - name: Production build
         run: npm run build
 
       - name: Unit tests (custody state machine — pure, no DB)
         run: npm run test:custody
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Optional follow-up: DB + server integration suites.
-#
-# The suites test:stock / test:payments need DATABASE_URL; test:security /
-# test:family / test:staff additionally need the dev server listening on :5000.
-# To enable them here, add a job like the sketch below (kept commented so CI stays
-# green with zero secrets today):
-#
-#   integration:
-#     runs-on: ubuntu-latest
-#     services:
-#       postgres:
-#         image: postgres:16
-#         env:
-#           POSTGRES_PASSWORD: postgres
-#           POSTGRES_DB: edubook_ci
-#         ports: ["5432:5432"]
-#         options: >-
-#           --health-cmd "pg_isready" --health-interval 10s
-#           --health-timeout 5s --health-retries 5
-#     env:
-#       DATABASE_URL: postgres://postgres:postgres@localhost:5432/edubook_ci
-#       SESSION_SECRET: ci-secret
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: actions/setup-node@v4
-#         with: { node-version: "20", cache: npm }
-#       - run: npm ci
-#       - run: npm run db:push            # create schema in the CI database
-#       - run: npm run dev &              # start server in the background
-#       - run: npx wait-on http://localhost:5000/api/health
-#       - run: npm run test:stock
-#       - run: npm run test:payments
-#       - run: npm run test:security && npm run test:family && npm run test:staff
+  integration:
+    name: Security, tenant and payment suites
+    runs-on: ubuntu-latest
+    needs: verify
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scholarshelf_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/scholarshelf_ci
+      SESSION_SECRET: ci-only-session-secret-not-used-anywhere-real-32chars
+      NODE_ENV: development
+      PORT: "5000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply schema to the CI database
+        run: npm run db:push -- --force
+
+      - name: Apply SQL migrations
+        run: |
+          for f in migrations/00[2-9]*.sql; do
+            echo "── $f"
+            psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$f"
+          done
+
+      - name: Start the API
+        run: npm run dev &
+
+      - name: Wait for the API to be healthy
+        run: npx --yes wait-on -t 60000 http://localhost:5000/api/health
+
+      - name: Seed demo data
+        run: curl -sS -X POST http://localhost:5000/api/seed-users
+
+      # Ordered cheapest-first so a failure surfaces fast.
+      - name: Stock idempotency
+        run: npm run test:stock
+
+      - name: Payment idempotency
+        run: npm run test:payments
+
+      - name: Security regression suite
+        run: npm run test:security
+
+      # Tenant isolation needs TWO seeded schools — a single-tenant run cannot
+      # prove isolation, because with one school there is no boundary to cross
+      # and every probe passes vacuously. script/seed-school-b.ts is that
+      # fixture, so this suite is now REQUIRED: it is the only thing in the repo
+      # that catches the class of bug the application layer has no other
+      # defence against.
+      - name: Seed the second tenant (isolation fixture)
+        run: npm run seed:school-b
+
+      - name: Tenant isolation
+        run: npm run test:tenant
+
+      - name: Family enrolment
+        run: npm run test:family
+
+      - name: Staff and parent
+        run: npm run test:staff
+
+      # H2: a teacher assigned by subject (class_teacher_assignments) rather than
+      # the legacy classes.teacher_id must still see their distribution list.
+      - name: Teacher distribution (subject assignment)
+        run: npm run test:teacher
+
+      - name: Enrolment import
+        run: npm run test:import
+
+      - name: Payment verification
+        run: npm run test:verification
+
+      - name: Test-superuser kill switch
+        run: npm run test:superuser

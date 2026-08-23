@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { applyBrandingToDocument } from "@/lib/branding";
 import { getRoleRoute } from "@/lib/role-routes";
 import { PublicFooter } from "@/components/public-footer";
+import { describeApiError } from "@/lib/errors";
 
 // ─── STAFF INVITATION ACCEPTANCE (ScholarShelf design) ───────────────────────
 export default function AcceptInvitePage() {
@@ -99,12 +100,15 @@ export default function AcceptInvitePage() {
     } catch {}
   }
 
+  // C1: same dead string-matching as register.tsx.
   const errorMessage = validationError || (acceptInviteError
-    ? acceptInviteError.message.includes("409")
-      ? "Username is already taken"
-      : acceptInviteError.message.includes("400")
-      ? "Invalid or expired invite link"
-      : "Failed to accept invite. Please try again."
+    ? describeApiError(acceptInviteError, {
+        statusMessages: {
+          409: "Username is already taken",
+          400: "This invite link is invalid or has expired. Ask your administrator to send a new one.",
+        },
+        fallback: "Failed to accept invite. Please try again.",
+      })
     : "");
 
   return (

@@ -271,7 +271,22 @@ export default function Layout({ children }: LayoutProps) {
     setMobileOpen(false);
   }, [location]);
 
-  const SidebarContent = () => (
+  /**
+   * C5: this was `const SidebarContent = () => (...)` rendered as `<SidebarContent />`.
+   *
+   * Defining a component inside another component creates a NEW component type
+   * on every render, so React unmounts the old subtree and mounts a fresh one
+   * rather than updating it. The notification poll refetches every 15 seconds,
+   * which re-renders Layout, which remounts the entire sidebar — and the nav's
+   * scroll position jumps back to the top. An admin scrolling to a lower nav
+   * item gets yanked to the top twice a minute.
+   *
+   * Calling it as a function instead of rendering it as JSX inlines the elements
+   * into Layout's own tree, so React reconciles them normally and the scroll
+   * position survives. It keeps every closure variable it already reads, which a
+   * lift-and-pass-props refactor would have to thread through by hand.
+   */
+  const renderSidebar = () => (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
       {/* Logo / School branding */}
       <div className="flex items-center gap-3 h-16 px-5 border-b border-sidebar-border flex-shrink-0">
@@ -544,7 +559,7 @@ export default function Layout({ children }: LayoutProps) {
         "w-60 hidden md:flex flex-col fixed inset-y-0 left-0 z-30",
         (inSupportMode || isTestAccount) && "top-9"
       )}>
-        <SidebarContent />
+        {renderSidebar()}
       </aside>
 
       {/* Mobile overlay */}
@@ -556,7 +571,7 @@ export default function Layout({ children }: LayoutProps) {
             onClick={() => setMobileOpen(false)}
           />
           <aside className="absolute left-0 top-0 bottom-0 w-64 shadow-2xl">
-            <SidebarContent />
+            {renderSidebar()}
           </aside>
         </div>
       )}

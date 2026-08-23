@@ -9,6 +9,7 @@ import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./shared";
+import { formatDate } from "@/lib/format";
 
 // ─── ALLOCATIONS — Master Allocations List (ScholarShelf design) ─────────────
 
@@ -76,8 +77,8 @@ function AllocationsSection() {
     const rows = [["Student", "Book", "Status", "Allocated", "Received"]];
     filtered.forEach((a: any) => rows.push([
       a.student?.name || "", a.book?.title || "", a.status || "",
-      a.allocatedAt ? new Date(a.allocatedAt).toLocaleDateString() : "",
-      a.receivedAt ? new Date(a.receivedAt).toLocaleDateString() : "",
+      a.allocatedAt ? formatDate(a.allocatedAt) : "",
+      a.receivedAt ? formatDate(a.receivedAt) : "",
     ]));
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -216,7 +217,7 @@ function AllocationsSection() {
                         <span className="text-sm text-foreground">{a.book?.title || "Unknown"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground hidden md:table-cell">{a.allocatedAt ? new Date(a.allocatedAt).toLocaleDateString() : "—"}</td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground hidden md:table-cell">{a.allocatedAt ? formatDate(a.allocatedAt) : "—"}</td>
                     <td className="px-4 py-3">
                       {st === "received" ? (
                         <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-secondary-container text-on-secondary-container">
@@ -232,7 +233,7 @@ function AllocationsSection() {
                       {st === "received" ? (
                         <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
                           <MaterialSymbol name="history" className="text-base" />
-                          {a.receivedAt ? new Date(a.receivedAt).toLocaleDateString() : "—"}
+                          {a.receivedAt ? formatDate(a.receivedAt) : "—"}
                         </span>
                       ) : (
                         <Button

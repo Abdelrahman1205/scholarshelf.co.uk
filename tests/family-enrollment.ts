@@ -583,9 +583,15 @@ async function testGuardianUserLinkField() {
   } else {
     fail("Guardian userId field", `present=${g ? "userId" in g : false}, value=${g?.userId}`);
   }
-  // Portal status should be its default until an invite/redemption occurs.
-  if (g?.portalAccessStatus === "none") pass("New guardian portalAccessStatus=none", "");
-  else fail("Default portal status", `Expected none, got ${g?.portalAccessStatus}`);
+  // A completed (non-draft) enrolment that created a student auto-issues a
+  // family linking code and marks the emailable guardian "invited" — see the
+  // auto-send block in family-enrollment.routes.ts. This assertion predates that
+  // behaviour and asserted "none", so it contradicted the shipped code rather
+  // than testing it. What actually matters here is that the guardian is not
+  // "active": an invitation has been sent, but nobody has redeemed it, so no
+  // portal account exists yet.
+  if (g?.portalAccessStatus === "invited") pass("Enrolled guardian portalAccessStatus=invited", "");
+  else fail("Portal status after enrolment", `Expected invited, got ${g?.portalAccessStatus}`);
   if (familyId) await req("DELETE", `/api/families/${familyId}`);
 }
 

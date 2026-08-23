@@ -13,7 +13,7 @@ import type { Express, Request, Response } from "express";
 import { and, eq, or, ilike, inArray, desc, sql } from "drizzle-orm";
 import { getDb, getTxDb } from "../config/database.js";
 import { storage } from "../storage.js";
-import { families, guardians, students, familyStudents } from "../../shared/schema.js";
+import { families, guardians, students, familyStudents, childLinkingCodes } from "../../shared/schema.js";
 import {
   requireRole, sessionSchoolId, auditLog, routeParam, ADMIN_UI_ROLES, rateLimit,
   generateLinkingCode, getEmailBrandingForSchool,
@@ -219,6 +219,91 @@ function parseMappingField(raw: unknown): Record<string, string | null> | null {
   return out;
 }
 
+/**
+ * Resend permits a couple of sends per second. A 300-family import that ignores
+ * that gets rate-limited into silent failure, so every bulk send paces itself.
+ */
+const INVITE_SEND_GAP_MS = 300;
+
+/** "a****z@example.com" — enough for an admin to recognise, not enough to harvest. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "***";
+  const head = local.slice(0, 1);
+  const tail = local.length > 1 ? local.slice(-1) : "";
+  return `${head}${"*".repeat(Math.max(1, local.length - 2))}${tail}@${domain}`;
+}
+
+interface InviteCandidate {
+  familyId: string;
+  familyName: string;
+  guardianId: string;
+  email: string;
+}
+
+/**
+ * Guardians who still cannot log in: they have an email address, no portal
+ * account, and their family holds no live unredeemed linking code.
+ *
+ * One candidate per family — a linking code covers the whole household, so
+ * inviting both parents separately would issue two credentials for one family.
+ * The primary contact wins where there is one.
+ */
+async function findUninvitedGuardians(schoolId: string): Promise<InviteCandidate[]> {
+  const rows = await getDb().select({
+    guardianId: guardians.id,
+    familyId: guardians.familyId,
+    fullName: guardians.fullName,
+    email: guardians.email,
+    isPrimaryContact: guardians.isPrimaryContact,
+    portalAccessStatus: guardians.portalAccessStatus,
+    userId: guardians.userId,
+    familyName: families.householdName,
+    familyFallbackName: families.name,
+  })
+    .from(guardians)
+    .leftJoin(families, eq(guardians.familyId, families.id))
+    .where(eq(guardians.schoolId, schoolId));
+
+  const now = new Date();
+  const liveCodes = await getDb().select({
+    familyId: childLinkingCodes.familyId,
+    isUsed: childLinkingCodes.isUsed,
+    expiresAt: childLinkingCodes.expiresAt,
+  }).from(childLinkingCodes).where(eq(childLinkingCodes.schoolId, schoolId));
+
+  const familiesWithLiveCode = new Set(
+    liveCodes
+      .filter((c) => !c.isUsed && (!c.expiresAt || new Date(c.expiresAt) > now))
+      .map((c) => c.familyId)
+      .filter(Boolean) as string[],
+  );
+
+  const emailish = (v: string | null) => !!v && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+  const byFamily = new Map<string, typeof rows>();
+  for (const r of rows) {
+    if (!r.familyId) continue;
+    byFamily.set(r.familyId, [...(byFamily.get(r.familyId) || []), r] as typeof rows);
+  }
+
+  const candidates: InviteCandidate[] = [];
+  for (const [familyId, guardianRows] of byFamily) {
+    if (familiesWithLiveCode.has(familyId)) continue;
+    // Someone in this household already has portal access.
+    if (guardianRows.some((g) => g.userId || g.portalAccessStatus === "active")) continue;
+    const withEmail = guardianRows.filter((g) => emailish(g.email));
+    const chosen = withEmail.find((g) => g.isPrimaryContact) || withEmail[0];
+    if (!chosen) continue;
+    candidates.push({
+      familyId,
+      familyName: chosen.familyName || chosen.familyFallbackName || "your family",
+      guardianId: chosen.guardianId,
+      email: String(chosen.email).trim().toLowerCase(),
+    });
+  }
+  return candidates;
+}
+
 export function registerFamilyEnrollmentRoutes(app: Express): void {
   // ── Import: the field registry, so the dialog renders the same fields the
   //    server accepts (single source of truth: shared/enrollment-import.ts) ──
@@ -329,10 +414,106 @@ export function registerFamilyEnrollmentRoutes(app: Express): void {
         }).catch(() => {});
       }
 
-      res.status(201).json(result);
+      // ── Send the parent invitations the commit wrote ──────────────────────
+      //
+      // The codes are already in the database, inside the same transaction as
+      // the import. Sending happens here, after commit, because a send cannot be
+      // rolled back — and because a mail outage must not lose an import of 300
+      // families. Anything that fails to send stays valid and is picked up by
+      // POST /api/families/invitations/send-pending.
+      let invitationsSent = 0;
+      const invitationsFailed: string[] = [];
+      if (result.pendingInvitations.length > 0) {
+        const branding = await getEmailBrandingForSchool(req, sid);
+        for (const invite of result.pendingInvitations) {
+          const sent = await sendParentCodeEmail(
+            invite.email, invite.familyName, invite.code, invite.expiresAt, branding,
+          ).catch(() => false);
+          if (sent) invitationsSent++;
+          else invitationsFailed.push(invite.email);
+          // Resend allows a couple of sends per second; a 300-family import
+          // would otherwise be rate-limited into silent failure.
+          await new Promise((r) => setTimeout(r, INVITE_SEND_GAP_MS));
+        }
+        await auditLog(req, "import_parent_invitations_sent", `school:${sid}`, {
+          created: result.pendingInvitations.length,
+          sent: invitationsSent,
+          failed: invitationsFailed.length,
+        }).catch(() => {});
+      }
+
+      res.status(201).json({
+        ...result,
+        // Do not hand the codes themselves back to the browser — they are live
+        // credentials for a household. The counts are what the admin needs.
+        pendingInvitations: undefined,
+        invitationsCreated: result.pendingInvitations.length,
+        invitationsSent,
+        invitationsFailed: invitationsFailed.length,
+      });
     } catch (e: any) {
       const status = e instanceof SpreadsheetParseError ? 400 : (e?.httpStatus || 400);
       res.status(status).json({ message: e?.message || "The import failed and nothing was changed." });
+    }
+  });
+
+  // ── Bulk invite: every guardian who still cannot log in ──────────────────
+  //
+  // The safety net for the import path. Covers guardians whose email arrived
+  // after the import, whose invitation email bounced, or who were created before
+  // the importer issued codes at all. Idempotent: a family that already holds a
+  // live unredeemed code is skipped, so pressing the button twice does not
+  // invalidate the code already sitting in a parent's inbox.
+  app.post("/api/families/invitations/send-pending", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
+    try {
+      const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+      if (await rateLimit(`bulk-invite:${sid}`, 4, 60 * 60 * 1000)) {
+        return res.status(429).json({
+          message: "Bulk invitations were sent recently. Please wait before sending another round.",
+        });
+      }
+
+      const dryRun = req.body?.dryRun === true;
+      const pending = await findUninvitedGuardians(sid);
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true,
+          candidates: pending.length,
+          families: pending.map((p) => ({ familyName: p.familyName, email: maskEmail(p.email) })),
+        });
+      }
+
+      let sent = 0;
+      const failed: string[] = [];
+      const branding = await getEmailBrandingForSchool(req, sid);
+
+      for (const candidate of pending) {
+        const code = generateLinkingCode();
+        const expiresAt = new Date(Date.now() + 30 * 86400000);
+        await storage.createLinkingCode({
+          studentId: null as any, familyId: candidate.familyId, code,
+          parentEmail: candidate.email, expiresAt, schoolId: sid,
+        });
+        await getDb().update(guardians)
+          .set({ portalAccessStatus: "invited", updatedAt: new Date() })
+          .where(eq(guardians.id, candidate.guardianId));
+
+        const ok = await sendParentCodeEmail(
+          candidate.email, candidate.familyName, code, expiresAt, branding,
+        ).catch(() => false);
+        if (ok) sent++; else failed.push(candidate.email);
+        await new Promise((r) => setTimeout(r, INVITE_SEND_GAP_MS));
+      }
+
+      await auditLog(req, "bulk_parent_invitations_sent", `school:${sid}`, {
+        candidates: pending.length, sent, failed: failed.length,
+      });
+
+      res.json({ candidates: pending.length, sent, failed: failed.length });
+    } catch (e: any) {
+      res.status(e?.httpStatus || 400).json({ message: e?.message || "Could not send invitations." });
     }
   });
 

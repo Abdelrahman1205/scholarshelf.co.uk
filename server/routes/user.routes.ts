@@ -214,6 +214,23 @@ export function registerUserRoutes(app: Express): void {
             return res.status(200).json({ ...safeLinked, linked: true, addedRole: normalizedRole });
           }
 
+          // SECURITY (S3): a parent's identity IS their email — parent_children
+          // stores an email string, not a foreign key, and users.email is
+          // neither unique nor verified. A second account on the same address
+          // therefore inherits the first account's children. forceCreate is a
+          // legitimate escape hatch for staff who genuinely need two accounts;
+          // for parents it is an account-takeover primitive, so it is refused.
+          if (forceCreate && (normalizedRole === "parent" || existingRole === "parent")) {
+            return res.status(409).json({
+              message:
+                "A parent account already uses this email address. Parents are identified by email, "
+                + "so a second account on the same address would inherit the first one's children. "
+                + "Add the role to the existing account instead.",
+              existingUserId: emailUser.id,
+              suggestedAction: "link_to_existing",
+            });
+          }
+
           // No explicit decision yet, and not forcing a separate account → ask the admin.
           if (!forceCreate) {
             return res.status(409).json({
@@ -259,14 +276,50 @@ export function registerUserRoutes(app: Express): void {
         return res.status(403).json({ message: guardMessage });
       }
 
-      const { password, brandingPermissions, ...rest } = req.body;
-      const updates: any = { ...rest };
+      // SECURITY (S7): this used to spread the whole request body into the
+      // update. Every column was writable, including school_id — so a school
+      // admin could PATCH a user into another tenant — plus email, username,
+      // status, and the MFA columns. Only these five fields are editable here;
+      // anything else in the body is ignored rather than trusted.
+      const { password, brandingPermissions } = req.body;
+      const EDITABLE_FIELDS = ["name", "email", "username", "role", "status"] as const;
+      const updates: any = {};
+      for (const field of EDITABLE_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+          updates[field] = req.body[field];
+        }
+      }
       if (password) {
         updates.passwordHash = await bcrypt.hash(password, 12);
       }
 
       if (updates.role) {
         updates.role = resolveRole(updates.role);
+      }
+
+      // Moving a user between tenants is a platform-owner operation with its own
+      // consequences (their students, allocations and payments do not follow
+      // them). It is deliberately not reachable from this endpoint at all.
+      if (Object.prototype.hasOwnProperty.call(req.body, "schoolId")
+          && req.body.schoolId !== targetUser.schoolId) {
+        return res.status(403).json({
+          message: "A user's school cannot be changed here.",
+        });
+      }
+
+      // Identity columns are how parents and staff are matched to their records.
+      // A silent collision would hand one person another person's account.
+      if (updates.username && updates.username !== targetUser.username) {
+        const clash = await storage.getUserByUsername(updates.username);
+        if (clash && clash.id !== targetUser.id) {
+          return res.status(409).json({ message: "Username is already taken" });
+        }
+      }
+      if (updates.email && updates.email !== targetUser.email) {
+        const clash = await storage.getUserByEmail(String(updates.email).toLowerCase().trim());
+        if (clash && clash.id !== targetUser.id) {
+          return res.status(409).json({ message: "An account with this email already exists" });
+        }
       }
 
       const user = await storage.updateUser(routeParam(req.params.id), updates);

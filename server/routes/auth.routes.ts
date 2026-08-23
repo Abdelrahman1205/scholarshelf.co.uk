@@ -155,7 +155,9 @@ export function registerAuthRoutes(app: Express): void {
           }
           req.session.pendingMfa = { userId: user.id, expiresAt: Date.now() + 5 * 60 * 1000 };
           auditLog(req, "login_mfa_challenge", `user:${user.id}`).catch(() => {});
-          res.json({ mfaRequired: true });
+          // See the note on the sign-in path below: persist before replying, or
+          // the MFA code POST can arrive before pendingMfa exists in the store.
+          req.session.save(() => res.json({ mfaRequired: true }));
         });
       }
 
@@ -178,7 +180,22 @@ export function registerAuthRoutes(app: Express): void {
         storage.updateLastLogin(user.id).catch(() => {});
         auditLog(req, "login_success", `user:${user.id}`).catch(() => {});
 
-        buildAuthUserResponse(req, user).then((response) => res.json(response)).catch(() => res.json(safeUser(user)));
+        // Persist the session BEFORE replying.
+        //
+        // express-session writes to the store on res.end, which means the 200 is
+        // already on the wire while the INSERT into user_sessions is still in
+        // flight. A client that issues its next request immediately — the SPA
+        // does exactly this, redirecting the moment login returns — can beat the
+        // write and get "Not authenticated" straight after a successful login.
+        // On localhost the window is a millisecond; against a hosted Postgres it
+        // is a round trip, which is where it actually bites.
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("Session save failed:", saveErr);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          buildAuthUserResponse(req, user).then((response) => res.json(response)).catch(() => res.json(safeUser(user)));
+        });
       });
     } catch (e: any) {
       console.error("Sign-in error:", e);
@@ -248,7 +265,11 @@ export function registerAuthRoutes(app: Express): void {
         if (req.session.cookie) {
           req.session.cookie.maxAge = getSessionMaxAge("parent");
         }
-        buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
+        // Same reason as sign-in: a parent registering is redirected straight
+        // into the portal, and must not land on a 401.
+        req.session.save(() => {
+          buildAuthUserResponse(req, user).then((response) => res.status(201).json(response)).catch(() => res.status(201).json(safeUser(user)));
+        });
       });
     } catch (e: any) {
       console.error("Sign-up error:", e);

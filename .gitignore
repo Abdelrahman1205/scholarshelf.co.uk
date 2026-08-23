@@ -6,6 +6,15 @@ vite.config.ts.*
 *.tar.gz
 .vercel
 .env*
+!.env.example
+.localpg/
 tmp-*.cjs
 .fuse_hidden*
 **/.fuse_hidden*
+
+.env*
+
+# build + scratch artefacts
+.tsbuildinfo
+a.out
+tmp-*

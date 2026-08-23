@@ -162,6 +162,33 @@ export async function sendContactAcknowledgementEmail(to: string, name: string):
   return sendEmail(to, "We've received your message — ScholarShelf", wrapEmail("Thank you for getting in touch", body));
 }
 
+/**
+ * Security alert to the OTHER platform owners.
+ *
+ * Break-glass write access on the BytHub console, and any school marked for
+ * deletion, notify every owner except the person who did it. An elevation that
+ * nobody notices is not a control — which is also why each operator needs their
+ * own account rather than one shared master login.
+ */
+export async function sendConsoleAlertEmail(
+  to: string,
+  subject: string,
+  lines: string[],
+): Promise<boolean> {
+  const rows = lines
+    .map((l) => `<div style="white-space:pre-wrap;margin:0 0 6px;">${esc(l)}</div>`)
+    .join("");
+  const body = `
+    <h2 style="margin-top:0;color:#8a2c1f;">Console security alert</h2>
+    ${rows}
+    <p style="margin-top:22px;padding:12px;background:#fdf3f2;border-left:3px solid #a3241c;font-size:13px;">
+      If this was not expected, revoke that account's access immediately and review
+      the console audit trail.
+    </p>
+  `;
+  return sendEmail(to, subject, wrapEmail("Console security alert", body));
+}
+
 export async function sendPasswordResetEmail(
   to: string,
   resetLink: string,

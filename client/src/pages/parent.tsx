@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Html5Qrcode } from "html5-qrcode";
+import { formatDate, formatDateTime, formatMoney, studentYearLabel } from "@/lib/format";
+import { QueryError } from "@/components/query-state";
 
 interface ParentPageProps {
   section?: string;
@@ -51,6 +53,9 @@ function ParentDashboardSection({
   isChildrenLoading,
   isBasketsLoading,
   isPaymentsLoading,
+  basketsError,
+  onRetryBaskets,
+  retryingBaskets,
 }: {
   children: any[];
   baskets: any[];
@@ -58,6 +63,10 @@ function ParentDashboardSection({
   isChildrenLoading: boolean;
   isBasketsLoading: boolean;
   isPaymentsLoading: boolean;
+  /** C2: set when the baskets request FAILED, as opposed to returning nothing. */
+  basketsError?: unknown;
+  onRetryBaskets?: () => void;
+  retryingBaskets?: boolean;
 }) {
   const linkedChildren = children.length;
   const pendingBaskets = baskets.filter((b: any) => b.status === "pending");
@@ -65,11 +74,11 @@ function ParentDashboardSection({
   const lastPayment = payments[0];
   const subtotal = pendingBaskets.reduce((s: number, b: any) => s + parseFloat(b.totalAmount || "0"), 0);
 
-  const money = (v: any) => `£${parseFloat(v || "0").toFixed(2)}`;
+  const money = formatMoney;
+  // Was rendering "Grade 4" to UK parents. English primaries run Reception and
+  // Years 1-6; "Grade" is not a word used in an English school.
   const gradeLabel = (s: any) => {
-    const g = s?.gradeLevel;
-    if (g) return /^\d+$/.test(String(g)) ? `Grade ${g}` : String(g);
-    return s?.class?.name || s?.className || "";
+    return studentYearLabel(s, "");
   };
   const initials = (name: string) =>
     (name || "?").split(/\s+/).map((p: string) => p[0]).slice(0, 2).join("").toUpperCase();
@@ -126,7 +135,7 @@ function ParentDashboardSection({
           label="Pending Baskets"
           icon={<div className="h-12 w-12 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600"><ShoppingCart className="w-5 h-5" /></div>}
         >
-          <span className="text-3xl font-bold font-heading text-amber-600">{isBasketsLoading ? "…" : pendingCount}</span>
+          <span className="text-3xl font-bold font-heading text-amber-600">{isBasketsLoading ? "…" : basketsError ? "—" : pendingCount}</span>
         </StatCard>
 
         <StatCard
@@ -152,6 +161,16 @@ function ParentDashboardSection({
 
           {isBasketsLoading ? (
             <div className="rounded-2xl border border-border p-8 text-center text-muted-foreground">Loading baskets…</div>
+          ) : basketsError ? (
+            /* C2: a failed request used to fall through to the empty state
+               below and tell a parent "You're all caught up" — when they may
+               owe money and have a deadline. Say we could not check instead. */
+            <QueryError
+              error={basketsError}
+              label="your children's baskets"
+              onRetry={onRetryBaskets}
+              retrying={retryingBaskets}
+            />
           ) : pendingBaskets.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-8 text-center">
               <ShoppingCart className="w-8 h-8 mx-auto text-muted-foreground/40" />
@@ -921,7 +940,7 @@ function ParentPaymentsSection({
                 <TableBody>
                   {payments.map((payment: any) => (
                     <TableRow key={payment.id} data-testid={`row-payment-${payment.id}`}>
-                      <TableCell className="px-6">{payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "—"}</TableCell>
+                      <TableCell className="px-6">{payment.paidAt ? formatDate(payment.paidAt) : "—"}</TableCell>
                       <TableCell data-testid={`text-payment-amount-${payment.id}`}>£{parseFloat(payment.totalAmount || "0").toFixed(2)}</TableCell>
                       <TableCell>
                         <span className="font-mono bg-muted px-2 py-1 rounded text-sm">{payment.paymentReference}</span>
@@ -1085,7 +1104,7 @@ function ParentMessagesSection({ children }: { children: any[] }) {
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-medium text-xs">{msg.senderName || (isOwn ? "You" : "Teacher")}</span>
                         <span className="text-xs text-muted-foreground">
-                          {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ""}
+                          {msg.createdAt ? formatDateTime(msg.createdAt) : ""}
                         </span>
                       </div>
                       <p className="whitespace-pre-wrap">{msg.body}</p>
@@ -1180,7 +1199,7 @@ function ParentMessagesSection({ children }: { children: any[] }) {
                     <TableCell>{thread.teacherName || "Teacher"}</TableCell>
                     <TableCell>{thread.studentName || "Student"}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">
-                      {thread.updatedAt ? new Date(thread.updatedAt).toLocaleDateString() : "—"}
+                      {thread.updatedAt ? formatDate(thread.updatedAt) : "—"}
                     </TableCell>
                     <TableCell className="text-right px-6">
                       <Badge className={thread.status === "closed" ? "bg-muted text-muted-foreground" : "bg-emerald-500/10 text-emerald-600"}>
@@ -1365,7 +1384,7 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
       case "messages":
         return <ParentMessagesSection children={children} />;
       default:
-        return <ParentDashboardSection children={children} baskets={baskets} payments={payments} isChildrenLoading={childrenQuery.isLoading} isBasketsLoading={basketsQuery.isLoading} isPaymentsLoading={paymentsQuery.isLoading} />;
+        return <ParentDashboardSection children={children} baskets={baskets} payments={payments} isChildrenLoading={childrenQuery.isLoading} isBasketsLoading={basketsQuery.isLoading} isPaymentsLoading={paymentsQuery.isLoading} basketsError={basketsQuery.isError ? basketsQuery.error : undefined} onRetryBaskets={() => basketsQuery.refetch()} retryingBaskets={basketsQuery.isFetching} />;
     }
   };
 
@@ -1373,8 +1392,20 @@ export default function ParentPage({ section = "dashboard" }: ParentPageProps) {
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {renderSection()}
       {/* Reference Submission Dialog */}
-      <Dialog open={!!referenceDialogPayment} onOpenChange={(open) => { if (!open) { setReferenceDialogPayment(null); setRefNumber(""); setRefConfirmed(false); setRefNotes(""); } }}>
-        <DialogContent>
+      {/* C4: a stray tap outside this dialog used to erase the reference number
+          the parent had just copied by hand off their bank app. Closing keeps
+          what they typed, so reopening restores it; the fields are cleared on a
+          successful submit instead. Clicking outside and pressing Escape are
+          both prevented while there is unsaved input, because on a phone the
+          outside tap is easy to make by accident. */}
+      <Dialog
+        open={!!referenceDialogPayment}
+        onOpenChange={(open) => { if (!open) setReferenceDialogPayment(null); }}
+      >
+        <DialogContent
+          onPointerDownOutside={(e) => { if (refNumber.trim()) e.preventDefault(); }}
+          onEscapeKeyDown={(e) => { if (refNumber.trim()) e.preventDefault(); }}
+        >
           <DialogHeader>
             <DialogTitle className="font-heading">Submit Payment Reference</DialogTitle>
             <DialogDescription>

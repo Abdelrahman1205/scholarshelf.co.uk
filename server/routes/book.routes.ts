@@ -5,7 +5,7 @@
  * Extracted from routes.ts monolith.
  */
 import type { Express, Request, Response, NextFunction } from "express";
-import { storage } from "../storage.js";
+import { storage, NotFoundError } from "../storage.js";
 import {
   requireAuth, requireRole,
   sessionSchoolId, isInSupportMode, isPlatformOwnerRequest, isPlatformOwnerRole,
@@ -27,15 +27,27 @@ import {
   brandingUpload, runSingleBrandingUpload,
   canViewBranding, canManageBranding, canManageBrandingOperation, resolveTenantBranding,
   getBrandingPermissionSet,
+  getTeacherAssignedClasses,
 } from "../middleware/auth.js";
 import { sendClassBookListUpdatedEmail } from "../email.js";
+import { insertBookSchema } from "../../shared/schema.js";
 
 
 export function registerBookRoutes(app: Express): void {
   app.post("/api/books", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
-      const book = await storage.createBook({ ...req.body, schoolId: sid });
+      // C6: insertBookSchema existed and was never used here — the request body
+      // went straight into the insert, so a negative price reached the database
+      // and every basket containing the book was billed a negative amount.
+      const parsed = insertBookSchema.safeParse({ ...req.body, schoolId: sid });
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Check the book details",
+          errors: parsed.error.flatten().fieldErrors,
+        });
+      }
+      const book = await storage.createBook(parsed.data as any);
       res.status(201).json(book);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -131,7 +143,17 @@ export function registerBookRoutes(app: Express): void {
   app.patch("/api/books/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
-      const book = await storage.updateBook(routeParam(req.params.id), req.body, sid);
+      // C6: the edit path needs the same validation as create — a negative price
+      // typed into an existing book is the same bug.
+      const parsed = insertBookSchema.partial().safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Check the book details",
+          errors: parsed.error.flatten().fieldErrors,
+        });
+      }
+      const { schoolId: _ignored, ...updates } = parsed.data as any;
+      const book = await storage.updateBook(routeParam(req.params.id), updates, sid);
       if (!book) return res.status(404).json({ message: "Book not found" });
       res.json(book);
     } catch (e: any) {
@@ -184,52 +206,12 @@ export function registerBookRoutes(app: Express): void {
     res.json(txns);
   });
 
-  async function getTeacherAssignedClasses(teacherUserId: string, schoolId?: string | null) {
-    if (!schoolId) return [];
-
-    const scopedClasses = await storage.getClasses(schoolId);
-    const assignedById = new Map(
-      scopedClasses
-        .filter((cls) => cls.teacherId === teacherUserId)
-        .map((cls) => [cls.id, cls]),
-    );
-
-    // Fallback for legacy data where class rows may have mismatched school IDs.
-    // We only allow classes that are actually referenced by students in this school.
-    const schoolStudents = await storage.getStudents(schoolId);
-    const schoolStudentClassIds = new Set(
-      schoolStudents
-        .map((student) => student.classId)
-        .filter((classId): classId is string => !!classId),
-    );
-
-    const missingClassIds = Array.from(schoolStudentClassIds).filter((classId) => !assignedById.has(classId));
-    if (missingClassIds.length > 0) {
-      const allClasses = await storage.getClasses();
-      for (const cls of allClasses) {
-        if (!schoolStudentClassIds.has(cls.id)) continue;
-        if (cls.teacherId !== teacherUserId) continue;
-        assignedById.set(cls.id, cls);
-      }
-    }
-
-    // New model: also include classes the teacher is ACTIVELY assigned to by
-    // subject (class_teacher_assignments), on top of the legacy single teacherId.
-    try {
-      const assignedIds = await storage.getAssignedClassIdsForTeacher(teacherUserId, schoolId);
-      if (assignedIds.length) {
-        const byId = new Map(scopedClasses.map((c) => [c.id, c]));
-        const need = assignedIds.filter((cid) => !assignedById.has(cid));
-        const fallback = need.some((cid) => !byId.has(cid)) ? await storage.getClasses() : [];
-        for (const cid of need) {
-          const cls = byId.get(cid) || fallback.find((c) => c.id === cid);
-          if (cls) assignedById.set(cid, cls);
-        }
-      }
-    } catch { /* assignments are additive — never block legacy access */ }
-
-    return Array.from(assignedById.values());
-  }
+  // H2: this file used to carry its OWN copy of getTeacherAssignedClasses —
+  // near-identical to the one in middleware/auth.ts, except that this copy read
+  // class_teacher_assignments and that one did not. Two functions with the same
+  // name that disagreed about who teaches a class is exactly how a teacher ended
+  // up with a dashboard, their classes, and an empty distribution list. The
+  // shared implementation in middleware/auth.ts is now the only one.
 
   // === CLASSES (school-scoped) ===
   app.get("/api/classes", requireRole(...ADMIN_UI_ROLES, "teacher"), async (req, res) => {
@@ -451,23 +433,40 @@ export function registerBookRoutes(app: Express): void {
     res.status(204).send();
   });
 
+  // SECURITY (S4): all three of these reached across tenants — read, write and
+  // delete. The school id now goes down to storage, which refuses ids belonging
+  // to another school.
   app.get("/api/book-levels/:id/items", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
-    const items = await storage.getBookLevelItems(routeParam(req.params.id));
-    res.json(items);
+    try {
+      const items = await storage.getBookLevelItems(routeParam(req.params.id), sessionSchoolId(req));
+      res.json(items);
+    } catch (e: any) {
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
+      res.status(400).json({ message: e.message });
+    }
   });
 
   app.post("/api/book-levels/:id/items", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
-      const item = await storage.addBookLevelItem({ ...req.body, bookLevelId: routeParam(req.params.id) });
+      const item = await storage.addBookLevelItem(
+        { ...req.body, bookLevelId: routeParam(req.params.id) },
+        sessionSchoolId(req),
+      );
       res.status(201).json(item);
     } catch (e: any) {
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
       res.status(400).json({ message: e.message });
     }
   });
 
   app.delete("/api/book-level-items/:id", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
-    await storage.removeBookLevelItem(routeParam(req.params.id));
-    res.status(204).send();
+    try {
+      await storage.removeBookLevelItem(routeParam(req.params.id), sessionSchoolId(req));
+      res.status(204).send();
+    } catch (e: any) {
+      if (e instanceof NotFoundError) return res.status(404).json({ message: e.message });
+      res.status(400).json({ message: e.message });
+    }
   });
 
   // === CLASS BOOK LEVELS (school-scoped) ===
@@ -490,7 +489,7 @@ export function registerBookRoutes(app: Express): void {
         }
       }
 
-      const cbl = await storage.assignClassBookLevel(req.body);
+      const cbl = await storage.assignClassBookLevel(req.body, sid);
 
       // Notify the class's assigned teacher that their book list changed (fire-and-forget).
       try {
