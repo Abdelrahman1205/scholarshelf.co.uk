@@ -9,8 +9,9 @@
  * is typed, so no SQL can be wrong — and each one carries its own before/after
  * snapshot into the audit trail for free.
  *
- * Adding an operation is a single entry here. If you find yourself reaching for
- * break-glass more than once a month, whatever you keep doing belongs in this file.
+ * Adding a support capability is a single explicit operation here. Recurring
+ * support work belongs in this typed, authorised and audited layer rather than
+ * in an unrestricted database-write console.
  */
 import { z } from "zod";
 import crypto from "crypto";

@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile, mkdir } from "fs/promises";
@@ -95,7 +96,9 @@ async function buildAll() {
       "process.env.NODE_ENV": '"production"',
     },
     minify: true,
-    external: externals,
+    // server/vite.ts is development-only. Keep its dynamic import external so
+    // Vite and vite.config.ts are not bundled into the production server.
+    external: [...externals, "./vite.js"],
     logLevel: "info",
   });
 }

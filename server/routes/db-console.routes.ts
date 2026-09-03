@@ -25,15 +25,15 @@
  * cooldown and the audit trail.
  */
 import type { Express } from "express";
-import { requireRole, auditLog } from "../middleware/auth.js";
+import { requireRole } from "../middleware/auth.js";
 import { PLATFORM_OWNER_ROLES } from "../core/constants.js";
-import { getPool } from "../config/database.js";
+import { getConsoleReadPool } from "../config/consoleDb.js";
+import { consoleAudit } from "../console/audit.js";
 
 const ALLOWED_TABLES = [
   "schools",
   "school_branding",
   "users",
-  "user_roles",
   "classes",
   "students",
   "parent_children",
@@ -41,12 +41,11 @@ const ALLOWED_TABLES = [
   "books",
   "book_levels",
   "class_book_levels",
-  "student_book_overrides",
-  "book_baskets",
+  "child_book_baskets",
   "basket_items",
+  "basket_payments",
   "book_payments",
-  "payment_basket_links",
-  "allocations",
+  "finance_book_allocations",
   "extra_copy_requests",
   "families",
   "family_students",
@@ -59,6 +58,40 @@ type AllowedTable = typeof ALLOWED_TABLES[number];
 function isAllowedTable(t: string): t is AllowedTable {
   return (ALLOWED_TABLES as readonly string[]).includes(t);
 }
+
+/**
+ * Verified against the current database schema.
+ *
+ * Do not assume every support-console table has the same columns. The previous
+ * route blindly referenced name, school_id and created_at, which made valid
+ * allow-listed tables fail at runtime.
+ */
+const NAME_SEARCH_TABLES = new Set<AllowedTable>([
+  "schools",
+  "users",
+  "classes",
+  "students",
+  "book_levels",
+  "families",
+]);
+
+const SCHOOL_SCOPED_TABLES = new Set<AllowedTable>([
+  "school_branding",
+  "users",
+  "classes",
+  "students",
+  "parent_children",
+  "child_linking_codes",
+  "books",
+  "book_levels",
+  "child_book_baskets",
+  "basket_payments",
+  "book_payments",
+  "finance_book_allocations",
+  "extra_copy_requests",
+  "families",
+  "invites",
+]);
 
 /**
  * Columns that must never reach a browser, whichever table they appear on.
@@ -100,24 +133,50 @@ export function registerDbConsoleRoutes(app: Express): void {
       const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
       const schoolId = typeof req.query.schoolId === "string" ? req.query.schoolId.trim() : "";
 
-      const pool = getPool();
+      // SECURITY: database browsing must never fall back to the application's
+      // privileged DATABASE_URL. The dedicated console_ro connection can read
+      // only the reviewed console-schema views.
+      const pool = getConsoleReadPool();
       const conditions: string[] = [];
       const params: unknown[] = [];
       let idx = 1;
 
-      if (schoolId) { conditions.push(`school_id = $${idx++}`); params.push(schoolId); }
-      if (search)   { conditions.push(`(id::text ILIKE $${idx} OR COALESCE(name, '')::text ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
+      if (schoolId) {
+        if (table === "schools") {
+          conditions.push(`id = $${idx++}`);
+          params.push(schoolId);
+        } else if (SCHOOL_SCOPED_TABLES.has(table)) {
+          conditions.push(`school_id = $${idx++}`);
+          params.push(schoolId);
+        } else {
+          return res.status(400).json({
+            message: `School filtering is not supported for table '${table}'.`,
+          });
+        }
+      }
+
+      if (search) {
+        if (NAME_SEARCH_TABLES.has(table)) {
+          conditions.push(
+            `(id::text ILIKE $${idx} OR COALESCE(name, '')::text ILIKE $${idx})`,
+          );
+        } else {
+          conditions.push(`id::text ILIKE $${idx}`);
+        }
+        params.push(`%${search}%`);
+        idx++;
+      }
 
       const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
       const countResult = await pool.query(
-        `SELECT COUNT(*) AS count FROM "${table}" ${where}`,
+        `SELECT COUNT(*) AS count FROM console."${table}" ${where}`,
         params
       );
       const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
 
       const rowsResult = await pool.query(
-        `SELECT * FROM "${table}" ${where} ORDER BY created_at DESC NULLS LAST, id LIMIT $${idx} OFFSET $${idx + 1}`,
+        `SELECT * FROM console."${table}" ${where} ORDER BY id LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset]
       );
 
@@ -126,8 +185,18 @@ export function registerDbConsoleRoutes(app: Express): void {
 
       // GDPR Art. 30/33: reading a tenant's records from the platform console is
       // a processing activity by BytHub staff, and it is attributable.
-      await auditLog(req, "console_table_browsed", table, {
-        page, limit, total, search: search || undefined, schoolId: schoolId || undefined,
+      await consoleAudit(req, {
+        tier: "query",
+        action: "console_table_browsed",
+        schoolId: schoolId || null,
+        rowCount: rows.length,
+        params: {
+          table,
+          page,
+          limit,
+          total,
+          searchApplied: Boolean(search),
+        },
       });
 
       res.json({ table, page, limit, total, pages: Math.ceil(total / limit), rows, columns, readOnly: true });

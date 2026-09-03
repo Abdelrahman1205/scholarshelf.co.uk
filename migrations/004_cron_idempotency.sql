@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS cron_job_runs (
   status       text NOT NULL DEFAULT 'running',
   sent_count   integer DEFAULT 0,
   detail       text,
-  created_at   timestamptz DEFAULT now(),
-  completed_at timestamptz
+  created_at   timestamp DEFAULT now(),
+  completed_at timestamp
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS cron_job_runs_job_school_day_unique

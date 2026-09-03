@@ -28,7 +28,7 @@ async function main() {
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } });
+  const pool = new Pool({ connectionString });
   const client = await pool.connect();
 
   try {

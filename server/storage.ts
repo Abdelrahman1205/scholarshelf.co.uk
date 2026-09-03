@@ -59,7 +59,7 @@ let _txDb: any = null;
 function getTxDb(): any {
   if (_txDb) return _txDb;
   if (!RESOLVED_DATABASE_URL) throw new Error("No DATABASE_URL configured");
-  _txPool = new Pool({ connectionString: RESOLVED_DATABASE_URL, ssl: buildSslConfig() });
+  _txPool = new Pool({ connectionString: RESOLVED_DATABASE_URL, ssl: buildSslConfig(RESOLVED_DATABASE_URL) });
   // `drizzlePg` is called through an `any` cast on purpose. Inferring its return
   // type over a 36-table schema makes `tsc` take minutes — which would also make
   // the CI type-check step useless. The queries below are the same ones the rest
@@ -1660,12 +1660,17 @@ class DatabaseStorage implements IStorage {
       total += parseFloat(item.unitPrice) * item.quantity;
     }
 
+    // A basket belongs to the student's academic context at the moment it is
+    // created. Prefer the class's recorded academic year over the wall clock.
+    const { academicYear } = await this.snapshotStudentContext(studentId);
+
     const basket = await insertAndFetchById(schema.childBookBaskets, {
       studentId,
       parentIdentifier,
       status: "pending",
       totalAmount: total.toFixed(2),
       schoolId: student.schoolId,
+      academicYear,
     });
 
     for (const item of allItems) {
@@ -1743,7 +1748,11 @@ class DatabaseStorage implements IStorage {
    * the same rule stated where the user can be given a sensible message.
    */
   async createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment> {
-    const schoolId = (payment as { schoolId?: string | null }).schoolId ?? null;
+    const schoolId = (payment as { schoolId?: string | null }).schoolId;
+
+    if (!schoolId) {
+      throw new Error("School context required");
+    }
 
     const baskets = basketIds.length
       ? await getDb().select().from(schema.childBookBaskets)

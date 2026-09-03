@@ -29,7 +29,7 @@ async function run() {
   console.log(`  TAG: ${TAG}`);
   console.log("═══════════════════════════════════════════════\n");
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const schools = await storage.getSchools();
   const fixtureSchool = schools.find((s: any) => s.code === "TEST-001") || schools[0];
   const schoolId = fixtureSchool?.id ?? null;

@@ -38,6 +38,7 @@
  *  20.  Provider records are source-agnostic (API-shaped rows verify identically)
  */
 
+import "dotenv/config";
 import { Client } from "pg";
 import crypto from "crypto";
 
@@ -210,7 +211,7 @@ async function run() {
   }
 
   if (!DATABASE_URL) { console.error("DATABASE_URL is required to seed orders — aborting."); process.exit(1); }
-  db = new Client({ connectionString: DATABASE_URL, ssl: DATABASE_URL.includes("localhost") || DATABASE_URL.includes("127.0.0.1") ? false : { rejectUnauthorized: false } });
+  db = new Client({ connectionString: DATABASE_URL });
   await db.connect();
   const school = await db.query(`select id from schools where code = 'TEST-001' limit 1`);
   schoolId = school.rows[0]?.id;

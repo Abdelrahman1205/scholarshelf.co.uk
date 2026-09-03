@@ -41,14 +41,14 @@ export function registerStudentRoutes(app: Express): void {
   app.post("/api/students/:id/linking-code", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
-      if (sid) {
-        const setupState = await getSchoolSetupState(sid);
-        if (!setupState) {
-          return res.status(404).json({ message: "School not found" });
-        }
-        if (!setupState.checklist.studentsAdded) {
-          return res.status(409).json({ message: "Add students before generating parent linking codes." });
-        }
+      if (!sid) return res.status(400).json({ message: "School context required" });
+
+      const setupState = await getSchoolSetupState(sid);
+      if (!setupState) {
+        return res.status(404).json({ message: "School not found" });
+      }
+      if (!setupState.checklist.studentsAdded) {
+        return res.status(409).json({ message: "Add students before generating parent linking codes." });
       }
 
       const { parentEmail } = req.body;
@@ -93,6 +93,8 @@ export function registerStudentRoutes(app: Express): void {
   app.post("/api/students/:id/linking-code/rotate", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
+
       const studentId = routeParam(req.params.id);
       const { parentEmail } = req.body;
       if (!parentEmail?.trim()) return res.status(400).json({ message: "parentEmail is required for rotation" });
@@ -103,7 +105,7 @@ export function registerStudentRoutes(app: Express): void {
       const expiresAt = new Date();
       expiresAt.setMonth(expiresAt.getMonth() + 3);
 
-      const newCode = await storage.rotateLinkingCode(studentId, parentEmail.trim(), sid ?? null, expiresAt);
+      const newCode = await storage.rotateLinkingCode(studentId, parentEmail.trim(), sid, expiresAt);
 
       await auditLog(req, "linking_code_rotated", `student:${studentId}`, { parentEmail: parentEmail.trim() });
 
@@ -175,6 +177,7 @@ export function registerStudentRoutes(app: Express): void {
   app.post("/api/students/import/confirm", requireRole(...ADMIN_UI_ROLES), async (req, res) => {
     try {
       const sid = sessionSchoolId(req);
+      if (!sid) return res.status(400).json({ message: "School context required" });
       const { rows } = req.body as { rows: { name: string; classId: string | null; parentEmail?: string | null }[] };
       if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ message: "rows array is required" });
 
@@ -185,7 +188,7 @@ export function registerStudentRoutes(app: Express): void {
       for (const row of rows) {
         if (!row.name?.trim()) { errors.push({ name: row.name ?? "", error: "Name is required" }); continue; }
         try {
-          const student = await storage.createStudent({ name: row.name.trim(), classId: row.classId ?? null, schoolId: sid ?? null });
+          const student = await storage.createStudent({ name: row.name.trim(), classId: row.classId ?? null, schoolId: sid });
           created.push(student);
 
           // Auto-send parent invite if email provided

@@ -22,9 +22,6 @@
 --
 -- Equivalent to `npm run db:push` against shared/schema.ts; provided explicitly
 -- because this touches finance data on a production database.
-
-BEGIN;
-
 -- ── The payment-data layer ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS provider_payments (
   id                  VARCHAR(36) PRIMARY KEY,
@@ -86,5 +83,3 @@ CREATE INDEX IF NOT EXISTS payment_verification_attempts_school_id_idx
 -- the UI renders as "—" rather than claiming they were verified some way.
 ALTER TABLE book_payments
   ADD COLUMN IF NOT EXISTS verification_method TEXT;
-
-COMMIT;

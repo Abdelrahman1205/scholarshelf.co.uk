@@ -64,8 +64,8 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   event_id     text NOT NULL,
   status       text NOT NULL DEFAULT 'processing',
   detail       text,
-  received_at  timestamptz DEFAULT now(),
-  completed_at timestamptz
+  received_at  timestamp DEFAULT now(),
+  completed_at timestamp
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS webhook_events_source_event_unique
@@ -162,8 +162,8 @@ END $$;
 -- NOT VALID above means the constraint applies to new and updated rows
 -- immediately without a blocking full-table scan. Validate once the preflight in
 -- step 1 reports zero cross-school links:
---   ALTER TABLE basket_payments VALIDATE CONSTRAINT basket_payments_payment_school_fkey;
---   ALTER TABLE basket_payments VALIDATE CONSTRAINT basket_payments_basket_school_fkey;
+ALTER TABLE basket_payments VALIDATE CONSTRAINT basket_payments_payment_school_fkey;
+ALTER TABLE basket_payments VALIDATE CONSTRAINT basket_payments_basket_school_fkey;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ BEGIN
     ALTER TABLE finance_book_allocations
       ADD CONSTRAINT finance_book_allocations_student_school_fkey
       FOREIGN KEY (student_id, school_id) REFERENCES students (id, school_id)
-      ON DELETE CASCADE NOT VALID;
+      NOT VALID;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'finance_book_allocations_book_school_fkey') THEN
     ALTER TABLE finance_book_allocations
@@ -188,8 +188,8 @@ BEGIN
   END IF;
 END $$;
 
---   ALTER TABLE finance_book_allocations VALIDATE CONSTRAINT finance_book_allocations_student_school_fkey;
---   ALTER TABLE finance_book_allocations VALIDATE CONSTRAINT finance_book_allocations_book_school_fkey;
+ALTER TABLE finance_book_allocations VALIDATE CONSTRAINT finance_book_allocations_student_school_fkey;
+ALTER TABLE finance_book_allocations VALIDATE CONSTRAINT finance_book_allocations_book_school_fkey;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────

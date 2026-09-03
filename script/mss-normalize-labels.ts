@@ -1,6 +1,33 @@
 import fs from "fs";
 import { Client } from "pg";
 
+function assertVerifiedDatabaseUrl(databaseUrl: string): void {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error("Database URL is invalid.");
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const isLocal =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]";
+
+  if (isLocal) return;
+
+  const sslmode = parsed.searchParams.get("sslmode")?.toLowerCase();
+
+  if (sslmode !== "verify-full") {
+    throw new Error(
+      "Refusing remote MSS database connection unless sslmode=verify-full.",
+    );
+  }
+}
+
 function parseEnv(filePath: string): Record<string, string> {
   const envRaw = fs.readFileSync(filePath, "utf8");
   const pairs = envRaw
@@ -92,7 +119,9 @@ async function main() {
   const databaseUrl = env.DATABASE_URL?.trim() ? env.DATABASE_URL : env.storage_DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL/storage_DATABASE_URL not found");
 
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  assertVerifiedDatabaseUrl(databaseUrl);
+
+  const client = new Client({ connectionString: databaseUrl });
   await client.connect();
 
   const schoolResult = await client.query(

@@ -417,7 +417,7 @@ export const classes = pgTable("classes", {
   academicYear: text("academic_year"),
   yearGroup: text("year_group"),
   teacherId: varchar("teacher_id", { length: 36 }),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
 }, (table) => ({
     schoolIdx: index("classes_school_id_idx").on(table.schoolId),
 }));
@@ -468,7 +468,7 @@ export const students = pgTable("students", {
   name: text("name").notNull(),
   classId: varchar("class_id", { length: 36 }).references(() => classes.id),
   studentCode: text("student_code").unique(),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   // Family-first fields (additive / nullable — a student belongs to one family).
   // FK with ON DELETE SET NULL: deleting a family unlinks its students but keeps
   // the student records (and their allocation/payment history) intact.
@@ -503,7 +503,7 @@ export const books = pgTable("books", {
   stockQuantity: integer("stock_quantity").default(0),
   lowStockThreshold: integer("low_stock_threshold").default(10),
   reorderQuantity: integer("reorder_quantity").default(50),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   bookCode: varchar("book_code", { length: 50 }),
   barcodeGeneratedAt: timestamp("barcode_generated_at"),
 }, (table) => ({
@@ -547,7 +547,7 @@ export const bookLevels = pgTable("book_levels", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   name: text("name").notNull(),
   description: text("description"),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
 }, (table) => ({
     schoolIdx: index("book_levels_school_id_idx").on(table.schoolId),
 }));
@@ -595,7 +595,7 @@ export type StudentBookLevel = typeof studentBookLevels.$inferSelect;
 export const families = pgTable("families", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   name: text("name").notNull(),                       // legacy display name (kept in sync with householdName)
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   // Family-first fields (all additive / nullable so existing rows keep working)
   familyCode: text("family_code").unique(),           // friendly household reference shown in the UI (never the UUID)
   householdName: text("household_name"),
@@ -619,7 +619,7 @@ export const familyStudents = pgTable("family_students", {
 // Guardians / parents attached directly to a family record.
 export const guardians = pgTable("guardians", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   familyId: varchar("family_id", { length: 36 }).references(() => families.id, { onDelete: "cascade" }).notNull(),
   fullName: text("full_name").notNull(),
   relationship: text("relationship"),                 // Mother | Father | Guardian | Other
@@ -655,7 +655,7 @@ export const childLinkingCodes = pgTable("child_linking_codes", {
   isUsed: boolean("is_used").default(false),
   linkedAt: timestamp("linked_at"),
   expiresAt: timestamp("expires_at"),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
 }, (table) => ({
     schoolIdx: index("child_linking_codes_school_id_idx").on(table.schoolId),
 }));
@@ -712,7 +712,7 @@ export const childBookBaskets = pgTable("child_book_baskets", {
   parentIdentifier: text("parent_identifier").notNull(),
   status: text("status").default("pending").notNull(),
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).default("0"),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   // Stamped at write time so revenue and order history stay attributable to the
   // year they belong to after the September roll-up. See shared/academic-year.ts.
   academicYear: text("academic_year"),
@@ -773,7 +773,7 @@ export const bookPayments = pgTable("book_payments", {
   externalPaymentId: text("external_payment_id"),
   externalPaymentStatus: text("external_payment_status"),
   notes: text("notes"),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   // Teacher-led distribution tracking
   orderStatus: text("order_status").default("awaiting_payment_reference").notNull(),
   // How this order's finance stage was settled — see VERIFICATION_METHODS.
@@ -806,7 +806,7 @@ export const basketPayments = pgTable("basket_payments", {
   // its basket and its payment are all one school. See the composite foreign
   // keys in migrations/006 — with a NULL here those keys do not fire (MATCH
   // SIMPLE), so this must always be written.
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
 });
 
 // === PROVIDER PAYMENTS — the payment-data layer ==============================
@@ -979,7 +979,7 @@ export const financeBookAllocations = pgTable("finance_book_allocations", {
   // Maintained alongside status/distributionStatus via recordCustodyTransition;
   // every change is appended to custody_events.
   custodyStatus: text("custody_status").default("reserved").notNull(),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
   // ── History snapshot (see shared/academic-year.ts) ──────────────────────
   // These record what was true WHEN the allocation happened. Without them the
   // only route from an allocation to a class is student.classId, which is
@@ -1043,7 +1043,7 @@ export const extraCopyRequests = pgTable("extra_copy_requests", {
   adminNotes: text("admin_notes"),
   createdAt: timestamp("created_at").defaultNow(),
   resolvedAt: timestamp("resolved_at"),
-  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
+  schoolId: varchar("school_id", { length: 36 }).notNull().references(() => schools.id, { onDelete: "cascade" }),
 }, (table) => ({
     schoolIdx: index("extra_copy_requests_school_id_idx").on(table.schoolId),
 }));

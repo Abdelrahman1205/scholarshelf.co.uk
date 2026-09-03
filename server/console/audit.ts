@@ -3,23 +3,22 @@
  *
  * The console's audit trail.
  *
- * Every console route writes here — browsing, querying, typed operations,
- * elevation, and break-glass writes. The old console logged NOTHING while
- * routine logins were audited, which meant the one surface that reaches every
- * tenant's children was also the one surface with no record.
+ * Every console browse, read-only query, and typed support operation is
+ * recorded here. The console previously had no equivalent audit trail even
+ * though it can expose data across tenants.
  *
  * This is what answers a school's data protection officer when they ask
  * "who at your company looked at my pupils' records, and can you show me?"
- * It is also what makes a UK GDPR Art. 33 breach assessment possible at all.
+ * It also supports incident and UK GDPR breach assessment.
  *
- * Writes go through the APPLICATION pool, not the console pools: console_ro
- * cannot write, and console_rw is only alive during an elevation.
+ * Audit writes go through the APPLICATION pool. The dedicated console_ro
+ * connection is intentionally incapable of writing.
  */
 import type { Request } from "express";
 import { getPool } from "../config/database.js";
 import { clientIp } from "../middleware/auth.js";
 
-export type ConsoleTier = "operation" | "query" | "breakglass";
+export type ConsoleTier = "operation" | "query";
 
 export type ConsoleAuditEntry = {
   tier: ConsoleTier;
@@ -32,7 +31,6 @@ export type ConsoleAuditEntry = {
   rowCount?: number | null;
   durationMs?: number | null;
   reason?: string | null;
-  elevationId?: string | null;
 };
 
 /** Cap any single snapshot so one `SELECT *` on a big table can't bloat the trail. */
@@ -73,8 +71,8 @@ export async function consoleAudit(req: Request, entry: ConsoleAuditEntry): Prom
       `INSERT INTO console_audit (
          actor_user_id, actor_username, actor_role, tier, action, school_id,
          statement, params, before_snapshot, after_snapshot,
-         row_count, duration_ms, reason, elevation_id, ip, user_agent
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,$14,$15,$16)`,
+         row_count, duration_ms, reason, ip, user_agent
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,$14,$15)`,
       [
         actorId,
         actorUsername,
@@ -89,7 +87,6 @@ export async function consoleAudit(req: Request, entry: ConsoleAuditEntry): Prom
         entry.rowCount ?? null,
         entry.durationMs ?? null,
         entry.reason ?? null,
-        entry.elevationId ?? null,
         clientIp(req),
         (req.headers["user-agent"] as string) || null,
       ],

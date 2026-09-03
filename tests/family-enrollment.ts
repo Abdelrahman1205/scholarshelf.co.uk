@@ -583,9 +583,14 @@ async function testGuardianUserLinkField() {
   } else {
     fail("Guardian userId field", `present=${g ? "userId" in g : false}, value=${g?.userId}`);
   }
-  // Portal status should be its default until an invite/redemption occurs.
-  if (g?.portalAccessStatus === "none") pass("New guardian portalAccessStatus=none", "");
-  else fail("Default portal status", `Expected none, got ${g?.portalAccessStatus}`);
+  // A completed family enrollment automatically issues the primary guardian
+  // a linking-code invitation. The guardian is therefore invited immediately,
+  // while userId remains null until the parent actually redeems that invitation.
+  if (g?.portalAccessStatus === "invited") {
+    pass("New enrolled guardian portalAccessStatus=invited", "");
+  } else {
+    fail("Automatic guardian invite status", `Expected invited, got ${g?.portalAccessStatus}`);
+  }
   if (familyId) await req("DELETE", `/api/families/${familyId}`);
 }
 

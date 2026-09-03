@@ -9,37 +9,40 @@ import { Pool } from "pg";
 import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import { drizzle as drizzlePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { neon } from "@neondatabase/serverless";
-import { env, IS_PRODUCTION } from "./env.js";
+import { env } from "./env.js";
 import * as schema from "../../shared/schema.js";
 
 // ── SSL configuration ─────────────────────────────────────────────────────
 
-export function buildSslConfig(): object | undefined {
-  if (!env.DATABASE_URL) return undefined;
-
-  const ca = env.DATABASE_SSL_CA;
-  if (ca) return { rejectUnauthorized: true, ca };
-
-  if (IS_PRODUCTION) {
-    // Slice 6: validate the production TLS posture. Running without a pinned CA
-    // disables certificate verification, leaving the DB connection open to a
-    // man-in-the-middle. To avoid a surprise outage on a LIVE app we don't hard-fail
-    // by default — we warn loudly. Set DATABASE_SSL_STRICT=true to turn the warning
-    // into a hard startup failure once DATABASE_SSL_CA is in place.
-    if (process.env.DATABASE_SSL_STRICT === "true") {
-      throw new Error(
-        "[DB] Refusing to start: DATABASE_SSL_STRICT=true but DATABASE_SSL_CA is not " +
-        "set, so TLS certificate verification would be disabled. Provide the Neon CA " +
-        "cert in DATABASE_SSL_CA, or unset DATABASE_SSL_STRICT to fall back to a warning.",
-      );
-    }
-    console.warn(
-      "[DB] SECURITY: DATABASE_SSL_CA is not set — SSL certificate verification is " +
-      "DISABLED (MitM risk). Set DATABASE_SSL_CA to the Neon CA cert, then set " +
-      "DATABASE_SSL_STRICT=true to enforce it.",
+function isLocalDatabaseUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "[::1]"
     );
+  } catch {
+    return false;
   }
-  return { rejectUnauthorized: false };
+}
+
+export function buildSslConfig(
+  url: string | undefined = env.DATABASE_URL,
+): object | false | undefined {
+  if (!url) return undefined;
+
+  // Local PostgreSQL commonly runs without TLS.
+  if (isLocalDatabaseUrl(url)) return false;
+
+  // Remote PostgreSQL must verify the server certificate.
+  // Node's platform trust store is used unless an explicit CA is supplied.
+  const ca = env.DATABASE_SSL_CA;
+
+  return ca
+    ? { rejectUnauthorized: true, ca }
+    : { rejectUnauthorized: true };
 }
 
 // ── Drizzle (Neon serverless HTTP) ────────────────────────────────────────
@@ -67,7 +70,7 @@ export function getPool(): Pool {
   }
   _pool = new Pool({
     connectionString: env.DATABASE_URL,
-    ssl: buildSslConfig(),
+    ssl: buildSslConfig(env.DATABASE_URL),
   });
   return _pool;
 }

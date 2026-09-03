@@ -56,16 +56,6 @@ declare module "express-session" {
      */
     username?: string;
     /**
-     * Break-glass write access to the BytHub console. Granted only by a fresh
-     * TOTP code plus a written reason, and expires on its own. Absent or expired
-     * means the console is read-only, which is its normal state.
-     */
-    consoleElevation?: {
-      id: string;
-      expiresAt: number;
-      reason: string;
-    } | null;
-    /**
      * Partial-auth marker set after a correct password when the account has MFA
      * enabled. The user is NOT authenticated (no userId) until they pass the
      * TOTP/recovery challenge at /api/auth/mfa/verify.
@@ -186,7 +176,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     ? new PgSession({
         pool: new Pool({
           connectionString: RESOLVED_DATABASE_URL,
-          ssl: buildSslConfig(),
+          ssl: buildSslConfig(RESOLVED_DATABASE_URL),
         }),
         tableName: "user_sessions",
         createTableIfMissing: true,

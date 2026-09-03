@@ -98,11 +98,11 @@ DECLARE
   t text;
   tenant_tables text[] := ARRAY[
     'invites', 'classes', 'subjects', 'class_teacher_assignments',
-    'students', 'books', 'book_copies', 'book_levels', 'book_level_items',
-    'class_book_levels', 'student_book_levels',
-    'families', 'family_students', 'guardians',
+    'students', 'books', 'book_copies', 'book_levels',
+     'student_book_levels',
+    'families',  'guardians',
     'child_linking_codes', 'parent_children', 'teacher_profiles',
-    'child_book_baskets', 'basket_items', 'book_payments', 'basket_payments',
+    'child_book_baskets',  'book_payments', 'basket_payments',
     'provider_payments', 'payment_verification_attempts',
     'finance_book_allocations', 'custody_events', 'extra_copy_requests',
     'message_threads', 'messages', 'message_audit_logs',
@@ -126,6 +126,167 @@ BEGIN
     $f$, t || '_tenant_isolation', t);
   END LOOP;
 END $$;
+
+
+-- Relationship tables without their own school_id need policies derived through
+-- BOTH referenced parents. Requiring both sides to match prevents a relationship
+-- row from becoming a cross-tenant bridge even if one foreign key is valid.
+
+DROP POLICY IF EXISTS basket_items_tenant_isolation ON basket_items;
+CREATE POLICY basket_items_tenant_isolation ON basket_items
+  FOR ALL
+  TO scholarshelf_app
+  USING (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM child_book_baskets b
+        WHERE b.id = basket_items.basket_id
+          AND b.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM books bk
+        WHERE bk.id = basket_items.book_id
+          AND bk.school_id = app_current_school_id()
+      )
+    )
+  )
+  WITH CHECK (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM child_book_baskets b
+        WHERE b.id = basket_items.basket_id
+          AND b.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM books bk
+        WHERE bk.id = basket_items.book_id
+          AND bk.school_id = app_current_school_id()
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS book_level_items_tenant_isolation ON book_level_items;
+CREATE POLICY book_level_items_tenant_isolation ON book_level_items
+  FOR ALL
+  TO scholarshelf_app
+  USING (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM book_levels bl
+        WHERE bl.id = book_level_items.book_level_id
+          AND bl.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM books bk
+        WHERE bk.id = book_level_items.book_id
+          AND bk.school_id = app_current_school_id()
+      )
+    )
+  )
+  WITH CHECK (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM book_levels bl
+        WHERE bl.id = book_level_items.book_level_id
+          AND bl.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM books bk
+        WHERE bk.id = book_level_items.book_id
+          AND bk.school_id = app_current_school_id()
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS class_book_levels_tenant_isolation ON class_book_levels;
+CREATE POLICY class_book_levels_tenant_isolation ON class_book_levels
+  FOR ALL
+  TO scholarshelf_app
+  USING (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM classes c
+        WHERE c.id = class_book_levels.class_id
+          AND c.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM book_levels bl
+        WHERE bl.id = class_book_levels.book_level_id
+          AND bl.school_id = app_current_school_id()
+      )
+    )
+  )
+  WITH CHECK (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM classes c
+        WHERE c.id = class_book_levels.class_id
+          AND c.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM book_levels bl
+        WHERE bl.id = class_book_levels.book_level_id
+          AND bl.school_id = app_current_school_id()
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS family_students_tenant_isolation ON family_students;
+CREATE POLICY family_students_tenant_isolation ON family_students
+  FOR ALL
+  TO scholarshelf_app
+  USING (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM families f
+        WHERE f.id = family_students.family_id
+          AND f.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM students st
+        WHERE st.id = family_students.student_id
+          AND st.school_id = app_current_school_id()
+      )
+    )
+  )
+  WITH CHECK (
+    app_is_platform_owner()
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM families f
+        WHERE f.id = family_students.family_id
+          AND f.school_id = app_current_school_id()
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM students st
+        WHERE st.id = family_students.student_id
+          AND st.school_id = app_current_school_id()
+      )
+    )
+  );
 
 -- `users` is deliberately not in that list. A platform-owner account has
 -- school_id IS NULL by design, and the sign-in path must be able to find an

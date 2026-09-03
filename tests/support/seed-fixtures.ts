@@ -162,6 +162,124 @@ async function main() {
     }
   }
 
+
+  // -- 9. Second tenant for isolation tests --------------------
+  let fixtureSchoolB = (await storage.getSchools()).find((s) => s.code === "TEST-002");
+  if (!fixtureSchoolB) {
+    fixtureSchoolB = await storage.createSchool({
+      name: "Fixture School B",
+      code: "TEST-002",
+      status: "active",
+      setupStatus: "complete",
+      contactEmail: "admin2@fixture.invalid",
+      contactPhone: "+00-000-000-0001",
+      address: "Fixture address B",
+      notes: "Automated-test second tenant. Not a real school.",
+    });
+  }
+
+  const schoolBId = fixtureSchoolB.id;
+
+  const ensureSchoolBUser = async (
+    username: string,
+    password: string,
+    name: string,
+    role: string,
+    email: string,
+  ) => {
+    const existing = await storage.getUserByUsername(username);
+
+    if (existing) {
+      if (existing.schoolId !== schoolBId) {
+        throw new Error(
+          `Fixture username ${username} already exists outside TEST-002`,
+        );
+      }
+      return existing;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    return storage.createUser({
+      username,
+      passwordHash,
+      name,
+      role,
+      email,
+      status: "active",
+      schoolId: schoolBId,
+    });
+  };
+
+  await ensureSchoolBUser(
+    "admin2",
+    "admin123",
+    "School B Administrator",
+    "school_admin",
+    "admin2@fixture.invalid",
+  );
+
+  const teacherB = await ensureSchoolBUser(
+    "teacher_b",
+    "teacher123",
+    "Fixture School B Teacher",
+    "teacher",
+    "teacher.b@fixture.invalid",
+  );
+
+  let classesB = await storage.getClasses(schoolBId);
+  let classB = classesB[0];
+
+  if (!classB) {
+    classB = await storage.createClass({
+      name: "Year 7 - B Fixture",
+      academicYear: "2025/2026",
+      teacherId: teacherB.id,
+      schoolId: schoolBId,
+    });
+  }
+
+  let booksB = await storage.getBooks(schoolBId);
+  let bookB = booksB[0];
+
+  if (!bookB) {
+    bookB = await storage.createBook({
+      title: "School B Mathematics",
+      author: "Fixture Publisher",
+      isbn: "9780000001001",
+      price: "9.99",
+      description: "Tenant-isolation fixture book",
+      isActive: true,
+      stockQuantity: 20,
+      lowStockThreshold: 5,
+      reorderQuantity: 10,
+      schoolId: schoolBId,
+    });
+  }
+
+  let studentsB = await storage.getStudents(schoolBId);
+  let studentB = studentsB[0];
+
+  if (!studentB) {
+    studentB = await storage.createStudent({
+      name: "Fixture School B Pupil",
+      classId: classB.id,
+      schoolId: schoolBId,
+    });
+  }
+
+  const allocationsB = await storage.getAllocations(classB.id, schoolBId);
+
+  if (allocationsB.length === 0) {
+    await storage.createAllocation({
+      studentId: studentB.id,
+      bookId: bookB.id,
+      basketId: null,
+      status: "allocated",
+      schoolId: schoolBId,
+    });
+  }
+
   console.log(
     `Test fixtures loaded — school ${fixtureSchool.code}, ` +
     `${created.length} user(s) created, ${students.length} pupil(s), ${books.length} book(s).`,

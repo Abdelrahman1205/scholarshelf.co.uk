@@ -75,10 +75,25 @@ async function signIn(username: string, password: string, schoolCode?: string): 
 // keeps us well under the limit and guarantees one consistent, valid session.
 // (The sign-out test keeps its OWN independent sign-in so it can destroy it.)
 let _adminCookie: string | null | undefined;
+let _teacherCookie: string | null | undefined;
+let _parentCookie: string | null | undefined;
+
 async function adminSession(): Promise<string | null> {
   if (_adminCookie !== undefined) return _adminCookie;
   _adminCookie = await signIn("admin", "admin123", "TEST-001");
   return _adminCookie;
+}
+
+async function teacherSession(): Promise<string | null> {
+  if (_teacherCookie !== undefined) return _teacherCookie;
+  _teacherCookie = await signIn("teacher", "teacher123", "TEST-001");
+  return _teacherCookie;
+}
+
+async function parentSession(): Promise<string | null> {
+  if (_parentCookie !== undefined) return _parentCookie;
+  _parentCookie = await signIn("parent", "parent123", "TEST-001");
+  return _parentCookie;
 }
 
 // ── Test Suites ──
@@ -135,8 +150,8 @@ async function testRBACEnforcement() {
   console.log("\n─── 2. RBAC Enforcement ───");
 
   // Sign in as different roles
-  const teacherCookie = await signIn("teacher", "teacher123", "TEST-001");
-  const parentCookie = await signIn("parent", "parent123", "TEST-001");
+  const teacherCookie = await teacherSession();
+  const parentCookie = await parentSession();
 
   if (!teacherCookie) {
     fail("Teacher sign-in", "Could not sign in as teacher");
@@ -275,7 +290,7 @@ async function testAuthSessionIntegrity() {
   console.log("\n─── 4. Auth Session Integrity ───");
 
   // Sign out should invalidate session
-  const adminCookie = await signIn("admin", "admin123", "TEST-001");
+  const adminCookie = await adminSession();
   if (!adminCookie) {
     fail("Admin sign-in for session test", "Could not sign in");
     return;
@@ -361,7 +376,7 @@ async function testWebsiteCmsSecurity() {
   }
 
   // 6.2 A non-website role (parent) must not manage website content
-  const parentCookie = await signIn("parent", "parent123", "TEST-001");
+  const parentCookie = await parentSession();
   if (parentCookie) {
     const res = await fetch(`${BASE}/api/website/sections`, {
       method: "POST",
@@ -472,9 +487,12 @@ async function main() {
     await testUnauthenticatedAccess();
     await testRBACEnforcement();
     await testTenantIsolation();
-    await testAuthSessionIntegrity();
     await testCriticalSecurityPatterns();
     await testWebsiteCmsSecurity();
+
+    // Destructive sign-out test is deliberately last because it invalidates
+    // the shared admin session used by the earlier authenticated suites.
+    await testAuthSessionIntegrity();
   } catch (e) {
     console.error("\nFATAL ERROR:", e);
   }

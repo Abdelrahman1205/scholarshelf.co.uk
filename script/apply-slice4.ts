@@ -19,7 +19,7 @@ async function main() {
   const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) { console.error("✗ DATABASE_URL is not set. Aborting."); process.exit(1); }
 
-  const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } });
+  const pool = new Pool({ connectionString });
   const client = await pool.connect();
   try {
     console.log("── Slice 4 safe apply ──────────────────────────────\n");
