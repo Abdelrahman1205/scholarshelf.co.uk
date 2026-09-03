@@ -52,7 +52,7 @@ async function run() {
   console.log(`  TAG: ${TAG} | BASE: ${BASE}`);
   console.log("═══════════════════════════════════════════════");
 
-  adminCookie = (await signIn("admin", "admin123", "DEMO-001")) || "";
+  adminCookie = (await signIn("admin", "admin123", "TEST-001")) || "";
   if (!adminCookie) { console.error("\n✗ Could not sign in as admin — aborting."); process.exit(1); }
   console.log("\n  ✓ Signed in as admin");
 

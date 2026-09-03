@@ -100,25 +100,11 @@ Run these tests after the deploy completes. All use curl against the live site.
 
 ```bash
 BASE="https://www.scholarshelf.co.uk"
-
-# Parent
-curl -s -c /tmp/pd_parent.txt -X POST "$BASE/api/auth/sign-in" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"parent","password":"parent123","schoolCode":"DEMO-001"}'
-# Expect: 200 with role=parent
-
-# Teacher2
-curl -s -c /tmp/pd_teacher2.txt -X POST "$BASE/api/auth/sign-in" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"teacher2","password":"teacher123","schoolCode":"DEMO-001"}'
-# Expect: 200 with role=teacher
-
-# Finance
-curl -s -c /tmp/pd_finance.txt -X POST "$BASE/api/auth/sign-in" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"finance","password":"finance123","schoolCode":"DEMO-001"}'
-# Expect: 200 with role=finance
 ```
+
+Sign in as one real account per role (parent, teacher, finance) using credentials
+you hold, and confirm each returns 200 with the expected `role`. There are no
+built-in accounts to test with — that is deliberate.
 
 ### 3.2 S1 — Basket ownership (CRITICAL)
 
@@ -221,93 +207,41 @@ curl -s "$BASE/api/allocations" -w "\nHTTP:%{http_code}"
 
 ---
 
-## Part 4: Production Database Fix — Demo Account schoolId
+## Part 4: Production Database — Remove Leftover Demo Accounts
 
 ### Problem
 
-Demo accounts `admin`, `teacher`, `parent` have `schoolId=null` in the production Neon database. This causes `sessionSchoolId()` to return null, which means these accounts cannot access any school-scoped endpoints.
+Earlier builds shipped a `POST /api/seed-users` endpoint and a set of built-in
+accounts (`bythub`, `admin`, `teacher`, `teacher2`, `parent`, `it_admin`,
+`finance`) on school code `DEMO-001`, all with published passwords. That code was
+removed on 2026-09-02, **but removing the code does not remove rows that were
+already written to the production database.** Check, and delete what you find.
 
-The `finance` and `teacher2` accounts already have the correct schoolId. The `owner` account correctly has `schoolId=null` (platform owners are not school-scoped).
-
-### Safe SQL fix
-
-Connect to the Neon database console or use `psql`:
-
-```sql
--- Step 1: Find the demo school ID by school code (do NOT hardcode UUIDs)
-SELECT id, name, school_code
-FROM schools
-WHERE school_code = 'DEMO-001';
--- Expected: one row with the Al-Noor school UUID
-```
+### Check what is there
 
 ```sql
--- Step 2: Preview which users will be updated (DRY RUN)
-SELECT id, username, role, email, school_id
+-- Any leftover demo school?
+SELECT id, name, school_code FROM schools WHERE school_code LIKE 'DEMO-%';
+
+-- Any account still holding a published password?
+SELECT id, username, role, email, school_id, last_login_at
 FROM users
-WHERE username IN ('admin', 'teacher', 'parent')
-  AND role IN ('school_admin', 'teacher', 'parent')
-  AND school_id IS NULL;
--- Expected: 3 rows (admin, teacher, parent) — all with school_id = NULL
--- If 0 rows: they were already fixed. Stop here.
--- If unexpected rows appear: do NOT proceed. Investigate first.
+WHERE username IN ('bythub','admin','teacher','teacher2','parent','it_admin','finance');
 ```
 
-```sql
--- Step 3: Apply the fix (uses subquery — no hardcoded UUID)
-UPDATE users
-SET school_id = (
-  SELECT id FROM schools WHERE school_code = 'DEMO-001' LIMIT 1
-)
-WHERE username IN ('admin', 'teacher', 'parent')
-  AND role IN ('school_admin', 'teacher', 'parent')
-  AND school_id IS NULL;
--- Expected: UPDATE 3
-```
+### Act on it
 
-```sql
--- Step 4: Verify the fix
-SELECT id, username, role, email, school_id
-FROM users
-WHERE username IN ('admin', 'teacher', 'parent', 'finance', 'teacher2', 'bythub')
-ORDER BY role;
--- Expected:
---   admin    → school_id = <Al-Noor UUID>
---   teacher  → school_id = <Al-Noor UUID>
---   parent   → school_id = <Al-Noor UUID>
---   finance  → school_id = <Al-Noor UUID> (already correct)
---   teacher2 → school_id = <Al-Noor UUID> (already correct)
---   bythub   → school_id = NULL (correct — owner is not school-scoped)
-```
-
-### Post-fix login test
-
-After running the SQL, verify these accounts can now log in without `schoolCode`:
-
-```bash
-# These should now work WITHOUT schoolCode parameter
-curl -s -X POST "$BASE/api/auth/sign-in" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
-# Expect: 200 with role=school_admin, schoolId=<UUID>
-
-curl -s -X POST "$BASE/api/auth/sign-in" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"teacher","password":"teacher123"}'
-# Expect: 200 with role=teacher, schoolId=<UUID>
-
-curl -s -X POST "$BASE/api/auth/sign-in" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"parent","password":"parent123"}'
-# Expect: 200 with role=parent, schoolId=<UUID>
-```
+- If any of those rows exist and belong to nobody real: delete them, together with
+  the `DEMO-001` school and its dependent rows (use the owner DB console's
+  wipe-school action, or delete in dependency order inside one transaction).
+- If a real person is using one of those usernames: rotate the password
+  immediately instead of deleting, and rename the account.
+- Check `audit_log` and `sessions` for sign-ins by those usernames before you
+  delete, and treat any you did not make as an incident (see `LIVE_SAFETY_PASS.md`).
 
 ### Safety notes
 
-- This does NOT change authentication logic
-- This does NOT change owner support-mode security
-- This does NOT weaken any role checks
-- This only sets the correct school association for demo accounts that were missing it
-- The WHERE clause is defensive: it only updates users with the exact username, role, AND null schoolId
-- If the school code changes, the subquery adapts automatically
-- Owner account is explicitly excluded (different role)
+- Read before you delete: run the SELECTs first and look at what comes back.
+- Do the deletion inside a transaction so a foreign-key failure rolls back cleanly.
+- Take a Neon backup / PITR checkpoint immediately before.
+- Never delete a row you cannot positively identify as leftover fixture data.

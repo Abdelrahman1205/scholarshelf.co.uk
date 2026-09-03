@@ -385,7 +385,7 @@ export function registerPaymentRoutes(app: Express): void {
           await getEmailBrandingForSchool(req, payment.schoolId),
         );
         if (!sent) {
-          console.log(`[PAYMENT CONFIRMED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
+          console.error(`[PAYMENT CONFIRMED] receipt email failed for payment ${payment.id}.`);
         }
       }
 
@@ -422,7 +422,7 @@ export function registerPaymentRoutes(app: Express): void {
           await getEmailBrandingForSchool(req, payment.schoolId),
         );
         if (!sent) {
-          console.log(`[PAYMENT REJECTED] Parent: ${payment.parentIdentifier}, Ref: ${payment.paymentReference}`);
+          console.error(`[PAYMENT REJECTED] notification email failed for payment ${payment.id}.`);
         }
       }
 

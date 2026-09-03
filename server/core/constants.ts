@@ -20,7 +20,7 @@ export const ALL_STAFF_ROLES        = [...FINANCE_ROLES, "teacher", "it_personne
 export type PlatformOwnerRole       = (typeof PLATFORM_OWNER_ROLES)[number];
 export type AdminUIRole             = (typeof ADMIN_UI_ROLES)[number];
 
-/** Legacy role aliases for demo/seed accounts. */
+/** Legacy role aliases retained for older account rows. */
 export const LEGACY_ROLE_MAP: Record<string, string> = {
   admin:   "school_admin",
   teacher: "teacher",

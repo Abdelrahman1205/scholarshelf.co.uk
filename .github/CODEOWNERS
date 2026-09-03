@@ -1,0 +1,12 @@
+# Every change to this repository needs a review from the code owners.
+# Pair this file with a branch-protection rule on `main` that requires
+# "Require review from Code Owners" — the file alone enforces nothing.
+*                                   @scholarshelf-maintainers
+
+# Security-critical surfaces. Changes here should never be self-merged.
+/server/middleware/auth.ts          @scholarshelf-maintainers
+/server/routes/db-console.routes.ts @scholarshelf-maintainers
+/server/console/                    @scholarshelf-maintainers
+/script/check-forbidden.ts          @scholarshelf-maintainers
+/migrations/                        @scholarshelf-maintainers
+/.github/workflows/                 @scholarshelf-maintainers

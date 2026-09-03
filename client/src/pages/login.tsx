@@ -67,18 +67,6 @@ export default function LoginPage() {
     } catch {}
   }
 
-  async function loginWithDemo(demoUsername: string, demoPassword: string, demoSchoolCode?: string) {
-    setUsername(demoUsername);
-    setPassword(demoPassword);
-    setSchoolCode(demoSchoolCode || "");
-    try {
-      const result = await login({ username: demoUsername, password: demoPassword, schoolCode: demoSchoolCode });
-      window.__schoolBlockedMessage = undefined;
-      if (result?.mfaRequired) { setMfaStage(true); return; }
-      setLocation(getRoleRoute(result.role));
-    } catch {}
-  }
-
   async function handleMfaSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -323,7 +311,7 @@ export default function LoginPage() {
                 id="school-code"
                 data-testid="input-school-code"
                 type="text"
-                placeholder="DEMO-001"
+                placeholder="Your school code"
                 value={schoolCode}
                 onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
                 className="h-10 bg-card font-mono tracking-wider"
@@ -364,34 +352,6 @@ export default function LoginPage() {
               Parent sign up →
             </button>
           </div>
-
-          {/* Demo accounts — DEVELOPMENT BUILDS ONLY. Vite statically removes this
-              whole block (and the credentials in it) from production bundles, so
-              nothing demo-related ships to real users. */}
-          {import.meta.env.DEV && (
-            <div className="mt-8 pt-6 border-t border-border">
-              <p className="text-xs font-medium text-muted-foreground mb-2.5">Demo accounts (dev only)</p>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { label: "BytHub", username: "bythub", password: "bythub123" },
-                  { label: "Admin", username: "admin", password: "admin123", schoolCode: "DEMO-001" },
-                  { label: "Teacher", username: "teacher", password: "teacher123", schoolCode: "DEMO-001" },
-                  { label: "Parent", username: "parent", password: "parent123", schoolCode: "DEMO-001" },
-                  { label: "Finance", username: "finance", password: "finance123", schoolCode: "DEMO-001" },
-                ].map((demo) => (
-                  <button
-                    key={demo.username}
-                    type="button"
-                    data-testid={`button-demo-${demo.username}`}
-                    onClick={() => void loginWithDemo(demo.username, demo.password, demo.schoolCode)}
-                    className="text-xs px-2 py-2 rounded-md border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-medium"
-                  >
-                    {demo.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Legal / contact links — reachable from the first screen */}
           <PublicFooter />

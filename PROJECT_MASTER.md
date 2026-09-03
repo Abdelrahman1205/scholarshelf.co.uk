@@ -150,7 +150,7 @@ Strong baseline, verified in code: bcrypt-12, session regeneration on login, htt
 
 **Required production env vars:** `DATABASE_URL`, `SESSION_SECRET` (≥32 chars), `PAYMENT_WEBHOOK_SECRET` (≥16), `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (plain address), `APP_BASE_URL`.
 
-**Demo accounts (login page buttons):** BytHub (owner), Admin, Teacher, Parent, Finance — all use school code `DEMO-001` except owner. **Disable/rotate these before real clients onboard.**
+**Built-in accounts:** none. Demo accounts, the login-page quick-login buttons and the `POST /api/seed-users` endpoint were removed on 2026-09-02. Test fixtures live in `tests/support/seed-fixtures.ts` and only the test runner can load them. **Any demo rows already created in the production database still need deleting — see Part 4 of `DEPLOY_CHECKLIST.md`.**
 
 ---
 
@@ -179,7 +179,7 @@ Strong baseline, verified in code: bcrypt-12, session regeneration on login, htt
 - **Security must-dos before real clients:** MFA (owner/admin/finance), least-privilege DB role, tenant-isolation test suite, DPA + DPIA.
 - **CMS roadmap (V1.1+):** direct image uploads (reuse branding pipeline), multi-page + navigation, site settings (SEO/social/footer), news feed + gallery blocks, custom domains, SSR for SEO. See `WEBSITE_ARCHITECTURE.md`.
 - **Product gaps (non-blocking):** class-scoped teacher visibility (currently school-wide); finance report export; link-code one-click rotation with audit.
-- **Housekeeping:** disable demo accounts in prod; confirm Neon backups/PITR + encryption-at-rest; remove stray root `page.tsx` and any duplicate security docs; ensure `.gitignore` covers `.localpg/` and all `.env*`.
+- **Housekeeping:** delete any leftover demo account rows in the production database (the code is already gone); confirm Neon backups/PITR + encryption-at-rest; remove stray root `page.tsx` and any duplicate security docs; ensure `.gitignore` covers `.localpg/` and all `.env*`.
 
 ---
 
@@ -208,7 +208,7 @@ Only `DATABASE_URL` is required locally; email/payment features degrade graceful
 ### Unauthenticated / public pages
 | Page | Route | What it does |
 |---|---|---|
-| Login | `/login` | Sign in; demo-account buttons; school-code field for tenant staff |
+| Login | `/login` | Sign in; school-code field for tenant staff |
 | Register (parent) | `/register` | Parent self-registration |
 | Accept invite | `/accept-invite/:token` | Staff/parent set password from emailed invite |
 | Forgot password | `/forgot-password` | Request reset email |
@@ -273,7 +273,7 @@ Dashboard `/parent` (children, pending baskets, payment status) · Link Child `/
 
 **DB Console** (`db-console.routes`, owner-only): GET owner/db/tables, tables/:table, PATCH/DELETE tables/:table/:id, POST owner/db/query, danger/wipe-school/:schoolId.
 
-**Misc:** GET health, POST seed-users (demo), POST auth/context (multi-role switch).
+**Misc:** GET health, POST auth/context (multi-role switch).
 
 ## 16. Feature checklist (by capability)
 

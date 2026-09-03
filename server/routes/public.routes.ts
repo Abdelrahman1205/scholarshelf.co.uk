@@ -43,7 +43,9 @@ export function registerPublicRoutes(app: Express): void {
 
       const delivered = await sendContactMessageEmail({ name, email, subject, message });
       if (!delivered) {
-        console.log(`[CONTACT] ${name} <${email}> — ${subject || "(no subject)"}: ${message}`);
+        // The sender's name, address and message body are personal data and do
+        // not belong in an application log.
+        console.error("[CONTACT] delivery failed for a public contact-form submission.");
       }
       // Acknowledgement is best-effort; never fail the request because of it.
       sendContactAcknowledgementEmail(email, name).catch(() => {});

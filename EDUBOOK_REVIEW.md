@@ -1,5 +1,12 @@
 # EduBook Final Technical Review
 
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 **Review Date:** 2026-06-07  
 **Reviewer:** Senior Full-Stack Architect / QA Lead  
 **Scope:** Complete EduBook module — schema, backend, frontend, security, demo readiness  
@@ -512,7 +519,11 @@ pending_distribution → received_by_student (teacher confirms)
 
 ## PHASE 6 — Demo Readiness Audit
 
-### 6.1 Current Demo Accounts (from seed)
+### 6.1 Demo Accounts (from seed) — REMOVED 2026-09-02
+
+> Historical record. These accounts, the seed endpoint that created them and the
+> login-page shortcuts were removed from the codebase on 2026-09-02. Rows already
+> written to a live database still need deleting — see Part 4 of `DEPLOY_CHECKLIST.md`.
 
 | Username | Role | School Code | Purpose |
 |---|---|---|---|

@@ -32,7 +32,7 @@ export const BRANDING_AUDIT_ACTIONS = [
 ] as const;
 export type BrandingAuditAction = (typeof BRANDING_AUDIT_ACTIONS)[number];
 
-// Legacy role mapping for backward compatibility with demo accounts
+// Legacy role mapping for backward compatibility with older account rows
 export const LEGACY_ROLE_MAP: Record<string, UserRole> = {
   admin: "school_admin",
   teacher: "teacher",
@@ -174,6 +174,31 @@ export const cronJobRuns = pgTable(
   }),
 );
 export type CronJobRun = typeof cronJobRuns.$inferSelect;
+
+// ── Webhook replay protection ────────────────────────────────────────────────
+//
+// A signed webhook body with no event id is replayable forever: capture it once
+// and you can re-settle the same order any number of times. One row per
+// (source, event_id), claimed with ON CONFLICT DO NOTHING before any work is
+// done — winning the insert means you own the delivery. Same shape as
+// cron_job_runs above, for the same reason.
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    source: text("source").notNull(),        // which webhook, e.g. "payment-update"
+    eventId: text("event_id").notNull(),     // the sender's id for this delivery
+    status: text("status").notNull().default("processing"), // processing | completed | failed
+    detail: text("detail"),
+    receivedAt: timestamp("received_at").defaultNow(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    sourceEventUnique: uniqueIndex("webhook_events_source_event_unique").on(table.source, table.eventId),
+  }),
+);
+
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
 
 // ── Distributed rate limiting (used by server/middleware/auth.ts on serverless) ──
 export const rateLimits = pgTable("rate_limits", {
@@ -777,6 +802,11 @@ export const basketPayments = pgTable("basket_payments", {
   id: varchar("id", { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   basketId: varchar("basket_id", { length: 36 }).references(() => childBookBaskets.id, { onDelete: "cascade" }).notNull(),
   paymentId: varchar("payment_id", { length: 36 }).references(() => bookPayments.id, { onDelete: "cascade" }).notNull(),
+  // Carried on the link row itself so the database can state that this link,
+  // its basket and its payment are all one school. See the composite foreign
+  // keys in migrations/006 — with a NULL here those keys do not fire (MATCH
+  // SIMPLE), so this must always be written.
+  schoolId: varchar("school_id", { length: 36 }).references(() => schools.id, { onDelete: "cascade" }),
 });
 
 // === PROVIDER PAYMENTS — the payment-data layer ==============================

@@ -122,9 +122,11 @@ const userSendPasswordReset: Operation<z.ZodObject<any>> = {
     const branding = await getEmailBrandingForSchool(ctx.req, user.schoolId);
     const sent = await sendPasswordResetEmail(user.email, resetLink, branding);
 
-    if (!sent && !isResendConfigured()) {
-      console.warn("[console] Resend not configured; reset link logged instead.");
-      console.log(`[PASSWORD RESET] ${user.email}: ${resetLink}`);
+    if (!sent) {
+      console.error(`[console] password reset delivery failed for user ${user.id}.`);
+      if (!isResendConfigured()) {
+        console.warn("[console] Resend not configured; password reset email cannot be delivered.");
+      }
     }
     // Never return the link itself — it would land in the audit trail as a
     // live credential.

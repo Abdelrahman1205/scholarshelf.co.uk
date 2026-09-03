@@ -6,7 +6,7 @@
  *
  * Prerequisites:
  *   - Server running on APP_BASE_URL (default http://localhost:5000)
- *   - Demo seed data loaded
+ *   - Test fixtures loaded (npm run test:fixtures)
  *
  * Tests cover:
  *   1. Authentication enforcement (unauthenticated access blocked)
@@ -67,7 +67,7 @@ async function signIn(username: string, password: string, schoolCode?: string): 
   return cookies.join("; ") || null;
 }
 
-// Sign in as the demo admin ONCE and reuse the session across sections that only
+// Sign in as the fixture admin ONCE and reuse the session across sections that only
 // need read/manage access. The sign-in endpoint is rate-limited (10 / 15 min /
 // IP); re-signing-in per section (plus the family suite on the same IP) blew past
 // that limit, so a late sign-in returned a throttled/half session and downstream
@@ -77,7 +77,7 @@ async function signIn(username: string, password: string, schoolCode?: string): 
 let _adminCookie: string | null | undefined;
 async function adminSession(): Promise<string | null> {
   if (_adminCookie !== undefined) return _adminCookie;
-  _adminCookie = await signIn("admin", "admin123", "DEMO-001");
+  _adminCookie = await signIn("admin", "admin123", "TEST-001");
   return _adminCookie;
 }
 
@@ -135,8 +135,8 @@ async function testRBACEnforcement() {
   console.log("\n─── 2. RBAC Enforcement ───");
 
   // Sign in as different roles
-  const teacherCookie = await signIn("teacher", "teacher123", "DEMO-001");
-  const parentCookie = await signIn("parent", "parent123", "DEMO-001");
+  const teacherCookie = await signIn("teacher", "teacher123", "TEST-001");
+  const parentCookie = await signIn("parent", "parent123", "TEST-001");
 
   if (!teacherCookie) {
     fail("Teacher sign-in", "Could not sign in as teacher");
@@ -222,8 +222,8 @@ async function testTenantIsolation() {
   }
   pass("Admin sign-in", "Authenticated successfully");
 
-  // Resolve the admin's ACTUAL session school id (the DB-backed demo school gets a
-  // random UUID at bootstrap — the old hardcoded "demo-school-00000001" is only the
+  // Resolve the admin's ACTUAL session school id (the DB-backed fixture school gets a
+  // random UUID at bootstrap — the old hardcoded in-memory id is only the
   // in-memory constant and must never be assumed for a live server).
   const { status: meStatus, body: me } = await fetchJson("/api/auth/me", {
     headers: { Cookie: adminCookie },
@@ -275,7 +275,7 @@ async function testAuthSessionIntegrity() {
   console.log("\n─── 4. Auth Session Integrity ───");
 
   // Sign out should invalidate session
-  const adminCookie = await signIn("admin", "admin123", "DEMO-001");
+  const adminCookie = await signIn("admin", "admin123", "TEST-001");
   if (!adminCookie) {
     fail("Admin sign-in for session test", "Could not sign in");
     return;
@@ -308,7 +308,7 @@ async function testAuthSessionIntegrity() {
   }
 
   // Invalid credentials should fail
-  const badCookie = await signIn("admin", "wrong-password", "DEMO-001");
+  const badCookie = await signIn("admin", "wrong-password", "TEST-001");
   if (badCookie === null) {
     pass("Invalid credentials rejected", "Sign-in failed as expected");
   } else {
@@ -361,7 +361,7 @@ async function testWebsiteCmsSecurity() {
   }
 
   // 6.2 A non-website role (parent) must not manage website content
-  const parentCookie = await signIn("parent", "parent123", "DEMO-001");
+  const parentCookie = await signIn("parent", "parent123", "TEST-001");
   if (parentCookie) {
     const res = await fetch(`${BASE}/api/website/sections`, {
       method: "POST",
@@ -444,7 +444,7 @@ async function testWebsiteCmsSecurity() {
   }
 
   // 6.5 Public website endpoint must never leak internal fields or drafts
-  const { status: pubStatus, body: pubBody } = await fetchJson("/api/public/schools/DEMO-001/website");
+  const { status: pubStatus, body: pubBody } = await fetchJson("/api/public/schools/TEST-001/website");
   if (pubStatus === 200 && Array.isArray(pubBody)) {
     const leaked = pubBody.some((s: any) =>
       "schoolId" in s || "updatedBy" in s || "isPublished" in s || "sortOrder" in s || "createdAt" in s

@@ -11,14 +11,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import multer from "multer";
 import { storage, getStorageMode } from "../storage.js";
-import {
-  TEST_SUPERUSER_PERMISSION, ALL_ACCESS_CONTEXT, ALL_ACCESS_LABEL,
-  ALL_ACCESS_DEFAULT_PATH, TEST_ACCOUNT_EXCLUDED_ROLES, contextLabel,
-} from "../../shared/test-superuser.js";
-import { USER_ROLES } from "../../shared/schema.js";
-import {
-  isTestModeEnabled, sessionIsTestSuperuser, sessionHasAllAccess,
-} from "./test-superuser.js";
+import { contextLabel } from "../../shared/contexts.js";
 export { getStorageMode };
 import {
   BRANDING_UPLOAD_MAX_BYTES,
@@ -54,7 +47,6 @@ export const CONTEXT_DEFAULT_PATHS: Record<string, string> = {
   parent: "/parent",
   finance: "/finance",
   it_personnel: "/admin/website",
-  [ALL_ACCESS_CONTEXT]: ALL_ACCESS_DEFAULT_PATH,
 };
 
 // ─── Multer (branding uploads) ─────────────────────────────────────────────────
@@ -173,14 +165,7 @@ export function isPlatformOwnerRequest(req: Request): boolean {
 
 /** Returns the school ID to scope data queries to. Returns null for owner/platform requests. */
 export function sessionSchoolId(req: Request): string | null {
-  // For the Universal Test Account, tenant scoping follows the role being
-  // SIMULATED rather than the role stored on the account — otherwise
-  // "view as Platform Owner" would still be pinned to one school, and "view as
-  // Finance" would see no school at all. Everyone else is unaffected.
-  const scopingRole = sessionIsTestSuperuser(req)
-    ? (req.session.activeContext || req.session.role)
-    : req.session.role;
-  if (isPlatformOwnerRole(scopingRole)) {
+  if (isPlatformOwnerRole(req.session.role)) {
     if (req.session.supportSchoolId) return req.session.supportSchoolId;
     return null;
   }
@@ -389,12 +374,7 @@ export function requireRole(...roles: string[]) {
     if (!allowed) return;
     const currentContext = getActiveRequestContext(req);
     if (!roles.includes(currentContext)) {
-      // "All Features" mode on the Universal Test Account satisfies every role
-      // check. Both halves of that sentence matter: the session must already be
-      // a SERVER-VERIFIED test superuser (stamped at login from
-      // user_permissions, never from the request), and the feature is inert in
-      // production. A normal user editing anything client-side reaches neither.
-      if (!sessionHasAllAccess(req)) return res.status(403).json({ message: "Access denied" });
+      return res.status(403).json({ message: "Access denied" });
     }
 
     // SECURITY: platform-owner roles can reach every tenant's data, so MFA is
@@ -402,12 +382,9 @@ export function requireRole(...roles: string[]) {
     // requireRole, so /api/auth/mfa/* stays reachable and no one can be locked
     // out by this check — they are funnelled to enrolment, not shut out.
     //
-    // The test account is exempt ONLY because the feature it belongs to cannot
-    // be on in production (see isTestModeEnabled): the rule exists to protect
-    // real tenants' data on a live deployment, and there is none to protect on a
-    // development database. The rule itself is untouched for every real account.
-    if (isPlatformOwnerRole(currentContext) && req.session.mfaEnabled !== true
-        && !sessionIsTestSuperuser(req)) {
+    // There is no exemption. Every session reaching a platform-owner context
+    // must hold MFA.
+    if (isPlatformOwnerRole(currentContext) && req.session.mfaEnabled !== true) {
       return res.status(403).json({
         message: "Two-factor authentication is required for platform administrator accounts. Set it up to continue.",
         needsMfaEnrolment: true,
@@ -611,41 +588,11 @@ export async function getUserAccessProfile(user: {
   }
   if (primaryRole === "teacher" || assignedClassIds.length > 0) addContext("teacher");
 
-  // ── Universal Test Account ────────────────────────────────────────────────
-  // One flag, and this account can act as every role the platform defines.
-  //
-  // Note what is NOT happening here: no parallel permission system, no bypass,
-  // no hard-coded list of roles. The available contexts are read from
-  // USER_ROLES — the platform's own role enum — so a role added to ScholarShelf
-  // tomorrow appears in the switcher with no change to this feature. Everything
-  // downstream (the switch endpoint, requireRole, the client guards) then treats
-  // this account exactly like a user who genuinely holds those roles.
-  const isTestAccount = isTestModeEnabled()
-    && (await storage.getUserPermissions(user.id).catch(() => [] as string[]))
-      .includes(TEST_SUPERUSER_PERMISSION);
-
-  if (isTestAccount) {
-    // Read from the platform's own role enum, minus the roles held back above —
-    // so this is still "whatever roles the codebase defines", not a hard-coded
-    // list that goes stale.
-    for (const role of USER_ROLES) {
-      if (TEST_ACCOUNT_EXCLUDED_ROLES.includes(role)) continue;
-      addContext(role);
-    }
-    // Plus the one context that is not a role: everything at once.
-    contexts.set(ALL_ACCESS_CONTEXT, {
-      key: ALL_ACCESS_CONTEXT,
-      label: ALL_ACCESS_LABEL,
-      defaultPath: ALL_ACCESS_DEFAULT_PATH,
-    });
-  }
-
   return {
     primaryRole,
     contexts: Array.from(contexts.values()),
     assignedClassIds,
     linkedStudentIds: Array.from(new Set(linkedStudentIds)),
-    isTestAccount,
   };
 }
 
@@ -658,14 +605,6 @@ export async function syncSessionActiveContext(
   const availableKeys = profile.contexts.map((c) => c.key);
   const desired = resolveRole(preferredContext || req.session.activeContext || profile.primaryRole);
   req.session.activeContext = availableKeys.includes(desired) ? desired : (availableKeys[0] || profile.primaryRole);
-
-  // Stamp the Universal Test Account marker here rather than in the routes,
-  // because every path that establishes or changes a context comes through this
-  // function — login, context switch, session refresh. One place to write it
-  // means there is no path that could leave a stale flag behind: if the
-  // permission is revoked (or the feature is turned off), the next call through
-  // here clears it.
-  req.session.testSuperuser = profile.isTestAccount === true ? true : undefined;
 
   return { profile, activeContext: req.session.activeContext };
 }
@@ -683,9 +622,6 @@ export async function buildAuthUserResponse(
   base.schoolName = school?.name || null;
   base.schoolCode = school?.code || null;
   base.availableContexts = profile.contexts;
-  // Drives the TEST ACCOUNT banner and the role switcher. Presentational only —
-  // every actual permission decision is made server-side from the session.
-  base.isTestAccount = profile.isTestAccount === true;
   base.contextMetadata = { assignedClassIds: profile.assignedClassIds, linkedStudentIds: profile.linkedStudentIds };
   base.secondaryRoles = await storage.getSecondaryRoles(user.id);
   if (isPlatformOwnerRole(user.role)) {

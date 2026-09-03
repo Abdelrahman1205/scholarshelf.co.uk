@@ -1,5 +1,12 @@
 # CLIENT-READY BUTTON AUDIT — ScholarShelf / EduCore V1
 
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 **Date:** 2026-05-31
 **Status:** PASS — All buttons wired, TypeScript check clean, no dead UI elements
 
@@ -59,7 +66,7 @@
 |----------------|--------|-------|
 | Sign In (email/password) | WORKING | Session-based auth with role redirect |
 | Sign Out | WORKING | Clears session, redirects to login |
-| Demo Login buttons | WORKING | Quick-login for demo; each role lands on correct dashboard |
+| ~~Demo Login buttons~~ | REMOVED 2026-09-02 | The login page has no quick-login shortcuts |
 | Invite acceptance | WORKING | Token-based invite flow |
 | Protected route redirect | WORKING | Unauthenticated users redirect to /auth |
 | Unknown route handling | WORKING | Frontend shows 404; API returns JSON 404 |
@@ -308,7 +315,7 @@ $ npm run build        →  SKIPPED (esbuild platform mismatch in sandbox — wo
 
 ---
 
-## 9. Demo Credentials
+## 9. Demo Credentials (removed — see note at top)
 
 | Role | Username | Notes |
 |------|----------|-------|
@@ -318,7 +325,7 @@ $ npm run build        →  SKIPPED (esbuild platform mismatch in sandbox — wo
 | Parent | parent@school.com | Linked children only |
 | IT Personnel | it@school.com | Technical admin |
 
-*Exact credentials depend on seed data — check `server/seed.ts` for current demo accounts.*
+*No demo accounts exist any more. Accounts are created through the invite flow or the admin screens.*
 
 ---
 

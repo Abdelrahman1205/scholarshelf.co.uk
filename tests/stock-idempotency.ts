@@ -26,9 +26,9 @@ async function run() {
   console.log("═══════════════════════════════════════════════\n");
 
   const schools = await storage.getSchools();
-  const demo = schools.find((s: any) => s.code === "DEMO-001") || schools[0];
-  if (!demo) { console.error("✗ No school found — aborting."); process.exit(1); }
-  const schoolId = demo.id;
+  const fixtureSchool = schools.find((s: any) => s.code === "TEST-001") || schools[0];
+  if (!fixtureSchool) { console.error("✗ No school found — aborting."); process.exit(1); }
+  const schoolId = fixtureSchool.id;
 
   const book = await storage.createBook({ title: `Stock Test ${TAG}`, stockQuantity: 20, schoolId } as any);
   console.log(`  Created test book ${book.id} with stock 20\n`);

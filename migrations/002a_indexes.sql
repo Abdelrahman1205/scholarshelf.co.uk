@@ -4,7 +4,7 @@
 -- school_id is the filter on essentially every query in a multi-tenant app, and
 -- it was indexed on almost none of them (7 index declarations across 38 tables).
 -- Every tenant-scoped list was a sequential scan across EVERY tenant's rows.
--- Invisible with one demo school; at 30 schools x 1,200 pupils it is a full scan
+-- Invisible with a single school; at 30 schools x 1,200 pupils it is a full scan
 -- of 36,000 rows for each student list, dashboard tile and report — inside a
 -- function with a 30-second ceiling.
 --

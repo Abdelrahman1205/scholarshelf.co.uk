@@ -1,15 +1,33 @@
 /**
  * server/routes/db-console.routes.ts
  *
- * BytHub DB Console — owner-only database administration endpoints.
- * Uses getPool() (node-postgres) for raw parameterized SQL.
- * All routes require PLATFORM_OWNER_ROLES.
+ * BytHub DB Console — owner-only, READ-ONLY database browse.
+ *
+ * WHAT THIS FILE DELIBERATELY DOES NOT CONTAIN
+ *
+ * It used to expose three things that were removed on 2 September 2026 under
+ * the Legal & Compliance directive (Phase A.3):
+ *
+ *   · POST /api/owner/db/query — an arbitrary SQL runner whose only guards were
+ *     first-word regexes. A data-modifying CTE, a multi-statement body or a
+ *     leading comment walked straight through it, against the production
+ *     database, over HTTP.
+ *   · PATCH/DELETE /api/owner/db/tables/:table/:id — unaudited direct row edits
+ *     and deletes on any allow-listed table, interpolating client-supplied JSON
+ *     keys into the SQL text.
+ *   · POST /api/owner/db/danger/wipe-school/:id — a non-transactional wipe of a
+ *     whole tenant behind a single `dangerConfirm: true` flag.
+ *
+ * None of them are coming back to the HTTP surface. Support work that needs to
+ * change data belongs in the typed operations in `server/console/operations.ts`,
+ * where each operation is a bounded, named, audited action; tenant deletion
+ * belongs to the school lifecycle in `owner.routes.ts`, which carries the
+ * cooldown and the audit trail.
  */
 import type { Express } from "express";
-import { requireRole } from "../middleware/auth.js";
+import { requireRole, auditLog } from "../middleware/auth.js";
 import { PLATFORM_OWNER_ROLES } from "../core/constants.js";
 import { getPool } from "../config/database.js";
-import { storage } from "../storage.js";
 
 const ALLOWED_TABLES = [
   "schools",
@@ -42,19 +60,33 @@ function isAllowedTable(t: string): t is AllowedTable {
   return (ALLOWED_TABLES as readonly string[]).includes(t);
 }
 
-function isMutatingQuery(q: string): boolean {
-  return /^\s*(insert|update|delete)\b/i.test(q);
+/**
+ * Columns that must never reach a browser, whichever table they appear on.
+ *
+ * `SELECT *` on `users` previously returned `password_hash` and `mfa_secret` to
+ * the console UI. Matching on the column NAME rather than a per-table list means
+ * a secret added to a new table tomorrow is redacted by default rather than
+ * leaking until someone remembers to update this file.
+ */
+const SECRET_COLUMN = /(password|secret|token|hash|recovery|salt|otp)/i;
+
+function redactRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = SECRET_COLUMN.test(key) && value != null ? "[redacted]" : value;
+  }
+  return out;
 }
 
 export function registerDbConsoleRoutes(app: Express): void {
   const ownerOnly = requireRole(...PLATFORM_OWNER_ROLES);
 
-  // ── List tables ────────────────────────────────────────────────────────────
+  // ── List browsable tables ──────────────────────────────────────────────────
   app.get("/api/owner/db/tables", ownerOnly, (_req, res) => {
-    res.json({ tables: ALLOWED_TABLES });
+    res.json({ tables: ALLOWED_TABLES, readOnly: true });
   });
 
-  // ── Browse table rows ──────────────────────────────────────────────────────
+  // ── Browse table rows (read-only, redacted, audited) ───────────────────────
   app.get("/api/owner/db/tables/:table", ownerOnly, async (req, res) => {
     try {
       const table = String(req.params.table);
@@ -90,100 +122,18 @@ export function registerDbConsoleRoutes(app: Express): void {
       );
 
       const columns = rowsResult.fields.map((f) => f.name);
+      const rows = rowsResult.rows.map(redactRow);
 
-      res.json({ table, page, limit, total, pages: Math.ceil(total / limit), rows: rowsResult.rows, columns });
+      // GDPR Art. 30/33: reading a tenant's records from the platform console is
+      // a processing activity by BytHub staff, and it is attributable.
+      await auditLog(req, "console_table_browsed", table, {
+        page, limit, total, search: search || undefined, schoolId: schoolId || undefined,
+      });
+
+      res.json({ table, page, limit, total, pages: Math.ceil(total / limit), rows, columns, readOnly: true });
     } catch (e: any) {
       console.error("[db-console] browse", e.message);
-      res.status(500).json({ message: e.message || "Query failed" });
-    }
-  });
-
-  // ── Update a row ───────────────────────────────────────────────────────────
-  app.patch("/api/owner/db/tables/:table/:id", ownerOnly, async (req, res) => {
-    try {
-      const table = String(req.params.table); const id = String(req.params.id);
-      if (!isAllowedTable(table)) return res.status(400).json({ message: `Table '${table}' is not accessible.` });
-
-      const updates = req.body as Record<string, unknown>;
-      const READONLY = ["id", "created_at"];
-      const fields = Object.keys(updates).filter((k) => !READONLY.includes(k));
-      if (!fields.length) return res.status(400).json({ message: "No updatable fields." });
-
-      const pool = getPool();
-      const setClauses = fields.map((k, i) => `"${k}" = $${i + 2}`).join(", ");
-      const values: unknown[] = [id, ...fields.map((k) => updates[k])];
-
-      await pool.query(`UPDATE "${table}" SET ${setClauses} WHERE id = $1`, values);
-      const result = await pool.query(`SELECT * FROM "${table}" WHERE id = $1`, [id]);
-      res.json({ success: true, row: result.rows[0] ?? null });
-    } catch (e: any) {
-      console.error("[db-console] update", e.message);
-      res.status(500).json({ message: e.message || "Update failed" });
-    }
-  });
-
-  // ── Delete a row ───────────────────────────────────────────────────────────
-  app.delete("/api/owner/db/tables/:table/:id", ownerOnly, async (req, res) => {
-    try {
-      const table = String(req.params.table); const id = String(req.params.id);
-      if (!isAllowedTable(table)) return res.status(400).json({ message: `Table '${table}' is not accessible.` });
-
-      const pool = getPool();
-      await pool.query(`DELETE FROM "${table}" WHERE id = $1`, [id]);
-      res.json({ success: true });
-    } catch (e: any) {
-      console.error("[db-console] delete", e.message);
-      res.status(500).json({ message: e.message || "Delete failed" });
-    }
-  });
-
-  // ── SQL Console ────────────────────────────────────────────────────────────
-  app.post("/api/owner/db/query", ownerOnly, async (req, res) => {
-    try {
-      const { query, dangerConfirm } = req.body as { query: string; dangerConfirm?: boolean };
-      if (!query || typeof query !== "string") return res.status(400).json({ message: "query is required." });
-
-      // Block DDL always
-      if (/\b(drop|truncate|alter|create)\b/i.test(query)) {
-        return res.status(403).json({ message: "DDL statements (DROP, TRUNCATE, ALTER, CREATE) are blocked." });
-      }
-
-      if (isMutatingQuery(query) && !dangerConfirm) {
-        return res.status(400).json({ message: "Mutating query — send dangerConfirm: true to execute.", requiresConfirm: true });
-      }
-
-      const pool = getPool();
-      const start = Date.now();
-      const result = await pool.query(query);
-      const durationMs = Date.now() - start;
-
-      res.json({
-        rows: result.rows ?? [],
-        rowCount: result.rowCount ?? result.rows?.length ?? 0,
-        columns: result.fields?.map((f) => f.name) ?? [],
-        durationMs,
-      });
-    } catch (e: any) {
-      console.error("[db-console] SQL", e.message);
-      res.status(500).json({ message: e.message || "Query failed" });
-    }
-  });
-
-  // ── Danger: wipe all school data ──────────────────────────────────────────
-  app.post("/api/owner/db/danger/wipe-school/:schoolId", ownerOnly, async (req, res) => {
-    try {
-      const schoolId = String(req.params.schoolId);
-      const { dangerConfirm } = req.body as { dangerConfirm?: boolean };
-      if (!dangerConfirm) return res.status(400).json({ message: "Send dangerConfirm: true to proceed.", requiresConfirm: true });
-
-      const school = await storage.getSchoolById(schoolId);
-      if (!school) return res.status(404).json({ message: "School not found." });
-
-      await storage.deleteSchoolAndRelatedData(schoolId);
-      res.json({ success: true, message: `All data for '${school.name}' (${school.code}) has been wiped.` });
-    } catch (e: any) {
-      console.error("[db-console] wipe", e.message);
-      res.status(500).json({ message: e.message || "Wipe failed" });
+      res.status(500).json({ message: "Query failed" });
     }
   });
 }

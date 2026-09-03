@@ -6,7 +6,7 @@
  *
  * Prerequisites:
  *   - Server running on APP_BASE_URL (default http://localhost:5000)
- *   - Demo seed data loaded (admin/admin123 + DEMO-001)
+ *   - Test fixtures loaded (npm run test:fixtures → admin/admin123 + TEST-001)
  *
  * Coverage:
  *   1. Authentication guard on all family endpoints
@@ -617,7 +617,7 @@ async function run() {
   console.log("═══════════════════════════════════════════════");
 
   // Sign in
-  const cookie = await signIn("admin", "admin123", "DEMO-001");
+  const cookie = await signIn("admin", "admin123", "TEST-001");
   if (!cookie) {
     console.error("\n✗ Could not sign in as admin — aborting tests.");
     process.exit(1);

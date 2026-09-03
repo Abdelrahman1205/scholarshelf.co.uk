@@ -638,9 +638,10 @@ export function registerOwnerRoutes(app: Express): void {
       );
 
       if (!emailSent) {
-        console.log(`[SCHOOL SETUP INVITE] Link for ${adminEmail}: ${inviteLink}`);
+        // Never log the invite link — it accepts into a school-admin account.
+        console.error(`[SCHOOL SETUP INVITE] delivery failed for school ${school.id}. Resend the invite from the owner console.`);
         if (!isResendConfigured()) {
-          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; using log fallback for school setup invites.");
+          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; invite email cannot be delivered.");
         }
       }
 

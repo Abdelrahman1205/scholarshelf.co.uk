@@ -6,7 +6,7 @@
  *
  * Prerequisites:
  *   - Server running on APP_BASE_URL (default http://localhost:5000)
- *   - Demo seed data loaded (POST /api/seed-users → admin/admin123 + DEMO-001)
+ *   - Test fixtures loaded (npm run test:fixtures → admin/admin123 + TEST-001)
  *
  * Coverage:
  *   1.  Authentication guard on every import endpoint
@@ -152,7 +152,7 @@ async function run() {
   const loginRes = await fetch(`${BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "admin", password: "admin123", schoolCode: "DEMO-001" }),
+    body: JSON.stringify({ username: "admin", password: "admin123", schoolCode: "TEST-001" }),
     redirect: "manual",
   });
   adminCookie = (loginRes.headers.getSetCookie?.() || []).map((c) => c.split(";")[0]).join("; ");

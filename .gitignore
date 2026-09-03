@@ -5,7 +5,20 @@ server/public
 vite.config.ts.*
 *.tar.gz
 .vercel
+
+# Secrets. `.env*` catches every variant; the example file is the one exception
+# and is deliberately committed.
 .env*
+!.env.example
+
+# Local Postgres cluster used for offline development. 40MB of database files,
+# and it has held real tenant data — it must never be committed again.
+.localpg/
+
+# Build and type-checker output.
+.tsbuildinfo
+infra/cdk.out/
+
 tmp-*.cjs
 .fuse_hidden*
 **/.fuse_hidden*

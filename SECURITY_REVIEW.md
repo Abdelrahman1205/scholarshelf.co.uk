@@ -1,5 +1,12 @@
 # ScholarShelf — Cybersecurity Review & Secure Design
 
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 **Prepared by:** Security architecture review
 **Scope:** Full-stack review of the ScholarShelf multi-tenant school book-management platform
 **Stack (actual):** React 19 SPA · Express 5 / TypeScript · PostgreSQL (Neon) via Drizzle ORM · session auth (connect-pg-simple) · Resend email · Vercel serverless

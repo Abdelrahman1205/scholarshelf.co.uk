@@ -40,6 +40,9 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Forbidden patterns (Phase A removals stay removed)
+        run: npm run check:forbidden
+
       - name: Unit tests (custody state machine — pure, no DB)
         run: npm run test:custody
 

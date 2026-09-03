@@ -41,7 +41,7 @@ The old `WORKFLOW_COVERAGE_MATRIX.md` is stale. Re-verified against current code
    - `PAYMENT_WEBHOOK_SECRET` — ≥16 chars
    - `APP_BASE_URL` — `https://scholarshelf.co.uk`
    - Confirm `DATABASE_URL` points at the production Neon instance
-3. **Production DB fix** — demo accounts still have `schoolId=null` (see SQL in `CLIENT_READY_BUTTON_AUDIT.md`), or better: disable/remove demo accounts (`admin/admin123` etc.) entirely before real clients onboard.
+3. **Production DB fix** — demo accounts still have `schoolId=null` (see SQL in `CLIENT_READY_BUTTON_AUDIT.md`), or better: delete those accounts entirely before real clients onboard. (The demo accounts and the seed endpoint were removed from the codebase on 2026-09-02; any rows already created in the production database still need deleting.)
 4. **Post-deploy smoke test** — repeat the 6 email tests in `SCHOLAR_SHELF_EMAIL_DELIVERY_AUDIT.md` §"How to Test Each Email" and the parent link/basket/payment flow on production.
 5. **Optional hardening (V1.1):** Redis-backed rate limiting (current limiter is in-memory and resets per serverless cold start — acceptable at school-scale traffic but weaker on Vercel), 2FA for admin/finance, CAPTCHA on public endpoints, account lockout after N failures.
 

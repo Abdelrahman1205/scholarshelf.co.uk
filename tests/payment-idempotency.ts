@@ -31,8 +31,8 @@ async function run() {
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
   const schools = await storage.getSchools();
-  const demo = schools.find((s: any) => s.code === "DEMO-001") || schools[0];
-  const schoolId = demo?.id ?? null;
+  const fixtureSchool = schools.find((s: any) => s.code === "TEST-001") || schools[0];
+  const schoolId = fixtureSchool?.id ?? null;
 
   const paymentId = randomUUID();
   const ref = `PAY-IDEMPO-${TAG}`;

@@ -1,5 +1,12 @@
 # ScholarShelf — Full Cybersecurity Review & Secure Design
 
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 **Prepared:** July 2026 · **Scope:** entire platform as deployed (Vercel + Neon) and as coded in this repository
 **Method:** STRIDE threat modelling + OWASP Top 10 mapping + code-level verification
 **Grounding:** unlike a generic review, every "IMPLEMENTED" claim below was verified against the actual code; every "GAP" is a real absence, not a hypothetical.

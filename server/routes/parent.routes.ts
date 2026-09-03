@@ -342,7 +342,9 @@ export function registerParentRoutes(app: Express): void {
         await getEmailBrandingForSchool(req, payment.schoolId)
       );
       if (!submittedSent) {
-        console.log(`[PAYMENT REF SUBMITTED] Parent: ${user.email}, Ref: ${cleanRef}, OrderRef: ${payment.paymentReference}`);
+        // The reference and the parent's email are personal data; the audit log
+        // is the record of this event, not the application log.
+        console.error(`[PAYMENT REF SUBMITTED] confirmation email failed for payment ${paymentId}.`);
       }
 
       // ── The order has now REACHED the finance stage ──

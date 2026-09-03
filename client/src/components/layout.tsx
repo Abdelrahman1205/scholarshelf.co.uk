@@ -5,13 +5,13 @@ import {
   Package, Layers, Key, CreditCard, BoxSelect, UserPlus, ShoppingCart,
   Link as LinkIcon, History, ClipboardList, Menu, X,
   ShieldAlert, ArrowLeft, MessageSquare, Palette, BarChart2, BarChart3, Bell, Globe, Activity,
-  Image as ImageIcon, ShieldCheck, FileSpreadsheet, FlaskConical,
+  Image as ImageIcon, ShieldCheck, FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { ALL_ACCESS_CONTEXT, contextLabel } from "@shared/test-superuser";
+import { contextLabel } from "@shared/contexts";
 import { getQueryFn } from "@/lib/queryClient";
 import { applyBrandingToDocument } from "@/lib/branding";
 import { useToast } from "@/hooks/use-toast";
@@ -169,11 +169,6 @@ export default function Layout({ children }: LayoutProps) {
         ? "admin"
         : activeContext;
   const isItPersonnelContext = activeContext === "it_personnel";
-  // Universal Test Account. `isTestAccount` comes from the server (which reads
-  // it from user_permissions) — it is presentation only; every real permission
-  // decision is made server-side from the session.
-  const isTestAccount = user?.isTestAccount === true;
-  const inAllAccess = isTestAccount && activeContext === ALL_ACCESS_CONTEXT;
 
   const config = effectiveRole ? roleConfig[effectiveRole] : null;
 
@@ -306,42 +301,8 @@ export default function Layout({ children }: LayoutProps) {
         </div>
       )}
 
-      {/* ── Universal Test Account role switcher ──
-          A test account holds every role, so the plain button list below would
-          be a wall of nine buttons. This is the same switch action
-          (POST /api/auth/context) presented as one obvious testing control. */}
-      {!inSupportMode && isTestAccount && (
-        <div className="mx-3 mt-3 px-3 py-2.5 rounded-md bg-purple-500/10 border border-purple-400/40 space-y-2">
-          <div className="flex items-center gap-1.5">
-            <FlaskConical className="h-3 w-3 text-purple-300" />
-            <span className="text-[10px] uppercase tracking-wider text-purple-300 font-semibold">Testing as</span>
-          </div>
-          <select
-            value={activeContext}
-            disabled={isSwitchingContext}
-            data-testid="select-test-role"
-            onChange={(e) => {
-              const next = availableContexts.find((c) => c.key === e.target.value);
-              if (next) void handleSwitchContext(next.key, next.defaultPath);
-            }}
-            className="w-full text-xs px-2 py-1.5 rounded bg-sidebar-accent border border-sidebar-border text-sidebar-foreground focus:outline-none focus:ring-1 focus:ring-purple-400 disabled:opacity-50"
-          >
-            {availableContexts.map((context) => (
-              <option key={context.key} value={context.key}>{contextLabel(context.key)}</option>
-            ))}
-          </select>
-          <p className="text-[10px] text-purple-300/70 leading-snug">
-            {isSwitchingContext
-              ? "Switching…"
-              : inAllAccess
-                ? "Every feature is visible at once."
-                : "The platform behaves as this role."}
-          </p>
-        </div>
-      )}
-
       {/* Context switcher for multi-role users */}
-      {!inSupportMode && !isTestAccount && availableContexts.length > 1 && (
+      {!inSupportMode && availableContexts.length > 1 && (
         <div className="mx-3 mt-3 px-3 py-2.5 rounded-md bg-sidebar-accent border border-sidebar-border space-y-2">
           <div className="text-[10px] uppercase tracking-wider text-sidebar-foreground/50 font-medium">View as</div>
           <div className="flex flex-col gap-1">
@@ -523,26 +484,10 @@ export default function Layout({ children }: LayoutProps) {
         </div>
       )}
 
-      {/* Test account banner — same pattern as Support Mode above, so it is
-          impossible to mistake a simulated session for a real one. */}
-      {!inSupportMode && isTestAccount && (
-        <div className="fixed top-0 inset-x-0 z-50 bg-purple-600 text-white px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
-          <div className="flex items-center gap-2 min-w-0">
-            <FlaskConical className="h-4 w-4 flex-shrink-0" />
-            <span className="text-sm font-medium truncate" data-testid="text-test-banner">
-              TEST ACCOUNT — Viewing as {contextLabel(activeContext || "")}
-            </span>
-          </div>
-          <span className="text-xs bg-white/20 px-2 py-0.5 rounded-md whitespace-nowrap hidden sm:inline">
-            Development only
-          </span>
-        </div>
-      )}
-
       {/* Desktop sidebar */}
       <aside className={cn(
         "w-60 hidden md:flex flex-col fixed inset-y-0 left-0 z-30",
-        (inSupportMode || isTestAccount) && "top-9"
+        inSupportMode && "top-9"
       )}>
         <SidebarContent />
       </aside>
@@ -564,7 +509,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* Main content */}
       <main className={cn(
         "flex-1 flex flex-col min-h-screen md:ml-60",
-        (inSupportMode || isTestAccount) && "pt-9"
+        inSupportMode && "pt-9"
       )}>
         {/* Mobile top bar */}
         <header className="h-14 bg-card border-b border-border flex items-center justify-between px-4 md:hidden sticky top-0 z-20">

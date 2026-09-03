@@ -6,10 +6,10 @@
  *
  * Prerequisites:
  *   - Server running on APP_BASE_URL (default http://localhost:5000)
- *   - Demo seed data loaded (POST /api/seed-users → DEMO-001)
+ *   - Test fixtures loaded (npm run test:fixtures → TEST-001)
  *   - DATABASE_URL pointing at the SAME database the server uses
  *
- * Orders are seeded straight into `book_payments` (the demo data has no book
+ * Orders are seeded straight into `book_payments` (the fixture data has no book
  * bundles, so the parent basket journey cannot run here). Everything the suite
  * actually ASSERTS goes through the real HTTP APIs — the parent submitting a
  * reference, the finance import, verification and manual override — so the
@@ -121,7 +121,7 @@ let parentEmail = "";
  *
  * `payer` defaults to a UNIQUE address per order so one case's Stripe rows can
  * never become a weak email candidate for another case's order. Cases that need
- * the parent submit-reference trigger pass the demo parent's address instead.
+ * the parent submit-reference trigger pass the fixture parent's address instead.
  */
 let orderSeq = 0;
 async function createOrder(amount = "90.00", payer?: string): Promise<{ id: string; reference: string; amount: string; payer: string }> {
@@ -212,14 +212,14 @@ async function run() {
   if (!DATABASE_URL) { console.error("DATABASE_URL is required to seed orders — aborting."); process.exit(1); }
   db = new Client({ connectionString: DATABASE_URL, ssl: DATABASE_URL.includes("localhost") || DATABASE_URL.includes("127.0.0.1") ? false : { rejectUnauthorized: false } });
   await db.connect();
-  const school = await db.query(`select id from schools where code = 'DEMO-001' limit 1`);
+  const school = await db.query(`select id from schools where code = 'TEST-001' limit 1`);
   schoolId = school.rows[0]?.id;
-  if (!schoolId) { console.error("Demo school DEMO-001 not found — run POST /api/seed-users first."); process.exit(1); }
+  if (!schoolId) { console.error("Fixture school TEST-001 not found — run npm run test:fixtures first."); process.exit(1); }
 
   // ScholarShelf refuses to confirm payments until the school's operational
   // setup checklist is complete — a guard that predates this feature and
   // applies to BOTH the manual Confirm button and the new manual override. The
-  // demo seed leaves book bundles and linking codes unset, so complete them
+  // the fixtures leave book bundles and linking codes unset, so complete them
   // here; otherwise every confirmation in this suite would 409.
   await db.query(`update schools set setup_status = 'complete', status = 'active' where id = $1`, [schoolId]);
   const lvl = await db.query(
@@ -242,9 +242,9 @@ async function run() {
     );
   }
 
-  financeCookie = await login("finance", "finance123", "DEMO-001");
-  parentCookie = await login("parent", "parent123", "DEMO-001");
-  teacherCookie = await login("teacher", "teacher123", "DEMO-001");
+  financeCookie = await login("finance", "finance123", "TEST-001");
+  parentCookie = await login("parent", "parent123", "TEST-001");
+  teacherCookie = await login("teacher", "teacher123", "TEST-001");
   if (!financeCookie || !parentCookie) { console.error("Could not log in — aborting."); process.exit(1); }
   const me = await req("GET", "/api/auth/me", undefined, parentCookie);
   parentEmail = me.body?.email || "parent@example.com";

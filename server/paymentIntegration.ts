@@ -114,6 +114,58 @@ export async function createExternalPayment(
   }
 }
 
+/** How far out of date a webhook timestamp may be before it is rejected. */
+export const WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 300;
+
+export type WebhookVerification =
+  | { ok: true }
+  | { ok: false; status: number; reason: string };
+
+/**
+ * Verify an incoming webhook delivery: signature, freshness, and the presence of
+ * an event id the caller can then use for replay protection.
+ *
+ * WHAT CHANGED, AND WHY
+ *
+ * The signature used to be computed over `JSON.stringify(req.body)` — the body
+ * re-serialised by this process, not the bytes the sender signed. Key order and
+ * whitespace differ between serialisers, so that check was simultaneously
+ * fragile and weaker than it looked. It now runs over the raw request bytes.
+ *
+ * The signed value is `<timestamp>.<raw body>`, so the timestamp cannot be
+ * altered without invalidating the signature, and a delivery older than the
+ * tolerance window is refused. That closes the replay window to five minutes;
+ * the event id closes it entirely, and the caller is responsible for claiming it
+ * exactly once before doing any work.
+ */
+export function verifyWebhookRequest(params: {
+  rawBody: string;
+  signature: string;
+  timestamp: string;
+  eventId: string;
+}): WebhookVerification {
+  const { rawBody, signature, timestamp, eventId } = params;
+
+  if (!signature) return { ok: false, status: 401, reason: "Missing X-Signature." };
+  if (!timestamp)  return { ok: false, status: 400, reason: "Missing X-Timestamp." };
+  if (!eventId)    return { ok: false, status: 400, reason: "Missing X-Event-Id." };
+
+  const sentAt = Number(timestamp);
+  if (!Number.isFinite(sentAt)) {
+    return { ok: false, status: 400, reason: "X-Timestamp must be Unix seconds." };
+  }
+  const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - sentAt);
+  if (ageSeconds > WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS) {
+    return { ok: false, status: 400, reason: "Webhook timestamp is outside the accepted window." };
+  }
+
+  if (!verifyWebhookSignature(`${timestamp}.${rawBody}`, signature)) {
+    return { ok: false, status: 401, reason: "Invalid webhook signature." };
+  }
+
+  return { ok: true };
+}
+
 /**
  * Verifies the HMAC-SHA256 signature on incoming webhook calls.
  *

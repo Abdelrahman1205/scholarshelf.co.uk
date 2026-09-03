@@ -1,7 +1,10 @@
 import { eq, and, lt, desc, sql, inArray } from "drizzle-orm";
 // NOTE: getAllocations uses batched inArray lookups (no N+1).
 import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import { neon } from "@neondatabase/serverless";
+import { Pool } from "pg";
+import { buildSslConfig } from "./config/database.js";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import * as schema from "../shared/schema.js";
@@ -37,6 +40,38 @@ function getDb(): ReturnType<typeof drizzle> {
     _db = drizzle(sql, { schema });
   }
   return _db;
+}
+
+/**
+ * A transaction-capable handle.
+ *
+ * `getDb()` above is the Neon serverless HTTP driver. It cannot open an
+ * interactive transaction: every statement is its own round trip, so a sequence
+ * of statements through it is a sequence, not an atomic unit. Anything that must
+ * either all happen or not happen — settlement, in particular — runs through
+ * this pooled node-postgres handle instead.
+ */
+let _txPool: Pool | null = null;
+// Deliberately loosely typed. Drizzle's node-postgres generics instantiated over
+// a 41-table schema push `tsc` from seconds to minutes; the queries run through
+// it below are the same ones the rest of this file runs through the typed handle.
+let _txDb: any = null;
+function getTxDb(): any {
+  if (_txDb) return _txDb;
+  if (!RESOLVED_DATABASE_URL) throw new Error("No DATABASE_URL configured");
+  _txPool = new Pool({ connectionString: RESOLVED_DATABASE_URL, ssl: buildSslConfig() });
+  // `drizzlePg` is called through an `any` cast on purpose. Inferring its return
+  // type over a 36-table schema makes `tsc` take minutes — which would also make
+  // the CI type-check step useless. The queries below are the same ones the rest
+  // of this file runs through the typed handle.
+  _txDb = (drizzlePg as any)(_txPool, { schema });
+  return _txDb;
+}
+
+/** Postgres serialization failure / deadlock — safe to retry the whole transaction. */
+function isRetryableTxError(e: unknown): boolean {
+  const code = (e as { code?: string } | null)?.code;
+  return code === "40001" || code === "40P01";
 }
 
 // PostgreSQL supports RETURNING — no need for a separate SELECT after insert/update
@@ -99,8 +134,10 @@ function isDbUnavailableError(error: unknown): boolean {
   // Switch mode on first fallback
   if (_storageMode !== "memory") {
     _storageMode = "memory";
-    console.warn("[STORAGE] ⚠ Falling back to in-memory storage (development only).");
-    ensureDemoUsersInMemory();
+    console.warn(
+      "[STORAGE] ⚠ Falling back to in-memory storage (development only). " +
+      "It starts empty — create the accounts you need."
+    );
   }
 
   return true;
@@ -117,148 +154,12 @@ function now() {
   return new Date();
 }
 
-function ensureDemoUsersInMemory() {
-  if (memoryUsers.size > 0) return;
-
-  // Create a stable demo school ID for memory-mode tenant scoping
-  const demoSchoolId = "demo-school-00000001";
-  if (!memorySchools.has(demoSchoolId)) {
-    memorySchools.set(demoSchoolId, {
-      id: demoSchoolId,
-      name: "Al-Noor International School",
-      code: "DEMO-001",
-      status: "active",
-      setupStatus: "active",
-      contactEmail: "admin@alnoor.edu.ly",
-      contactPhone: "+218-21-555-0100",
-      address: "Tripoli, Libya",
-      notes: "Demo school (memory mode)",
-      paymentAppName: null,
-      createdAt: now(),
-      updatedAt: now(),
-      isDeleted: false,
-      suspendedAt: null,
-      suspendedBy: null,
-      suspensionReason: null,
-      archivedAt: null,
-      archivedBy: null,
-      archiveReason: null,
-      restoredAt: null,
-      restoredBy: null,
-      restoreReason: null,
-      deletionRequestedAt: null,
-      deletionRequestedBy: null,
-      deletionReason: null,
-      deletedAt: null,
-      deletedBy: null,
-      deleteReason: null,
-    });
-  }
-
-  const demoUsers: Array<schema.User> = [
-    {
-      id: randomUUID(),
-      username: "bythub",
-      passwordHash: bcrypt.hashSync("bythub123", 10),
-      name: "BytHub Platform Owner",
-      role: "owner",
-      email: "owner@bythub.co",
-      status: "active",
-      schoolId: null,
-      emailVerifiedAt: null,
-      createdAt: now(),
-      updatedAt: now(),
-      lastLoginAt: null,
-      mfaEnabled: false,
-      mfaSecret: null,
-      mfaRecoveryCodes: null,
-      mfaEnrolledAt: null,
-    },
-    {
-      id: randomUUID(),
-      username: "admin",
-      passwordHash: bcrypt.hashSync("admin123", 10),
-      name: "School Administrator",
-      role: "school_admin",
-      email: "admin@alnoor.edu.ly",
-      status: "active",
-      schoolId: demoSchoolId,
-      emailVerifiedAt: null,
-      createdAt: now(),
-      updatedAt: now(),
-      lastLoginAt: null,
-      mfaEnabled: false,
-      mfaSecret: null,
-      mfaRecoveryCodes: null,
-      mfaEnrolledAt: null,
-    },
-    {
-      id: randomUUID(),
-      username: "teacher",
-      passwordHash: bcrypt.hashSync("teacher123", 10),
-      name: "Ms. Fatima Johnson",
-      role: "teacher",
-      email: "teacher@alnoor.edu.ly",
-      status: "active",
-      schoolId: demoSchoolId,
-      emailVerifiedAt: null,
-      createdAt: now(),
-      updatedAt: now(),
-      lastLoginAt: null,
-      mfaEnabled: false,
-      mfaSecret: null,
-      mfaRecoveryCodes: null,
-      mfaEnrolledAt: null,
-    },
-    {
-      id: randomUUID(),
-      username: "parent",
-      passwordHash: bcrypt.hashSync("parent123", 10),
-      name: "Ahmed Al-Mansouri",
-      role: "parent",
-      email: "parent@example.com",
-      status: "active",
-      schoolId: demoSchoolId,
-      emailVerifiedAt: null,
-      createdAt: now(),
-      updatedAt: now(),
-      lastLoginAt: null,
-      mfaEnabled: false,
-      mfaSecret: null,
-      mfaRecoveryCodes: null,
-      mfaEnrolledAt: null,
-    },
-    {
-      id: randomUUID(),
-      username: "finance",
-      passwordHash: bcrypt.hashSync("finance123", 10),
-      name: "Youssef Al-Baruni",
-      role: "finance",
-      email: "finance@alnoor.edu.ly",
-      status: "active",
-      schoolId: demoSchoolId,
-      emailVerifiedAt: null,
-      createdAt: now(),
-      updatedAt: now(),
-      lastLoginAt: null,
-      mfaEnabled: false,
-      mfaSecret: null,
-      mfaRecoveryCodes: null,
-      mfaEnrolledAt: null,
-    },
-  ];
-
-  for (const user of demoUsers) {
-    memoryUsers.set(user.id, user);
-  }
-}
-
 // Helper: build a school-scoped WHERE condition
 function schoolFilter<T extends { schoolId: any }>(table: T, schoolId?: string | null) {
   if (typeof schoolId === "string") {
     return eq(table.schoolId, schoolId);
   }
-  return undefined; // no filter for owner/demo (null schoolId)
+  return undefined; // no filter for the platform owner (null schoolId)
 }
 
 export interface IStorage {
@@ -366,6 +267,9 @@ export interface IStorage {
   cancelPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
   isPaymentReferenceDuplicate(referenceNumber: string, schoolId: string, excludePaymentId?: string): Promise<boolean>;
   updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null>;
+  getPaymentsByReference(reference: string): Promise<schema.BookPayment[]>;
+  claimWebhookEvent(source: string, eventId: string): Promise<boolean>;
+  completeWebhookEvent(source: string, eventId: string, status: string, detail?: string): Promise<void>;
 
   // Allocations
   getAllocations(classId?: string, schoolId?: string | null): Promise<any[]>;
@@ -1828,17 +1732,85 @@ class DatabaseStorage implements IStorage {
 
   // === PAYMENTS ===
 
+  /**
+   * Create a payment claim over one or more baskets.
+   *
+   * The baskets are checked against the payment's school BEFORE anything is
+   * written. Cross-school basket mixing was permitted here: a caller could name
+   * a basket from another tenant and it would be linked, paid for, and later
+   * settled against the wrong school's books. The composite foreign keys in
+   * migrations/006 make that impossible at the database level as well; this is
+   * the same rule stated where the user can be given a sensible message.
+   */
   async createPayment(payment: schema.InsertBookPayment, basketIds: string[]): Promise<schema.BookPayment> {
+    const schoolId = (payment as { schoolId?: string | null }).schoolId ?? null;
+
+    const baskets = basketIds.length
+      ? await getDb().select().from(schema.childBookBaskets)
+          .where(inArray(schema.childBookBaskets.id, basketIds))
+      : [];
+
+    if (baskets.length !== basketIds.length) {
+      throw new Error("One or more baskets in this order no longer exist.");
+    }
+    for (const basket of baskets) {
+      if (basket.schoolId !== schoolId) {
+        throw new Error("An order cannot combine baskets from more than one school.");
+      }
+    }
+
     // Revenue has to stay attributable to the year it was taken in.
     const created = await insertAndFetchById(schema.bookPayments, {
       academicYear: currentAcademicYear(),
       ...payment,
     } as schema.InsertBookPayment);
+
     for (const basketId of basketIds) {
-      await getDb().insert(schema.basketPayments).values({ basketId, paymentId: created.id });
+      // school_id on the link row is what the composite FKs key off. A NULL here
+      // silently disables them (MATCH SIMPLE), so it is always written.
+      await getDb().insert(schema.basketPayments).values({ basketId, paymentId: created.id, schoolId });
       await getDb().update(schema.childBookBaskets).set({ status: "paid" }).where(eq(schema.childBookBaskets.id, basketId));
     }
     return created;
+  }
+
+  /**
+   * Every payment matching a reference, across all schools.
+   *
+   * `updatePaymentByReference` takes the first row it finds. References are only
+   * unique WITHIN a school (`book_payments(school_id, upper(btrim(ref)))`), so a
+   * caller that has no school context — the webhook — must check that exactly one
+   * school owns the reference before acting on it. Two schools issuing the same
+   * reference would otherwise settle the wrong tenant's order.
+   */
+  async getPaymentsByReference(reference: string): Promise<schema.BookPayment[]> {
+    const normalised = String(reference ?? "").trim();
+    if (!normalised) return [];
+    return getDb().select().from(schema.bookPayments)
+      .where(sql`upper(btrim(${schema.bookPayments.paymentReference})) = upper(btrim(${normalised}))`);
+  }
+
+  /**
+   * Claim a webhook delivery. Returns true if this process now owns it, false if
+   * it has already been seen — the insert is the lock, so two concurrent
+   * deliveries of the same event cannot both win.
+   */
+  async claimWebhookEvent(source: string, eventId: string): Promise<boolean> {
+    const inserted = await getDb()
+      .insert(schema.webhookEvents)
+      .values({ source, eventId, status: "processing" })
+      .onConflictDoNothing({ target: [schema.webhookEvents.source, schema.webhookEvents.eventId] })
+      .returning({ id: schema.webhookEvents.id });
+    return inserted.length > 0;
+  }
+
+  async completeWebhookEvent(source: string, eventId: string, status: string, detail?: string): Promise<void> {
+    await getDb().update(schema.webhookEvents)
+      .set({ status, detail: detail ?? null, completedAt: new Date() })
+      .where(and(
+        eq(schema.webhookEvents.source, source),
+        eq(schema.webhookEvents.eventId, eventId),
+      ));
   }
 
   async updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
@@ -1934,69 +1906,207 @@ class DatabaseStorage implements IStorage {
     return payment;
   }
 
+  /**
+   * Settlement. Finance turns a payment claim into a settled position: the order
+   * is marked confirmed, every linked basket becomes allocations, and stock moves.
+   *
+   * This is the product's core money invariant, and all of it happens in ONE
+   * SERIALIZABLE transaction. Three things that were wrong here before:
+   *
+   *   1. It ran on the Neon HTTP driver, which cannot open a transaction. The
+   *      status flip, the allocation inserts and the stock deduction were
+   *      separate round trips: a failure halfway left a confirmed order with
+   *      half its allocations and half its stock movement.
+   *   2. Idempotency was a SELECT followed by an UPDATE. Two finance officers
+   *      clicking Confirm at the same moment both read "pending", both proceeded,
+   *      and the child was allocated twice and the stock deducted twice. The
+   *      claim is now a single conditional UPDATE — exactly one caller can win it.
+   *   3. `adjustStock` was wrapped in `catch {}`. An out-of-stock book produced a
+   *      confirmed order, a real allocation, and no stock movement — books owed
+   *      to a child that the school does not have. A stock failure now aborts the
+   *      whole settlement and the order stays claimable.
+   *
+   * SERIALIZABLE means a concurrent conflicting transaction may be aborted by
+   * Postgres with 40001. That is not an error to show a user: it means someone
+   * else got there first, so the whole transaction is retried from the top. On
+   * the retry the claim-lock finds the order already confirmed and returns it.
+   */
   async confirmPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
-    const conditions = [eq(schema.bookPayments.id, paymentId)];
-    const sf = schoolFilter(schema.bookPayments, schoolId);
-    if (sf) conditions.push(sf);
-    const [existing] = await getDb().select().from(schema.bookPayments).where(and(...conditions));
-    if (!existing) throw new Error("Payment not found");
-
-    // Idempotency (Slice 5): confirming creates allocations and DEDUCTS STOCK —
-    // side effects that must happen at most once. If this order is already
-    // confirmed or further along, return it unchanged instead of double-processing
-    // (a repeated click must never duplicate allocations or double-deduct stock).
+    // Statuses at or past settlement. Claiming skips them, so a repeated click
+    // (or a retry after a serialization failure) is a no-op rather than a
+    // second allocation run.
     const ALREADY_PROCESSED = ["confirmed", "ready_for_collection", "collected"];
-    if (ALREADY_PROCESSED.includes(existing.status)) {
-      return existing;
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await getTxDb().transaction(async (tx: any) => {
+          const conditions = [eq(schema.bookPayments.id, paymentId)];
+          const sf = schoolFilter(schema.bookPayments, schoolId);
+          if (sf) conditions.push(sf);
+
+          const [existing] = await tx.select().from(schema.bookPayments).where(and(...conditions));
+          if (!existing) throw new Error("Payment not found");
+          if (ALREADY_PROCESSED.includes(existing.status)) return existing;
+
+          // ── The claim-lock ──────────────────────────────────────────────
+          // One conditional UPDATE. Whoever's UPDATE returns a row owns the
+          // settlement; a loser gets no row back and returns the order as it
+          // now stands. There is no window between the check and the write.
+          const [payment] = await tx
+            .update(schema.bookPayments)
+            .set({
+              status: "confirmed",
+              confirmedAt: new Date(),
+              paymentReviewedAt: new Date(),
+              paymentReviewedBy: reviewedBy,
+              paymentReviewNote: reviewNote || null,
+            })
+            .where(and(
+              eq(schema.bookPayments.id, paymentId),
+              sql`${schema.bookPayments.status} NOT IN ('confirmed', 'ready_for_collection', 'collected')`,
+            ))
+            .returning();
+
+          if (!payment) {
+            const [current] = await tx.select().from(schema.bookPayments).where(eq(schema.bookPayments.id, paymentId));
+            return current ?? existing;
+          }
+
+          const links = await tx.select().from(schema.basketPayments)
+            .where(eq(schema.basketPayments.paymentId, paymentId));
+
+          for (const link of links) {
+            const [basket] = await tx.select().from(schema.childBookBaskets)
+              .where(eq(schema.childBookBaskets.id, link.basketId));
+            if (!basket) continue;
+
+            // TENANT BOUNDARY. A basket linked to this payment must belong to the
+            // same school as the payment. If it does not, this is either a bug or
+            // an attempt to settle one school's books against another's money —
+            // either way the whole settlement is abandoned, not silently skipped.
+            if (basket.schoolId !== payment.schoolId) {
+              throw new Error(
+                `Refusing to settle payment ${paymentId}: basket ${basket.id} belongs to a different school.`,
+              );
+            }
+
+            const existingAllocs = await tx
+              .select({ id: schema.financeBookAllocations.id })
+              .from(schema.financeBookAllocations)
+              .where(eq(schema.financeBookAllocations.basketId, basket.id));
+
+            if (basket.status === "allocated" || existingAllocs.length > 0) {
+              // Already turned into allocations by an earlier partial run — make
+              // the basket flag agree and move on without re-deducting stock.
+              await tx.update(schema.childBookBaskets)
+                .set({ status: "allocated" })
+                .where(eq(schema.childBookBaskets.id, basket.id));
+              continue;
+            }
+
+            await tx.update(schema.childBookBaskets)
+              .set({ status: "allocated" })
+              .where(eq(schema.childBookBaskets.id, basket.id));
+
+            // Resolved once per basket, not per book — every item in a basket
+            // belongs to the same child in the same class on the same day.
+            const snapshot = await this.snapshotStudentContextTx(tx, basket.studentId);
+
+            const items = await tx.select().from(schema.basketItems)
+              .where(eq(schema.basketItems.basketId, basket.id));
+
+            for (const item of items) {
+              await tx.insert(schema.financeBookAllocations).values({
+                studentId: basket.studentId,
+                bookId: item.bookId,
+                basketId: basket.id,
+                status: "allocated",
+                schoolId: payment.schoolId,
+                ...snapshot,
+              });
+              await this.deductStockTx(
+                tx, item.bookId, item.quantity ?? 1, payment.schoolId,
+                `Allocated to student via payment ${paymentId}`,
+              );
+            }
+          }
+
+          return payment;
+        }, { isolationLevel: "serializable" });
+      } catch (e) {
+        if (isRetryableTxError(e) && attempt < 3) continue;
+        throw e;
+      }
+    }
+  }
+
+  /**
+   * Deduct stock inside a caller's transaction.
+   *
+   * The guarded UPDATE is the same one `adjustStock` uses — `WHERE stock >= qty`
+   * so two concurrent deductions cannot both read the same starting figure — but
+   * here a failure is allowed to propagate and roll the settlement back.
+   */
+  private async deductStockTx(
+    tx: any, bookId: string, quantity: number, schoolId: string | null, reason: string,
+  ): Promise<void> {
+    const qty = Math.abs(quantity ?? 1);
+
+    const [book] = await tx.select().from(schema.books).where(eq(schema.books.id, bookId));
+    if (!book) throw new Error(`Cannot allocate: book ${bookId} no longer exists.`);
+    if (schoolId && book.schoolId && book.schoolId !== schoolId) {
+      throw new Error(`Refusing to allocate book ${bookId}: it belongs to a different school.`);
     }
 
-    const payment = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.id, paymentId), {
-      status: "confirmed",
-      confirmedAt: new Date(),
-      paymentReviewedAt: new Date(),
-      paymentReviewedBy: reviewedBy,
-      paymentReviewNote: reviewNote || null,
+    const [updated] = await tx
+      .update(schema.books)
+      .set({ stockQuantity: sql`${schema.books.stockQuantity} - ${qty}` })
+      .where(and(
+        eq(schema.books.id, bookId),
+        sql`${schema.books.stockQuantity} >= ${qty}`,
+      ))
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        `Not enough stock of "${book.title}" to complete this order (${qty} needed, ${book.stockQuantity ?? 0} on hand).`,
+      );
+    }
+
+    const newQty = updated.stockQuantity ?? 0;
+    await tx.insert(schema.bookInventoryTransactions).values({
+      bookId,
+      transactionType: "allocation",
+      quantity: qty,
+      previousQuantity: newQty + qty,
+      newQuantity: newQty,
+      reason,
     });
+  }
 
-    // Create allocations from linked baskets — guarded PER BASKET so a retry (or a
-    // partially-completed prior run) never duplicates allocations or re-deducts stock.
-    const bps = await getDb().select().from(schema.basketPayments).where(eq(schema.basketPayments.paymentId, paymentId));
-    for (const bp of bps) {
-      const basket = await this.getBasket(bp.basketId);
-      if (!basket) continue;
-
-      const existingAllocs = await getDb()
-        .select({ id: schema.financeBookAllocations.id })
-        .from(schema.financeBookAllocations)
-        .where(eq(schema.financeBookAllocations.basketId, basket.id));
-      if (basket.status === "allocated" || existingAllocs.length > 0) {
-        // Already turned into allocations — just ensure the basket flag is set.
-        await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
-        continue;
-      }
-
-      await getDb().update(schema.childBookBaskets).set({ status: "allocated" }).where(eq(schema.childBookBaskets.id, bp.basketId));
-      // Resolved once per basket, not per book — every item in a basket belongs
-      // to the same child in the same class on the same day.
-      const snapshot = await this.snapshotStudentContext(basket.studentId);
-      for (const item of basket.items) {
-        await getDb().insert(schema.financeBookAllocations).values({
-          studentId: basket.studentId,
-          bookId: item.bookId,
-          basketId: basket.id,
-          status: "allocated",
-          schoolId: existing.schoolId,
-          ...snapshot,
-        });
-        try {
-          await this.adjustStock(item.bookId, item.quantity, "allocation", `Allocated to student via payment ${paymentId}`);
-        } catch (e) {
-          // Stock adjustment failure should not block allocation
-        }
-      }
-    }
-
-    return payment;
+  /** `snapshotStudentContext`, but reading inside a caller's transaction. */
+  private async snapshotStudentContextTx(tx: any, studentId: string | null | undefined): Promise<{
+    academicYear: string;
+    classIdAtAllocation: string | null;
+    classNameAtAllocation: string | null;
+    yearGroupAtAllocation: string | null;
+  }> {
+    const base = {
+      academicYear: currentAcademicYear(),
+      classIdAtAllocation: null as string | null,
+      classNameAtAllocation: null as string | null,
+      yearGroupAtAllocation: null as string | null,
+    };
+    if (!studentId) return base;
+    const [student] = await tx.select().from(schema.students).where(eq(schema.students.id, studentId));
+    if (!student?.classId) return base;
+    const [cls] = await tx.select().from(schema.classes).where(eq(schema.classes.id, student.classId));
+    return {
+      academicYear: cls?.academicYear?.trim() || base.academicYear,
+      classIdAtAllocation: student.classId,
+      classNameAtAllocation: cls?.name ?? null,
+      yearGroupAtAllocation: cls?.yearGroup ?? student.gradeLevel ?? null,
+    };
   }
 
   async rejectPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment> {
@@ -2553,7 +2663,6 @@ class DatabaseStorage implements IStorage {
       return await db.select().from(schema.users);
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
-      ensureDemoUsersInMemory();
       const all = Array.from(memoryUsers.values());
       if (schoolId) return all.filter((u) => u.schoolId === schoolId);
       return all;
@@ -2566,7 +2675,6 @@ class DatabaseStorage implements IStorage {
       return user;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
-      ensureDemoUsersInMemory();
       return Array.from(memoryUsers.values()).find((u) => u.username === username);
     }
   }
@@ -2577,7 +2685,6 @@ class DatabaseStorage implements IStorage {
       return user;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
-      ensureDemoUsersInMemory();
       return Array.from(memoryUsers.values()).find((u) => u.email === email);
     }
   }
@@ -2588,7 +2695,6 @@ class DatabaseStorage implements IStorage {
       return user;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
-      ensureDemoUsersInMemory();
       return memoryUsers.get(id);
     }
   }
@@ -2599,7 +2705,6 @@ class DatabaseStorage implements IStorage {
       return created;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
-      ensureDemoUsersInMemory();
       const created: schema.User = {
         id: randomUUID(),
         username: user.username,
@@ -2629,7 +2734,6 @@ class DatabaseStorage implements IStorage {
       return updated;
     } catch (e) {
       if (!isDbUnavailableError(e)) throw e;
-      ensureDemoUsersInMemory();
       const existing = memoryUsers.get(id);
       if (!existing) return undefined;
       const updated: schema.User = {
@@ -3177,14 +3281,12 @@ const memoryMessages: schema.Message[] = [];
 if (FORCE_MEMORY_STORAGE) {
   _storageMode = "memory";
   console.warn("[STORAGE] ⚠ Memory storage forced — FORCE_MEMORY_STORAGE=true (development only).");
-  ensureDemoUsersInMemory();
 } else if (RESOLVED_DATABASE_URL) {
   _storageMode = "database";
   console.log("[STORAGE] ✓ Database storage active (DATABASE_URL is set).");
 } else if (MEMORY_ALLOWED) {
   _storageMode = "memory";
   console.warn("[STORAGE] ⚠ Memory storage active — ALLOW_MEMORY_STORAGE=true (development only).");
-  ensureDemoUsersInMemory();
 } else if (IS_PRODUCTION) {
   console.error("[STORAGE] ✗ FATAL: No DATABASE_URL in production. Server cannot start safely.");
   process.exit(1);

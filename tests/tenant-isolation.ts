@@ -30,12 +30,12 @@
 const BASE = process.env.APP_BASE_URL || "http://localhost:5000";
 
 const A = {
-  code: process.env.SCHOOL_A_CODE || "DEMO-001",
+  code: process.env.SCHOOL_A_CODE || "TEST-001",
   user: process.env.SCHOOL_A_ADMIN || "admin",
   pass: process.env.SCHOOL_A_PASSWORD || "admin123",
 };
 const B = {
-  code: process.env.SCHOOL_B_CODE || "DEMO-002",
+  code: process.env.SCHOOL_B_CODE || "TEST-002",
   user: process.env.SCHOOL_B_ADMIN || "admin2",
   pass: process.env.SCHOOL_B_PASSWORD || "admin123",
 };

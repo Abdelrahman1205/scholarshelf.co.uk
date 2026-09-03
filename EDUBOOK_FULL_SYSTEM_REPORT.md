@@ -1,4 +1,12 @@
 # EduBook — Full System Report
+
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 ### Every Feature, Function, and Technical Detail
 
 ---
@@ -37,9 +45,8 @@ The system uses **Role-Based Access Control (RBAC)**. Every user has exactly one
 - Wrong-role requests return 403 Forbidden
 
 **Default demo accounts:**
-- `admin` / `admin123`
-- `teacher` / `teacher123`
-- `parent` / `parent123`
+- None. Built-in accounts were removed on 2026-09-02; create staff accounts
+  explicitly (`npx tsx script/seed-test-account.ts` in development).
 
 ---
 

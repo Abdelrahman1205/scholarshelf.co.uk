@@ -785,9 +785,11 @@ export function registerUserRoutes(app: Express): void {
       const inviteLink = `${getPublicBaseUrl(req)}/accept-invite/${invite.id}.${rawToken}`;
       const sent = await sendInviteEmail(email, normalizedRole, inviteLink, await getEmailBrandingForSchool(req, sid));
       if (!sent) {
-        console.log(`[INVITE] Link for ${email} (${role}): ${inviteLink}`);
+        // The invite link accepts into an account — it is a live credential and
+        // never goes to a log. The invite row exists; resend it from the UI.
+        console.error(`[INVITE] delivery failed for invite ${invite.id}. Resend it from the staff screen.`);
         if (!isResendConfigured()) {
-          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; using log fallback for invite links.");
+          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; invite email cannot be delivered.");
         }
       }
 

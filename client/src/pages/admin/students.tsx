@@ -498,7 +498,7 @@ function StudentsSection() {
                 </button>
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border" />or paste rows below<div className="h-px flex-1 bg-border" /></div>
-              <Textarea rows={6} value={csvText} onChange={(e) => setCsvText(e.target.value)} placeholder="name,class,parent_email&#10;Amelia Carter,Year 7,parent@example.com" className="font-mono text-xs" />
+              <Textarea rows={6} value={csvText} onChange={(e) => setCsvText(e.target.value)} placeholder="name,class,parent_email" className="font-mono text-xs" />
             </div>
           ) : (
             <div className="py-2 max-h-[50vh] overflow-auto">

@@ -1,5 +1,12 @@
 # EduBook Authentication Security Audit
 
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 **Date:** 2026-05-25
 **Version:** Phase 1 — Production-Ready Authentication
 **Auditor:** EduCore Architecture Team
@@ -26,7 +33,7 @@
 - **Minimum length:** 8 characters (enforced by Zod schema)
 - **Maximum length:** 200 characters (enforced by Zod schema)
 - **Storage:** `password_hash` column, never exposed in API responses
-- **Demo accounts:** admin/admin123, teacher/teacher123, parent/parent123 (kept for development)
+- **Demo accounts:** removed 2026-09-02 — the application ships with no built-in accounts.
 
 ## 3. Session Security
 

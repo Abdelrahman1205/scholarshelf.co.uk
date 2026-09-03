@@ -71,9 +71,13 @@ export function registerStudentRoutes(app: Express): void {
       if (parentEmail) {
         const sent = await sendParentCodeEmail(parentEmail, studentName, code, expiresAt);
         if (!sent) {
-          console.log(`[LINKING CODE] Code for ${parentEmail} (student: ${studentName}): ${code}`);
+          // A linking code binds an adult to a child's record. It is a live
+          // credential over children's data and never goes to a log — UK Age
+          // Appropriate Design Code, and the audit entry already records that
+          // the code was issued.
+          console.error(`[LINKING CODE] delivery failed for linking code ${linkingCode.id}. Rotate and resend the code.`);
           if (!isResendConfigured()) {
-            console.warn("[Resend] RESEND_API_KEY not configured; using log fallback for linking codes.");
+            console.warn("[Resend] RESEND_API_KEY not configured; linking-code email cannot be delivered.");
           }
         }
       }
@@ -106,7 +110,9 @@ export function registerStudentRoutes(app: Express): void {
       // Email the new code to the parent
       if (parentEmail) {
         const sent = await sendParentCodeEmail(parentEmail.trim(), student.name ?? "your child", newCode.code, expiresAt);
-        if (!sent) console.log(`[ROTATE CODE] New code for ${parentEmail}: ${newCode.code}`);
+        if (!sent) {
+          console.error(`[ROTATE CODE] delivery failed for student ${studentId}. Rotate again once email is working.`);
+        }
       }
 
       res.status(201).json(newCode);

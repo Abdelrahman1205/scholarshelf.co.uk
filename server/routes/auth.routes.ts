@@ -295,7 +295,7 @@ export function registerAuthRoutes(app: Express): void {
       const response = await buildAuthUserResponse(req, user);
       // Role simulation by the test account is worth telling apart from a real
       // user switching between roles they genuinely hold.
-      await auditLog(req, profile.isTestAccount ? "test_account_context_switched" : "context_switched",
+      await auditLog(req, "context_switched",
         `user:${user.id}`,
         { context: activeContext, availableContexts: profile.contexts.map((item) => item.key) });
       res.json(response);
@@ -426,9 +426,12 @@ export function registerAuthRoutes(app: Express): void {
 
       const sent = await sendPasswordResetEmail(email, resetLink, emailBranding);
       if (!sent) {
-        console.log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`);
+        // Log THAT delivery failed, never the link. A reset link in a log is an
+        // account-takeover primitive available to anyone who can read logs, and
+        // this is the failure path — exactly when it fires most.
+        console.error(`[PASSWORD RESET] delivery failed for user ${user.id}. The user must request another reset.`);
         if (!isResendConfigured()) {
-          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; using log fallback for reset links.");
+          console.warn("[Resend] RESEND_API_KEY/RESEND_FROM_EMAIL not configured; password reset email cannot be delivered.");
         }
       }
 

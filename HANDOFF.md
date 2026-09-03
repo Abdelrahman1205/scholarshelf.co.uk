@@ -189,8 +189,10 @@ npm run db:push     # sync schema to Neon
 npm run dev         # starts Vite + Express on :5000
 ```
 
-Seed demo data: `POST /api/seed-users` (dev only)
-Demo credentials: `bythub/bythub123`, `admin/admin123`, `teacher/teacher123`, `parent/parent123`
+Create the first account with `npx tsx script/seed-test-account.ts` (development only).
+There are no built-in demo accounts and no seed endpoint — test fixtures live in
+`tests/support/seed-fixtures.ts` and are loaded with `npm run test:fixtures` against a
+scratch database.
 
 ---
 

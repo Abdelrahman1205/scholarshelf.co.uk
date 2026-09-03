@@ -33,42 +33,98 @@ import {
   sendPaymentSubmittedEmail, sendPaymentVerifiedEmail, sendPaymentRejectedEmail,
   isResendConfigured,
 } from "../email.js";
-import { createExternalPayment, verifyWebhookSignature, isExternalIntegrationEnabled } from "../paymentIntegration.js";
+import { createExternalPayment, verifyWebhookRequest, isExternalIntegrationEnabled } from "../paymentIntegration.js";
 
 export function registerMessageRoutes(app: Express): void {
+  /**
+   * Payment provider webhook.
+   *
+   * Four things a signed webhook needs and this one did not have:
+   *
+   *   1. The signature is now checked against the RAW request bytes
+   *      (`req.rawBody`, captured by the express.json verify hook), not against
+   *      `JSON.stringify(req.body)` — a re-serialisation of the body that need
+   *      not match what the sender signed.
+   *   2. A timestamp inside the signed value, with a five-minute tolerance.
+   *   3. An event id, claimed exactly once before any work happens. Without it a
+   *      captured delivery could be replayed forever to re-settle an order.
+   *   4. An unambiguous school. Payment references are unique only WITHIN a
+   *      school, so a reference held by two tenants used to settle whichever row
+   *      the database returned first.
+   */
   app.post("/api/webhooks/payment-update", async (req, res) => {
+    const SOURCE = "payment-update";
+    const eventId = String(req.headers["x-event-id"] || "");
+
     try {
-      const rawBody = JSON.stringify(req.body);
-      const signature = req.headers["x-signature"] as string || "";
-      if (!verifyWebhookSignature(rawBody, signature)) {
-        return res.status(401).json({ message: "Invalid webhook signature" });
+      const rawBody = Buffer.isBuffer(req.rawBody)
+        ? req.rawBody.toString("utf8")
+        : typeof req.rawBody === "string" ? req.rawBody : "";
+
+      const verification = verifyWebhookRequest({
+        rawBody,
+        signature: String(req.headers["x-signature"] || ""),
+        timestamp: String(req.headers["x-timestamp"] || ""),
+        eventId,
+      });
+      if (!verification.ok) {
+        return res.status(verification.status).json({ message: verification.reason });
       }
 
-      const { externalPaymentId, eduBookReference, status, confirmedAt, notes } = req.body;
+      // ── Replay protection ──────────────────────────────────────────────
+      // The insert is the lock. A redelivery of the same event — which providers
+      // do routinely on timeout — is acknowledged with 200 and does nothing,
+      // because acting twice would settle the order twice.
+      const claimed = await storage.claimWebhookEvent(SOURCE, eventId);
+      if (!claimed) {
+        return res.json({ message: "Already processed", eventId });
+      }
+
+      const { externalPaymentId, eduBookReference, status, notes } = req.body;
       if (!eduBookReference || !status) {
+        await storage.completeWebhookEvent(SOURCE, eventId, "failed", "missing reference or status");
         return res.status(400).json({ message: "eduBookReference and status are required" });
       }
 
+      // ── Tenant resolution ──────────────────────────────────────────────
+      const matches = await storage.getPaymentsByReference(String(eduBookReference));
+      if (matches.length === 0) {
+        await storage.completeWebhookEvent(SOURCE, eventId, "failed", "reference not found");
+        return res.status(404).json({ message: "Payment not found for that reference." });
+      }
+      if (matches.length > 1) {
+        // Do not guess. Settling the wrong school's order moves money and books.
+        await storage.completeWebhookEvent(SOURCE, eventId, "failed", "ambiguous reference across schools");
+        console.error(`[webhook] reference matches ${matches.length} payments across schools — refusing to act.`);
+        return res.status(409).json({ message: "That reference is ambiguous. Contact support." });
+      }
+      const target = matches[0];
+
       const updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string } = {};
-      if (externalPaymentId) updates.externalPaymentId = externalPaymentId;
-      if (status) updates.externalPaymentStatus = status;
-      if (notes) updates.notes = notes;
+      if (externalPaymentId) updates.externalPaymentId = String(externalPaymentId);
+      if (status) updates.externalPaymentStatus = String(status);
+      if (notes) updates.notes = String(notes);
 
-      const payment = await storage.updatePaymentByReference(eduBookReference, updates);
+      const payment = await storage.updatePaymentByReference(String(eduBookReference), updates);
       if (!payment) {
-        return res.status(404).json({ message: "Payment not found for reference: " + eduBookReference });
+        await storage.completeWebhookEvent(SOURCE, eventId, "failed", "reference disappeared mid-update");
+        return res.status(404).json({ message: "Payment not found for that reference." });
       }
 
-      // Webhook is trusted (signature verified) — no schoolId filter needed
       if (status === "confirmed" || status === "paid" || status === "completed") {
-        await storage.confirmPayment(payment.id, "webhook");
+        await storage.confirmPayment(payment.id, "webhook", undefined, target.schoolId);
       } else if (status === "rejected" || status === "failed" || status === "cancelled") {
-        await storage.rejectPayment(payment.id, "webhook");
+        await storage.rejectPayment(payment.id, "webhook", undefined, target.schoolId);
       }
 
+      await storage.completeWebhookEvent(SOURCE, eventId, "completed");
       res.json({ message: "Payment updated", paymentId: payment.id });
     } catch (e: any) {
-      res.status(500).json({ message: e.message });
+      if (eventId) {
+        await storage.completeWebhookEvent(SOURCE, eventId, "failed", e?.message).catch(() => {});
+      }
+      console.error("[webhook] payment-update failed:", e?.message);
+      res.status(500).json({ message: "Webhook processing failed." });
     }
   });
 

@@ -76,18 +76,6 @@ declare module "express-session" {
     } | null;
     /** Secret generated during MFA enrolment, held server-side until the user confirms a code. */
     pendingMfaSetupSecret?: string | null;
-    /**
-     * Universal Test Account marker. Stamped at login (and refreshed on every
-     * context switch) from `user_permissions`, so guards can ask "is this the
-     * test account?" without a database round-trip.
-     *
-     * SECURITY: written only by the server, only after a database check, and
-     * only while the feature is enabled — which it is not in production. It is
-     * never read from, or influenced by, anything the client sends. The role
-     * being simulated is `activeContext`, which is validated on every switch by
-     * syncSessionActiveContext() against the account's real available contexts.
-     */
-    testSuperuser?: boolean;
   }
 }
 

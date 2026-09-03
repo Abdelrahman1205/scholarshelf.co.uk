@@ -1,5 +1,12 @@
 # ScholarShelf — Defensive Security & Data-Protection Design Review
 
+> **Note — 2026-09-02.** Demo accounts, the `POST /api/seed-users` endpoint, the
+> in-memory fallback accounts and the login-page quick-login buttons have been
+> removed from the codebase. Anything below describing them is a record of how
+> the system used to work. Test fixtures now live in `tests/support/seed-fixtures.ts`.
+> Rows already written to a live database still need deleting — see Part 4 of
+> `DEPLOY_CHECKLIST.md`.
+
 **Purpose:** Secure-by-design guidance for a legitimate educational platform handling children's, parent, and staff data. Defensive only — access control, privacy, safe implementation. No offensive content.
 **Stack (actual):** React 19 · Express 5 / TypeScript · PostgreSQL (Neon) · session auth (Postgres-backed) · Resend · Vercel.
 **Legend:** ✅ already implemented in ScholarShelf · ➕ recommended addition · 🔒 requires extra protection + logging.

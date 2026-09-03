@@ -18,6 +18,14 @@ const schema = z.object({
   DATABASE_URL:     z.string().url().optional(),
   DATABASE_SSL_CA:  z.string().optional(),
 
+  // Least-privilege connection strings for the BytHub console. Both are
+  // optional: without CONSOLE_RO_DATABASE_URL the console reports itself as
+  // unconfigured rather than falling back to the main (owner-privileged)
+  // credentials, and without CONSOLE_RW_DATABASE_URL break-glass writes are
+  // simply unavailable. See migrations/001_console_hardening.sql.
+  CONSOLE_RO_DATABASE_URL: z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional()),
+  CONSOLE_RW_DATABASE_URL: z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional()),
+
   // ── Session ────────────────────────────────────────────────────────────
   SESSION_SECRET: IS_PROD
     ? z.string().min(32, "SESSION_SECRET must be ≥ 32 chars in production")
