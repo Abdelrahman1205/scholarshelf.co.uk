@@ -100,8 +100,49 @@ export function registerMessageRoutes(app: Express): void {
       }
       const target = matches[0];
 
-      const updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string } = {};
-      if (externalPaymentId) updates.externalPaymentId = String(externalPaymentId);
+      // ── Provider-payment ownership ─────────────────────────────────────
+      //
+      // This webhook used to write `external_payment_id` straight through
+      // `updatePaymentByReference`. The unique index from migration 006 still
+      // stopped a second order taking a transaction, so it was never a
+      // double-settlement bypass — but the 23505 surfaced through the catch
+      // below as a 500 "Webhook processing failed", telling the sender nothing
+      // and recording the delivery as an unexplained failure.
+      //
+      // Ownership now goes through the same call automatic verification and the
+      // Finance override use. One invariant, one code path, one error.
+      const citedProviderId = String(externalPaymentId ?? "").trim();
+      if (citedProviderId) {
+        const claim = await storage.claimProviderPayment(
+          target.id,
+          citedProviderId,
+          status ? String(status) : null,
+          target.schoolId,
+        );
+
+        if (!claim.claimed) {
+          // Fail closed either way: this webhook does not settle, reject or
+          // advance the order, and it does not disturb whoever holds the
+          // transaction. The message says what happened without naming tables,
+          // constraints or SQLSTATEs.
+          const detail = claim.heldByAnotherOrder
+            ? "provider transaction already settles a different order"
+            : "order already carries a different provider transaction";
+
+          await storage.completeWebhookEvent(SOURCE, eventId, "failed", detail);
+          console.error(`[webhook] refusing ${eventId}: ${detail}.`);
+
+          return res.status(409).json({
+            message: claim.heldByAnotherOrder
+              ? "This provider transaction has already been used to settle a different order."
+              : "This order is already linked to a different provider transaction.",
+          });
+        }
+      }
+
+      // Non-ownership metadata only. `externalPaymentId` is deliberately absent:
+      // it is assigned by the claim above and nowhere else on this path.
+      const updates: { externalPaymentStatus?: string; notes?: string } = {};
       if (status) updates.externalPaymentStatus = String(status);
       if (notes) updates.notes = String(notes);
 

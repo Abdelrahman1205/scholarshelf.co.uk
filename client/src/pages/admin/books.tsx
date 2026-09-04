@@ -21,6 +21,13 @@ import { Html5Qrcode } from "html5-qrcode";
 
 type StockFilter = "all" | "in" | "low" | "out";
 
+/**
+ * Escape stored values before they are written into a print window.
+ * Mirrors the helper in collection-sheet.tsx deliberately: one rule, stated the
+ * same way in both places.
+ */
+const esc = (s: any) => String(s ?? "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string));
+
 function stockState(b: any): StockFilter {
   const qty = b.stockQuantity || 0;
   if (qty <= 0) return "out";
@@ -96,7 +103,18 @@ function BooksCatalogue() {
     const schoolLabel = (user as any)?.schoolName || (user as any)?.schoolCode || "";
     const win = window.open("", "_blank", "width=420,height=350");
     if (!win) return;
-    win.document.write(`<html><head><title>Barcode - ${book.title}</title><style>body{text-align:center;font-family:sans-serif;padding:20px;margin:0}.school{font-size:11px;color:#888;margin-bottom:2px}.title{font-size:15px;font-weight:bold;margin:4px 0 2px}.author{font-size:12px;color:#666;margin:0 0 8px}.code{font-size:11px;color:#555;font-family:monospace;margin-top:6px}@media print{body{padding:8px}}</style></head><body>${schoolLabel ? `<p class="school">${schoolLabel}</p>` : ""}<p class="title">${book.title}</p>${book.author ? `<p class="author">${book.author}</p>` : ""}${svg.outerHTML}<p class="code">${book.bookCode}</p><script>window.print();window.close();</script></body></html>`);
+
+    // Every value below is stored data a school administrator typed, or that
+    // arrived through a spreadsheet import. It is written into a same-origin
+    // window that also contains a <script> block, so an unescaped title like
+    // `</p><script>…` would execute with the administrator's session. Escape at
+    // the point of interpolation — the same rule collection-sheet.tsx follows.
+    const title = esc(book.title);
+    const author = book.author ? esc(book.author) : "";
+    const bookCode = esc(book.bookCode);
+    const school = schoolLabel ? esc(schoolLabel) : "";
+
+    win.document.write(`<html><head><title>Barcode - ${title}</title><style>body{text-align:center;font-family:sans-serif;padding:20px;margin:0}.school{font-size:11px;color:#888;margin-bottom:2px}.title{font-size:15px;font-weight:bold;margin:4px 0 2px}.author{font-size:12px;color:#666;margin:0 0 8px}.code{font-size:11px;color:#555;font-family:monospace;margin-top:6px}@media print{body{padding:8px}}</style></head><body>${school ? `<p class="school">${school}</p>` : ""}<p class="title">${title}</p>${author ? `<p class="author">${author}</p>` : ""}${svg.outerHTML}<p class="code">${bookCode}</p><script>window.print();window.close();</script></body></html>`);
     win.document.close();
   }
 

@@ -242,11 +242,24 @@ export function registerPaymentRoutes(app: Express): void {
         return res.status(409).json({ message: "School setup is incomplete. Finish the setup checklist before confirming payments.", missingSteps: setupState.missingSteps });
       }
       const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
+      // Optional. When the officer cites a provider transaction as their
+      // evidence, it is claimed through the same unique-index invariant the
+      // automatic path uses — see manuallyVerify(). Omitted means the override
+      // rests on evidence outside the platform and asserts no provider
+      // ownership at all.
+      const providerPaymentId = typeof req.body?.providerPaymentId === "string"
+        ? req.body.providerPaymentId
+        : null;
+
       const result = await manuallyVerify({
         paymentId: routeParam(req.params.id), schoolId: sid,
-        actorUserId: req.session.userId!, reason,
+        actorUserId: req.session.userId!, reason, providerPaymentId,
       });
-      await auditLog(req, "payment_manually_verified", `payment:${result.paymentId}`, { reason: result.reason });
+      await auditLog(req, "payment_manually_verified", `payment:${result.paymentId}`, {
+        reason: result.reason,
+        basis: result.matchedProviderPaymentId ? "provider_transaction" : "independent_evidence",
+        matchedProviderPaymentId: result.matchedProviderPaymentId,
+      });
 
       const payment = result.payment;
       if (payment?.parentIdentifier) {

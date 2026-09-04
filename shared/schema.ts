@@ -926,6 +926,10 @@ export const VERIFICATION_REASON_CODES = [
   "weak_match_only",
   "provider_data_unavailable",
   "unknown_provider_status",
+  // The provider transaction matched, but another order already holds it. The
+  // claim is enforced by the unique index on book_payments.external_payment_id;
+  // this is what a losing claim is called when it reaches a Finance Officer.
+  "provider_payment_already_claimed",
 ] as const;
 export type VerificationReasonCode = (typeof VERIFICATION_REASON_CODES)[number];
 

@@ -120,6 +120,9 @@ const REASON_TEXT: Record<VerificationReasonCode, string> = {
   weak_match_only: "Only a weak match was found (same customer, no matching reference).",
   provider_data_unavailable: "No Stripe payment data has been imported for this school yet.",
   unknown_provider_status: "The Stripe transaction has a status ScholarShelf does not recognise.",
+  provider_payment_already_claimed:
+    "That Stripe transaction has already been used to settle a different order. " +
+    "One real payment settles one order — check which order holds it before proceeding.",
 };
 
 /** Map a non-successful provider status onto the reason a human will read. */

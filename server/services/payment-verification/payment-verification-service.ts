@@ -248,6 +248,32 @@ async function applyAutomaticVerification(
   // the order rather than inventing a user.
   const reviewer = systemUserId || order.paymentReferenceSubmittedBy || order.paymentReviewedBy || "system";
 
+  // ── Claim the provider transaction BEFORE settling ────────────────────────
+  //
+  // One real Stripe payment settles one order. The claim is a write to
+  // `book_payments.external_payment_id`, which carries a unique index — so if
+  // another order already holds this transaction the database refuses it and
+  // this order goes to a Finance Officer instead of releasing a second set of
+  // books against the same money.
+  //
+  // It happens before confirmPayment because confirmPayment creates allocations
+  // and deducts stock. Losing the claim afterwards would be too late.
+  const claim = await storage.claimProviderPayment(
+    order.id,
+    matched.providerPaymentId,
+    matched.rawStatus || matched.status,
+    order.schoolId,
+  );
+
+  if (!claim.claimed) {
+    return applyInvestigation(order, {
+      ...decision,
+      reasonCode: "provider_payment_already_claimed",
+      reason: REASON_TEXT.provider_payment_already_claimed +
+        ` (Stripe ${matched.providerPaymentId}).`,
+    });
+  }
+
   const confirmed = await storage.confirmPayment(order.id, reviewer, note, order.schoolId);
 
   // Same transition the manual Confirm route performs. Reused, not reimplemented.
@@ -453,12 +479,39 @@ export async function flagReversedPayments(schoolId: string): Promise<{ flagged:
  * Uses the same `storage.confirmPayment` path, so the order continues down the
  * existing workflow identically — the only difference is the recorded method
  * and the required reason.
+ *
+ * TWO KINDS OF OVERRIDE, AND THE DIFFERENCE MATTERS
+ *
+ *   · INDEPENDENT EVIDENCE — a bank statement, a receipt, a conversation with
+ *     the parent. No provider transaction is being asserted, so
+ *     `matchedProviderPaymentId` is recorded as NULL and nothing is claimed.
+ *
+ *   · A NAMED PROVIDER TRANSACTION — the officer says "this Stripe payment is
+ *     the one". That is a claim of ownership over a real transaction, so it goes
+ *     through `storage.claimProviderPayment()` exactly as the automatic path
+ *     does. If another order already holds it, the override is REFUSED. A human
+ *     pressing the button does not make one payment settle two orders.
+ *
+ * WHAT THIS FUNCTION USED TO DO, AND WHY IT WAS WRONG
+ *
+ * It read the last automatic attempt and copied that attempt's
+ * `matchedProviderPaymentId` onto the override record. So an override made on a
+ * bank statement inherited whatever Stripe transaction the failed automatic run
+ * happened to consider — including one another order legitimately owns. The
+ * audit row then asserted an ownership that was not true, and nothing had
+ * checked the claim. Inheritance is gone: a provider payment is recorded here
+ * only when the officer names it AND the claim succeeds.
  */
 export async function manuallyVerify(input: {
   paymentId: string;
   schoolId: string;
   actorUserId: string;
   reason: string;
+  /**
+   * The provider transaction the officer is citing as evidence, if any.
+   * Optional by design — most overrides rest on evidence outside the platform.
+   */
+  providerPaymentId?: string | null;
 }): Promise<VerificationRunResult> {
   const db = getDb();
   const [order] = await db.select().from(bookPayments)
@@ -473,6 +526,46 @@ export async function manuallyVerify(input: {
     );
   }
 
+  // ── If a provider transaction is being cited, it must be claimable ────────
+  let claimedProvider: ProviderPayment | null = null;
+  const citedId = String(input.providerPaymentId ?? "").trim();
+
+  if (citedId) {
+    const [provider] = await db.select().from(providerPayments)
+      .where(and(
+        eq(providerPayments.id, citedId),
+        eq(providerPayments.schoolId, input.schoolId),
+      ));
+    if (!provider) {
+      throw Object.assign(
+        new Error("That provider transaction was not found for this school."),
+        { httpStatus: 404 },
+      );
+    }
+
+    const claim = await storage.claimProviderPayment(
+      order.id,
+      provider.providerPaymentId,
+      provider.rawStatus || provider.status,
+      order.schoolId,
+    );
+
+    if (!claim.claimed) {
+      // Refused, not warned. Approving anyway would release a second set of
+      // books against one real payment — which is the thing this whole control
+      // exists to prevent, and a reason field does not make it not happen.
+      throw Object.assign(
+        new Error(
+          `Stripe transaction ${provider.providerPaymentId} has already been used to settle a different order. ` +
+          `One payment settles one order. Find the order that holds it and correct that first, ` +
+          `or approve this one on independent evidence without citing a transaction.`,
+        ),
+        { httpStatus: 409 },
+      );
+    }
+    claimedProvider = provider;
+  }
+
   const confirmed = await storage.confirmPayment(order.id, input.actorUserId, reason, order.schoolId);
   try { await storage.updateOrderStatus(order.id, "ready_for_teacher_distribution", order.schoolId); } catch { /* as in the manual path */ }
 
@@ -480,7 +573,9 @@ export async function manuallyVerify(input: {
     .set({ verificationMethod: "manual_finance_override" })
     .where(eq(bookPayments.id, order.id));
 
-  // The last automatic attempt tells us what the officer was overriding.
+  // The last automatic attempt tells us what the officer was overriding. It is
+  // recorded as CONTEXT — what the machine decided and why — and never as this
+  // override's own provider ownership.
   const [lastAuto] = await db.select().from(paymentVerificationAttempts)
     .where(and(
       eq(paymentVerificationAttempts.paymentId, order.id),
@@ -495,10 +590,16 @@ export async function manuallyVerify(input: {
     outcome: "verified",
     method: "manual_finance_override",
     reasonDetail: reason,
-    matchedProviderPaymentId: lastAuto?.matchedProviderPaymentId ?? null,
+    // NULL unless the officer named a transaction and the claim succeeded.
+    matchedProviderPaymentId: claimedProvider?.id ?? null,
     evidence: {
+      basis: claimedProvider ? "provider_transaction" : "independent_evidence",
+      citedProviderPaymentId: claimedProvider?.providerPaymentId ?? null,
       overrodeReasonCode: lastAuto?.reasonCode ?? null,
       overrodeReasonDetail: lastAuto?.reasonDetail ?? null,
+      // Recorded so the trail shows what the automatic run had looked at, while
+      // making clear this override did not adopt it as its own evidence.
+      automaticAttemptConsidered: lastAuto?.matchedProviderPaymentId ?? null,
     },
     actorUserId: input.actorUserId,
   });
@@ -509,7 +610,7 @@ export async function manuallyVerify(input: {
     method: "manual_finance_override",
     reasonCode: null,
     reason,
-    matchedProviderPaymentId: lastAuto?.matchedProviderPaymentId ?? null,
+    matchedProviderPaymentId: claimedProvider?.id ?? null,
     payment: { ...confirmed, verificationMethod: "manual_finance_override" } as BookPayment,
     changed: true,
   };

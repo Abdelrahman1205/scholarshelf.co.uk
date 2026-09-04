@@ -170,7 +170,6 @@ export interface IStorage {
   createSchool(school: schema.InsertSchool): Promise<schema.School>;
   updateSchool(id: string, school: Partial<Omit<schema.School, "id">>): Promise<schema.School | undefined>;
   deleteSchool(id: string): Promise<void>;
-  deleteSchoolAndRelatedData(id: string): Promise<void>;
 
   // Books
   getBooks(schoolId?: string | null): Promise<schema.Book[]>;
@@ -266,8 +265,14 @@ export interface IStorage {
   markPaymentCollected(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
   cancelPayment(paymentId: string, reviewedBy: string, reviewNote?: string, schoolId?: string | null): Promise<schema.BookPayment>;
   isPaymentReferenceDuplicate(referenceNumber: string, schoolId: string, excludePaymentId?: string): Promise<boolean>;
-  updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null>;
+  updatePaymentByReference(reference: string, updates: { externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null>;
   getPaymentsByReference(reference: string): Promise<schema.BookPayment[]>;
+  claimProviderPayment(
+    orderId: string,
+    providerPaymentId: string,
+    providerStatus: string | null,
+    schoolId?: string | null,
+  ): Promise<{ claimed: boolean; heldByAnotherOrder: boolean }>;
   claimWebhookEvent(source: string, eventId: string): Promise<boolean>;
   completeWebhookEvent(source: string, eventId: string, status: string, detail?: string): Promise<void>;
 
@@ -449,140 +454,22 @@ class DatabaseStorage implements IStorage {
     }
   }
 
-  async deleteSchoolAndRelatedData(id: string): Promise<void> {
-    try {
-      const db = getDb();
-      const schoolUsers = await db
-        .select({ id: schema.users.id })
-        .from(schema.users)
-        .where(eq(schema.users.schoolId, id));
-
-      const schoolClasses = await db
-        .select({ id: schema.classes.id })
-        .from(schema.classes)
-        .where(eq(schema.classes.schoolId, id));
-
-      const schoolStudents = await db
-        .select({ id: schema.students.id })
-        .from(schema.students)
-        .where(eq(schema.students.schoolId, id));
-
-      const schoolBooks = await db
-        .select({ id: schema.books.id })
-        .from(schema.books)
-        .where(eq(schema.books.schoolId, id));
-
-      const schoolBookLevels = await db
-        .select({ id: schema.bookLevels.id })
-        .from(schema.bookLevels)
-        .where(eq(schema.bookLevels.schoolId, id));
-
-      const schoolUserIds = schoolUsers.map((u) => u.id);
-      const schoolClassIds = schoolClasses.map((c) => c.id);
-      const schoolStudentIds = schoolStudents.map((s) => s.id);
-      const schoolBookIds = schoolBooks.map((b) => b.id);
-      const schoolBookLevelIds = schoolBookLevels.map((l) => l.id);
-
-      const classLinkedStudents = schoolClassIds.length > 0
-        ? await db
-            .select({ id: schema.students.id })
-            .from(schema.students)
-            .where(inArray(schema.students.classId, schoolClassIds))
-        : [];
-      const allStudentIds = Array.from(new Set([...schoolStudentIds, ...classLinkedStudents.map((s) => s.id)]));
-
-      if (schoolUserIds.length > 0) {
-        await db.update(schema.invites).set({ invitedBy: null }).where(inArray(schema.invites.invitedBy, schoolUserIds));
-        await db.delete(schema.userPermissions).where(inArray(schema.userPermissions.userId, schoolUserIds));
-
-        await db.delete(schema.messageAuditLogs).where(inArray(schema.messageAuditLogs.actorUserId, schoolUserIds));
-        await db.delete(schema.messages).where(inArray(schema.messages.senderUserId, schoolUserIds));
-        await db.delete(schema.messageThreads).where(inArray(schema.messageThreads.parentUserId, schoolUserIds));
-        await db.delete(schema.messageThreads).where(inArray(schema.messageThreads.teacherUserId, schoolUserIds));
-
-        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.receivedByTeacherId, schoolUserIds));
-        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.absentMarkedByTeacherId, schoolUserIds));
-        await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.teacherId, schoolUserIds));
-      }
-
-      if (schoolClassIds.length > 0) {
-        await db.delete(schema.classBookLevels).where(inArray(schema.classBookLevels.classId, schoolClassIds));
-        await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.classId, schoolClassIds));
-      }
-
-      if (allStudentIds.length > 0) {
-        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.studentId, allStudentIds));
-        await db.delete(schema.childBookBaskets).where(inArray(schema.childBookBaskets.studentId, allStudentIds));
-      }
-
-      if (schoolBookIds.length > 0) {
-        await db.delete(schema.extraCopyRequests).where(inArray(schema.extraCopyRequests.bookId, schoolBookIds));
-        await db.delete(schema.financeBookAllocations).where(inArray(schema.financeBookAllocations.bookId, schoolBookIds));
-        await db.delete(schema.basketItems).where(inArray(schema.basketItems.bookId, schoolBookIds));
-      }
-
-      if (schoolBookLevelIds.length > 0) {
-        await db.delete(schema.classBookLevels).where(inArray(schema.classBookLevels.bookLevelId, schoolBookLevelIds));
-        await db.delete(schema.bookLevelItems).where(inArray(schema.bookLevelItems.bookLevelId, schoolBookLevelIds));
-      }
-
-      await db.delete(schema.extraCopyRequests).where(eq(schema.extraCopyRequests.schoolId, id));
-      await db.delete(schema.schoolBranding).where(eq(schema.schoolBranding.schoolId, id));
-      await db.delete(schema.financeBookAllocations).where(eq(schema.financeBookAllocations.schoolId, id));
-      // Messaging tables reference users/students, so delete them before users/students.
-      await db.delete(schema.messageAuditLogs).where(eq(schema.messageAuditLogs.schoolId, id));
-      await db.delete(schema.messages).where(eq(schema.messages.schoolId, id));
-      await db.delete(schema.messageThreads).where(eq(schema.messageThreads.schoolId, id));
-      await db.delete(schema.childBookBaskets).where(eq(schema.childBookBaskets.schoolId, id));
-      await db.delete(schema.bookPayments).where(eq(schema.bookPayments.schoolId, id));
-      await db.delete(schema.childLinkingCodes).where(eq(schema.childLinkingCodes.schoolId, id));
-      await db.delete(schema.invites).where(eq(schema.invites.schoolId, id));
-      await db.delete(schema.users).where(eq(schema.users.schoolId, id));
-      if (allStudentIds.length > 0) {
-        await db.delete(schema.students).where(inArray(schema.students.id, allStudentIds));
-      }
-      await db.delete(schema.students).where(eq(schema.students.schoolId, id));
-      await db.delete(schema.classes).where(eq(schema.classes.schoolId, id));
-      await db.delete(schema.bookLevels).where(eq(schema.bookLevels.schoolId, id));
-      await db.delete(schema.books).where(eq(schema.books.schoolId, id));
-      await db.delete(schema.schools).where(eq(schema.schools.id, id));
-    } catch (e) {
-      if (!isDbUnavailableError(e)) throw e;
-
-      const deletedUserIds = new Set<string>();
-      memoryUsers.forEach((user, userId) => {
-        if (user.schoolId === id) {
-          deletedUserIds.add(userId);
-          memoryUsers.delete(userId);
-        }
-      });
-
-      memoryInvites.forEach((invite, inviteId) => {
-        if (invite.schoolId === id) {
-          memoryInvites.delete(inviteId);
-          return;
-        }
-        if (invite.invitedBy && deletedUserIds.has(invite.invitedBy)) {
-          memoryInvites.set(inviteId, { ...invite, invitedBy: null });
-        }
-      });
-
-      for (let i = memoryMessages.length - 1; i >= 0; i--) {
-        if (memoryMessages[i].schoolId === id) {
-          memoryMessages.splice(i, 1);
-        }
-      }
-
-      for (let i = memoryMessageThreads.length - 1; i >= 0; i--) {
-        if (memoryMessageThreads[i].schoolId === id) {
-          memoryMessageThreads.splice(i, 1);
-        }
-      }
-
-      memorySchools.delete(id);
-      memorySchoolBranding.delete(id);
-    }
-  }
+  // `deleteSchoolAndRelatedData()` was REMOVED on 3 September 2026.
+  //
+  // It performed a long sequence of independent DELETE statements with no
+  // transaction — audit finding 5.6, Critical: a failure partway through left a
+  // tenant half-erased, with broken relationships and nothing to roll back to.
+  //
+  // It was not repaired, because it had no callers. Its only entry point was the
+  // owner console's whole-tenant wipe route, removed in Phase A. Making
+  // dormant destructive code transactional would have made it safer to run
+  // without making it any less dormant — and left a whole-tenant wipe sitting in
+  // the storage layer waiting for someone to wire it back up.
+  //
+  // Tenant erasure is a real requirement (GDPR Art. 17) and it still needs
+  // building. When it is, it belongs in the school lifecycle with the cooldown,
+  // the audit trail and the completeness proof the audit's section 6 asks for —
+  // not as a single method that deletes 23 tables in a guessed order.
 
   // === BRANDING & PERMISSIONS ===
 
@@ -1800,6 +1687,72 @@ class DatabaseStorage implements IStorage {
   }
 
   /**
+   * Claim a provider transaction for one order.
+   *
+   * THE INVARIANT: one real-world payment settles one order.
+   *
+   * It is enforced by the partial unique index on
+   * `book_payments.external_payment_id` (migrations/006), not by a check in
+   * application code — so two concurrent verification runs cannot both decide
+   * they own the same Stripe transaction. Writing the id IS the claim.
+   *
+   * Note where the constraint deliberately does NOT live:
+   * `payment_verification_attempts` is append-only audit history. An order may
+   * legitimately be attempted many times — a failed import, a re-run after the
+   * provider export is corrected, a finance override — and every one of those
+   * attempts records the provider payment it considered. A unique constraint
+   * there would forbid the history, not the double-settlement.
+   *
+   * Returns:
+   *   { claimed: true }                          this order now holds it
+   *   { claimed: false, heldByAnotherOrder }     someone else got there first
+   *
+   * Re-claiming the same provider payment for the SAME order succeeds, so a
+   * repeated verification run is idempotent rather than an error.
+   */
+  async claimProviderPayment(
+    orderId: string,
+    providerPaymentId: string,
+    providerStatus: string | null,
+    schoolId?: string | null,
+  ): Promise<{ claimed: boolean; heldByAnotherOrder: boolean }> {
+    const id = String(providerPaymentId ?? "").trim();
+    if (!id) return { claimed: false, heldByAnotherOrder: false };
+
+    const conditions = [
+      eq(schema.bookPayments.id, orderId),
+      sql`(${schema.bookPayments.externalPaymentId} IS NULL
+           OR btrim(${schema.bookPayments.externalPaymentId}) = ''
+           OR ${schema.bookPayments.externalPaymentId} = ${id})`,
+    ];
+    const sf = schoolFilter(schema.bookPayments, schoolId);
+    if (sf) conditions.push(sf);
+
+    try {
+      const [claimed] = await getDb()
+        .update(schema.bookPayments)
+        .set({
+          externalPaymentId: id,
+          ...(providerStatus ? { externalPaymentStatus: providerStatus } : {}),
+        })
+        .where(and(...conditions))
+        .returning({ id: schema.bookPayments.id });
+
+      // No row came back: this order already carries a DIFFERENT provider id.
+      return { claimed: !!claimed, heldByAnotherOrder: false };
+    } catch (e: unknown) {
+      // 23505 — the unique index refused it, so another ORDER holds this
+      // provider transaction. That is the double-settlement this exists to stop.
+      const code = (e as { code?: string } | null)?.code;
+      const message = e instanceof Error ? e.message : String(e);
+      if (code === "23505" || /book_payments_external_payment_id_unique|duplicate key/i.test(message)) {
+        return { claimed: false, heldByAnotherOrder: true };
+      }
+      throw e;
+    }
+  }
+
+  /**
    * Claim a webhook delivery. Returns true if this process now owns it, false if
    * it has already been seen — the insert is the lock, so two concurrent
    * deliveries of the same event cannot both win.
@@ -1822,7 +1775,7 @@ class DatabaseStorage implements IStorage {
       ));
   }
 
-  async updatePaymentByReference(reference: string, updates: { externalPaymentId?: string; externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
+  async updatePaymentByReference(reference: string, updates: { externalPaymentStatus?: string; notes?: string }): Promise<schema.BookPayment | null> {
     const [payment] = await getDb().select().from(schema.bookPayments).where(eq(schema.bookPayments.paymentReference, reference));
     if (!payment) return null;
     const updated = await updateAndFetchFirst(schema.bookPayments, eq(schema.bookPayments.paymentReference, reference), updates);
